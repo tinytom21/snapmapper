@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ExifTool-WASM — webview measurement</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body {
+        font: 15px/1.5 system-ui, sans-serif;
+        max-width: 46rem;
+        margin: 0 auto;
+        padding: 1.5rem;
+      }
+      h1 { font-size: 1.3rem; }
+      p.lede { opacity: 0.75; }
+      #log {
+        white-space: pre-wrap;
+        font: 13px/1.5 ui-monospace, monospace;
+        background: color-mix(in srgb, currentColor 6%, transparent);
+        padding: 1rem;
+        border-radius: 6px;
+        min-height: 8rem;
+      }
+      .pass { color: #16803c; font-weight: 600; }
+      .fail { color: #c02626; font-weight: 600; }
+      @media (prefers-color-scheme: dark) {
+        .pass { color: #4ade80; }
+        .fail { color: #f87171; }
+      }
+      input[type='file'] { margin: 1rem 0; display: block; }
+    </style>
+  </head>
+  <body>
+    <h1>ExifTool-WASM — webview measurement</h1>
+
+    <p class="lede">
+      Node numbers are the optimistic case. This page is what actually predicts Android
+      performance — so run it <strong>on the tablet</strong>, not just on the desktop. Open the same
+      URL from the device's browser while the dev server is running.
+    </p>
+
+    <p>Pick one or more real A6400 JPEGs. Nothing is uploaded; it all runs locally.</p>
+
+    <input type="file" id="picker" accept="image/jpeg" multiple />
+
+    <div id="log">Waiting for files…</div>
+
+    <script type="module">
+      const log = document.getElementById('log');
+      const write = (text, cls) => {
+        const line = document.createElement('span');
+        if (cls) line.className = cls;
+        line.textContent = `${text}\n`;
+        log.append(line);
+      };
+
+      const fmtMs = (ms) => (ms < 1000 ? `${ms.toFixed(0)} ms` : `${(ms / 1000).toFixed(2)} s`);
+      const fmtBytes = (b) =>
+        b < 1024 * 1024 ? `${(b / 1024).toFixed(1)} KB` : `${(b / 1024 / 1024).toFixed(1)} MB`;
+
+      log.textContent = '';
+      write(`User agent: ${navigator.userAgent}`);
+      write(`Cores: ${navigator.hardwareConcurrency ?? 'unknown'}`);
+      if (navigator.deviceMemory) write(`Device memory: ~${navigator.deviceMemory} GB`);
+      write('');
+
+      let pkg;
+      const importStarted = performance.now();
+      try {
+        // Served from node_modules by serve-browser.mjs.
+        pkg = await import('/vendor/exiftool/index.js');
+        write(`Module import: ${fmtMs(performance.now() - importStarted)}`, 'pass');
+      } catch (error) {
+        write(`Could not import the package: ${error.message}`, 'fail');
+        write('');
+        write('The import path is a guess at the package layout. Check what');
+        write('node_modules/@uswriting/exiftool actually exposes and fix the path above.');
+        throw error;
+      }
+
+      document.getElementById('picker').addEventListener('change', async (event) => {
+        const files = [...event.target.files];
+        if (files.length === 0) return;
+
+        log.textContent = '';
+        write(`${files.length} file(s) selected\n`);
+
+        for (const file of files) {
+          write(`── ${file.name} (${fmtBytes(file.size)})`);
+
+          try {
+            // Browser builds take the File object directly rather than a copy.
+            const readStarted = performance.now();
+            const parsed = await pkg.parseMetadata(file, { args: ['-json', '-n'] });
+            write(`   read:  ${fmtMs(performance.now() - readStarted)}`, parsed?.success ? 'pass' : 'fail');
+
+            const tags = {
+              'EXIF:GPSLatitude': '51.4778',
+              'EXIF:GPSLatitudeRef': 'N',
+              'EXIF:GPSLongitude': '0.0015',
+              'EXIF:GPSLongitudeRef': 'W',
+            };
+
+            // Three writes: the first pays any lazy setup, the rest are the
+            // steady-state cost that a 200-photo batch actually multiplies.
+            const timings = [];
+            for (let i = 0; i < 3; i++) {
+              const started = performance.now();
+              const result = await pkg.writeMetadata(file, tags, {
+                args: ['-n', '-P', '-overwrite_original'],
+              });
+              timings.push(performance.now() - started);
+              if (!result?.success) {
+                write(`   write ${i + 1} failed: ${result?.error ?? 'unknown'}`, 'fail');
+                break;
+              }
+            }
+
+            if (timings.length === 3) {
+              write(`   write: ${timings.map(fmtMs).join(', ')}`);
+              const steady = Math.min(timings[1], timings[2]);
+              write(`   200-photo batch projects to ${fmtMs(steady * 200)}`,
+                steady * 200 < 300_000 ? 'pass' : 'fail');
+            }
+          } catch (error) {
+            write(`   threw: ${error.message}`, 'fail');
+          }
+
+          write('');
+        }
+
+        write('Record these numbers in spike/README.md, noting the device.');
+      });
+    </script>
+  </body>
+</html>

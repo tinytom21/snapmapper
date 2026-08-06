@@ -1,0 +1,21 @@
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+
+# Real camera files must never end up in the repo. The spike works on copies of
+# the user's photos; committing them would be both large and a privacy problem.
+spike/fixtures/*
+!spike/fixtures/README.md
+spike/output/
+
+# ExifTool's backup copies, if -overwrite_original is ever turned off
+*_original
+
+# Spike measurements are written here and pasted into spike/README.md by hand
+spike/results/*.json
+
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

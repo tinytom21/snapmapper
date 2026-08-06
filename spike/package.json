@@ -1,0 +1,17 @@
+{
+  "name": "spike",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Phase 0 throwaway. Decides the metadata backend and the native shell.",
+  "scripts": {
+    "spike": "node src/run.mjs",
+    "probe": "node src/probe-api.mjs",
+    "write": "node src/write-gps.mjs",
+    "bench": "node src/benchmark.mjs",
+    "browser": "node src/serve-browser.mjs"
+  },
+  "dependencies": {
+    "@uswriting/exiftool": "latest"
+  }
+}

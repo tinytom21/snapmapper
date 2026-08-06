@@ -1,0 +1,14 @@
+{
+  "name": "@geotagger/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Platform-agnostic geotagging logic. No filesystem, no DOM, no native dependencies.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "node --test \"test/**/*.test.ts\"",
+    "typecheck": "tsc --noEmit"
+  }
+}

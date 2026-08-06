@@ -1,0 +1,31 @@
+This project was scaffolded in an earlier Claude Code session on a machine
+where Node.js couldn't be installed, so NOTHING in it has ever been executed.
+Treat all of it as written-but-unrun.
+Read these three files first, in order:
+  HANDOFF.md    — state of play and the exact next steps
+  CLAUDE.md     — project context, decisions already made, rules that matter
+  docs/PLAN.md  — the approved design
+Then do this:
+1. git init and commit the current state before running anything, so the
+   untested baseline is recoverable once we start fixing it.
+2. Check prerequisites are present: node --version (need 22.18+ or 24+),
+   exiftool -ver, npm --version. Install whatever is missing —
+   winget install OpenJS.NodeJS.LTS and winget install PhilHarvey.ExifTool.
+   Native ExifTool is not a runtime dependency; it's the independent verifier
+   the spike needs to prove the WASM output is correct.
+3. npm install, then npm test. The core tests have never run. Expect real
+   failures. The DMS carry logic in packages/core/src/gps.ts and the
+   DST-boundary conversion in packages/core/src/time.ts are the two most
+   likely places for a genuine bug. Fix what breaks, don't just relax the
+   assertions.
+4. Tell me what you need for fixtures. The Phase 0 spike needs real Sony
+   A6400 JPEGs in spike/fixtures/ and I'll copy some in — I know they must
+   be copies, not originals.
+5. Run npm run spike and work through the four questions in spike/README.md.
+   Expect spike/src/probe-api.mjs to need fixing first: it was written
+   against a documented API surface that couldn't be verified, which is why
+   it probes and prints the real shapes rather than assuming them.
+The spike produces a decision, not a passing test suite — whether ExifTool
+via WebAssembly stays as the metadata backend, and whether the shell is
+Tauri 2 or Capacitor. Don't start building Phase 1 until that's answered.
+Ask me questions rather than guessing at anything the plan leaves open.
