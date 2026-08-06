@@ -7,19 +7,28 @@ Source camera is a **Sony A6400** (no GPS receiver, so location is applied after
 
 ## Current state
 
-**Phase 0 — spike run on 2026-08-06. Q2, Q3 and Q4 answered; Q1 still open.** The spike decides the
-native shell and confirms the metadata backend before any real architecture is committed.
+**Phase 0 complete. All four questions answered against 7 real ILCE-6400 JPEGs.** Results and
+reasoning are in `spike/README.md`.
 
-- `packages/core/src/gps.ts` and `packages/core/src/time.ts` are **tested and passing** (50 tests).
-- The spike needed three upstream fixes before it would run at all, all recorded in `spike/README.md`.
-- **Q1 — whether `Sony:MakerNotes` survive a write byte-identically — has never run**, because it
-  needs real A6400 files and none are available. It is now the question the backend decision turns on.
-- **Q3 found a real problem:** ExifTool-WASM writes a 24MP JPEG in ~4.5 s (~13 min for 200 photos on
-  a fast desktop, worse on a tablet). The cost is in the dependency's unbuffered WASI filesystem
-  shim, not in ExifTool, and batching cannot recover it.
+- **The backend is confirmed: keep ExifTool-WASM.** Q1 passes — correct GPS, MakerNotes functionally
+  intact, verified with a separate native ExifTool 13.59.
+- `packages/core` is **tested and passing** (53 tests).
+- The spike needed three upstream fixes before it would run at all — see the gotchas below.
+- **Q3 is the live cost:** ~2 s per 5–7MB JPEG, ~4.5 s per 12MB one. Acceptable at the real session
+  size (10–50 photos) if writes are backgrounded; painful for a whole card. The cost is in the
+  dependency's unbuffered WASI filesystem shim, not in ExifTool, and batching cannot recover it.
+- **The shell is still undecided** and is the remaining Phase 0 work. It needs the tablet and the card.
 
-Do not begin Phase 1 until the backend question is closed. `packages/ui` and `packages/shells` are
-correctly still absent.
+`packages/ui` and `packages/shells` do not exist yet.
+
+### Do not use byte-identity as the MakerNotes test
+
+This nearly killed the project. Writing GPS to a file with no existing GPS adds a 12-byte IFD entry to
+IFD0, which shifts MakerNotes 12 bytes later. Sony's internal offsets are relative to the start of the
+*file*, so a correct writer **must** rewrite them — measured: 41 of 37,664 bytes change, every one a
+value incremented by exactly 12. Byte-identity failing is the *expected* result; byte-identity holding
+while the block moves would be the corruption. Test decoded tag values, plus whether `PreviewImage`
+and `ThumbnailImage` still resolve byte-identically, plus ExifTool's own warnings.
 
 Read **[HANDOFF.md](HANDOFF.md)** first — it has the exact next steps. The approved design is in
 **[docs/PLAN.md](docs/PLAN.md)**.
@@ -63,15 +72,15 @@ override for exactly that case.
 
 ## Still open
 
-- **Q1: does a write preserve `Sony:MakerNotes` byte-identically?** Blocked on real A6400 fixtures.
-  Everything else observable passed on a synthetic file. This is the pivot.
 - **Shell: Tauri 2 vs Capacitor.** Tauri 2 remains the going-in recommendation. Nothing measured yet
   distinguishes them; the deciding test (SAF writes to a removable card) needs the tablet. Note the
   WASM alone is 24.2MB, against the ~10MB whole-app figure the plan assumed.
-- **Whether ExifTool-WASM is viable on a tablet.** Desktop webview matched Node, so the tablet will
-  be a CPU multiple of an already-failing write time. Unmeasured.
+- **Whether the write cost is tolerable on a tablet.** The desktop webview matched Node, so the tablet
+  will be a CPU multiple of ~2–4.5 s per photo. Unmeasured — `npm run browser --workspace spike`.
 
 Settled by the spike:
+
+- **ExifTool-WASM stays.** Q1 passed on real A6400 files.
 
 - **Raw ExifTool arguments do reach the write path** via `{ args: [...] }`, proved by effect. But
   `-P` and `-overwrite_original` correctly fail in the sandbox and must not be passed — there is no

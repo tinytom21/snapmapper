@@ -3,9 +3,14 @@
 Throwaway code. It exists to produce a **decision**, not a passing test suite: does ExifTool-WASM
 stay as the metadata backend, and which native shell gets built on top of it.
 
-**Run on 2026-08-06** (Windows 11, Node 24.15.0, native ExifTool 13.59, `@uswriting/exiftool`
-1.0.9 wrapping `@6over3/zeroperl-ts` 1.0.10). Results below. Q2, Q3 and Q4 are answered; **Q1 is
-still open and is now the deciding question**, because it needs real A6400 files.
+**Run on 2026-08-06/07** (Windows 11, Node 24.15.0, native ExifTool 13.59, `@uswriting/exiftool`
+1.0.9 wrapping `@6over3/zeroperl-ts` 1.0.10). **All four questions are answered against 7 real
+ILCE-6400 JPEGs.**
+
+**Recommendation for review: keep ExifTool-WASM as the metadata backend.** It is correct on real
+files, which was the only thing that could have ruled it out. Its write cost is high (~2 s for a 5–7MB
+JPEG, ~4.5 s for a 12MB one) but acceptable at the real session size of 10–50 photos, provided writes
+are backgrounded. The shell decision is still open and needs the tablet.
 
 ## Before anything ran: three upstream defects
 
@@ -83,28 +88,56 @@ ExifTool** that:
 
 | Result | |
 |---|---|
-| Verdict | **STILL OPEN — blocked on real A6400 fixtures** |
+| Verdict | **PASS — ExifTool-WASM is safe on real A6400 files** |
 | Native ExifTool version | 13.59 (`OliverBetz.ExifTool`) |
-| Fixtures used | none real. A synthetic 24MP 11.7MB JPEG stood in, so MakerNotes were never exercised. |
-| Notes | Everything testable without Sony files passed — see below. |
-
-On the synthetic file, every check passed except the one that matters:
+| Fixtures used | 7 real ILCE-6400 JPEGs, 4.9–6.9MB, ~37KB MakerNotes each. Five with no GPS, two already geotagged by GeoSetter, one portrait (`Orientation` 6). |
+| Notes | Two locations per file (Greenwich, and a southern+western case), so 14 writes. Every check passes. |
 
 | Check | Result |
 |---|---|
 | Coordinates round-trip signed, both hemispheres | PASS (`-33.8688, -70.6693` read back exactly) |
 | EXIF stores unsigned magnitudes per spec | PASS |
-| Hemisphere refs written and correct | PASS (`S` / `W`) |
+| Hemisphere refs written and correct | PASS |
 | XMP mirrors EXIF (what Lightroom reads) | PASS |
+| Every MakerNote tag decodes to the same value | PASS (170–221 tags per file, all identical) |
+| `PreviewImage` still resolves byte-identically | PASS (273–412KB, hash unchanged) |
+| `ThumbnailImage` still resolves byte-identically | PASS |
+| No new ExifTool warnings | PASS (none, before or after) |
 | Compressed image data byte-identical | PASS |
 | `DateTimeOriginal` preserved | PASS |
-| `Orientation` preserved | PASS |
+| `Orientation` preserved | PASS (including 6, portrait) |
 | No tags dropped | PASS |
-| **`Sony:MakerNotes` byte-identical** | **UNTESTED — a synthetic JPEG has no MakerNotes** |
 
-So the write path is careful with everything we could observe. Whether it is careful with Sony's
-offset-relative MakerNotes is exactly what remains unknown, and it is the check that decides the
-backend. Copy real A6400 JPEGs into `fixtures/` and re-run `npm run write --workspace spike`.
+### The criterion had to be corrected, and this nearly killed the project
+
+**"`Sony:MakerNotes` byte-identical" is the wrong test, and on the first real run it failed on every
+single Sony file.** Taken at face value that reads as "stop, do not build on this backend". It would
+have been the wrong conclusion.
+
+Inserting a GPS IFD pointer adds one 12-byte entry to IFD0, which shifts the MakerNotes block 12
+bytes later in the file. Sony stores offsets inside MakerNotes relative to the start of the *file*, so
+a correct writer **must** rewrite them. Measured on `DSC00119.JPG`: exactly **41 of 37,664 bytes
+changed (0.11%), and every one of them was a value incremented by precisely 12.** Nothing else moved.
+
+So bytes changing is the expected result. Bytes staying identical while the block moves would be the
+corruption — that is the exiv2 failure mode this project already knows about.
+
+The mechanism is confirmed by the two GeoSetter-tagged fixtures: they report the MakerNotes block
+**byte-identical**, because IFD0 already contained a GPS pointer, so nothing shifted and no offset
+needed rewriting. Five files with no prior GPS drift by 41 bytes; two with existing GPS drift by zero.
+
+`verify.mjs` now proves the right thing rather than merely relaxing the old check — three independent
+angles, because no one of them suffices:
+
+1. **Every MakerNote tag decodes to the same value.** Catches lost or garbled fields.
+2. **`PreviewImage` and `ThumbnailImage` extract byte-identically.** Both are reached through absolute
+   file offsets held in MakerNotes, so this is what actually proves the offsets were repaired — a
+   stale offset yields truncated or garbage bytes, not a clean error. The 393KB preview still decodes
+   as a valid 1616×1080 JPEG.
+3. **ExifTool reports no new warnings.** It validates maker-note offset plausibility itself.
+
+Raw byte drift is still reported, but as information — and a *length* change or a large percentage
+would still stand out immediately.
 
 ### Q2 — Do raw ExifTool arguments reach the write path?
 
@@ -261,15 +294,40 @@ permissions bug.
 
 A recommendation for review, not a settled conclusion:
 
+- **Q1 passes.** ExifTool-WASM writes correct GPS to real A6400 JPEGs and leaves Sony MakerNotes
+  functionally intact, rewriting their internal offsets exactly as it should. Verified with a separate
+  native ExifTool 13.59. **Recommendation: keep ExifTool-WASM as the metadata backend.**
 - **Q2 and Q4 are clean.** Arguments get through, and memory is not a constraint.
 - **Q3 is uncomfortable but survivable at the real session size.** 4.5 s per photo means ~90 s for a
   20-photo session and ~4 min for 50 on desktop — acceptable if writes are backgrounded with per-file
   progress, which Phase 1 wants anyway. The tablet, at an estimated 3×, is the weak point.
-- **Q1 is unanswered and is therefore the pivot.** With speed demoted from "fatal" to "annoying",
-  correctness is the only criterion that can still disqualify this backend. If ExifTool-WASM preserves
-  Sony MakerNotes byte-identically it is very likely the right choice, slow writes and all, because it
-  is real ExifTool and nothing else here is. If it does not, the backend is wrong and the speed never
-  mattered.
+- **Nothing now argues for changing backend.** Correctness was the only criterion that could have
+  disqualified it, and it passed on real files. The remaining unknown is the tablet.
+
+### Cross-check against GeoSetter
+
+Two fixtures were tagged by GeoSetter, which the plan names as the reference implementation. Our
+output matches its tag set and its formats:
+
+| Tag | GeoSetter | Ours |
+|---|---|---|
+| `GPS:GPSLatitude` / `Ref`, `GPSLongitude` / `Ref` | yes | yes |
+| `GPS:GPSMapDatum` = `WGS-84` | yes | yes |
+| `GPS:GPSAltitude` / `Ref` | not on these files | yes, when an altitude is given |
+| `GPS:GPSDateStamp` / `GPSTimeStamp` | yes | yes, from `buildGeotagTags` when the instant is known |
+| `XMP-exif` mirror | yes | yes |
+| `GPS:GPSVersionID` | `2.2.0.0` | `2.3.0.0` (ExifTool's default — harmless) |
+
+Two gaps were found and closed in `packages/core/src/exif-tags.ts`:
+
+- **`XMP:GPSMapDatum` was missing.** GeoSetter writes the datum into XMP as well as EXIF. Added.
+- **`REQUIRED_WRITE_ARGS` still contained `-P` and `-overwrite_original`**, which Q2 proved fail in the
+  sandbox. It is now `['-n']`, with a regression test so it cannot come back.
+
+Still open, and deliberately not changed: the spike's `write-gps.mjs` builds its own tag set rather
+than calling `buildGeotagTags`, so Q1's evidence covers the coordinate tags but not `GPSDateStamp` /
+`GPSTimeStamp` on a real file. Worth wiring together in Phase 1 so the shipping tag set is the tested
+one.
 - **Reading metadata does not need this backend at all.** Reads cost ~0.5 s each — 100 s just to list
   a 200-photo folder — and parsing EXIF for display is low-risk work that plain JS does in
   milliseconds. A hybrid (read in JS, write with whatever Q1 vindicates) looks better than either

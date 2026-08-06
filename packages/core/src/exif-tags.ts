@@ -52,6 +52,9 @@ export function buildGeotagTags(options: GeotagOptions): TagSet {
     // XMP stores signed decimals, so no separate ref tags here.
     'XMP:GPSLatitude': formatDecimal(coordinates.latitude),
     'XMP:GPSLongitude': formatDecimal(coordinates.longitude),
+    // GeoSetter writes the datum into XMP as well as EXIF. Verified against two
+    // of its own output files during the spike, and matching it is the point.
+    'XMP:GPSMapDatum': 'WGS-84',
   };
 
   if (coordinates.altitude !== undefined) {
@@ -90,21 +93,32 @@ export function buildClearLocationTags(): TagSet {
     'XMP:GPSLatitude',
     'XMP:GPSLongitude',
     'XMP:GPSAltitude',
+    'XMP:GPSMapDatum',
   ];
 
   return Object.fromEntries(names.map((name) => [name, '']));
 }
 
 /**
- * Arguments that must accompany every write.
+ * Arguments that accompany every write.
  *
- * `-P` preserves the file modification date: geotagging is not an edit to the
- * photograph, and tools that sort by file date should not see one.
- * `-overwrite_original` suppresses ExifTool's `_original` backup copy — the
- * application makes its own atomic-write guarantees, and stray `_original`
- * files on a camera card are a nuisance.
+ * `-n` puts ExifTool in numeric mode, so the signed decimal degrees above are
+ * read as numbers instead of being parsed as DMS strings. It is the only one
+ * needed.
  *
- * Spike Q2 establishes whether these can actually be passed through the WASM
- * wrapper's write path. If they cannot, that is a finding, not a detail.
+ * Spike Q2 asked whether `-P` and `-overwrite_original` could be passed through
+ * the WASM wrapper, and the answer is that they can be passed and they *fail*:
+ * `-overwrite_original` errors with "Error erasing original", and `-P` warns with
+ * "Error setting file time". Both are correct failures. The WASM build has no
+ * real filesystem — it works on a copy inside a virtual FS and returns the bytes
+ * — so there is no original to erase and no file time to preserve.
+ *
+ * Neither is a loss, but each obligation moves to the host:
+ *   - Preserving the modification date is `FileStore.writeAtomic`'s job, applied
+ *     after the replace.
+ *   - There is no `_original` backup to suppress, so if we want one, we make it.
+ *
+ * Note also that the wrapper reports `success: false` for a bare warning, so the
+ * write path must inspect the error text rather than trust the boolean.
  */
-export const REQUIRED_WRITE_ARGS = ['-n', '-P', '-overwrite_original'] as const;
+export const REQUIRED_WRITE_ARGS = ['-n'] as const;

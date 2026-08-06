@@ -42,25 +42,198 @@ export async function readTags(filePath) {
 }
 
 /**
- * SHA-256 of the raw MakerNotes block.
+ * The raw MakerNotes block, and its hash.
  *
- * This is the load-bearing check. Sony packs autofocus, lens and white-balance
- * data into MakerNotes using offsets relative to the start of the file, so a
- * writer that moves things around without fixing those offsets silently
- * corrupts them. The tags still *read*, which is what makes it dangerous — only
- * a byte comparison catches it.
+ * Sony packs autofocus, lens and white-balance data into MakerNotes using
+ * offsets relative to the start of the *file*, so a writer that moves the block
+ * without fixing those offsets silently corrupts it. The tags still read, which
+ * is what makes that failure dangerous.
+ *
+ * Note carefully what this does and does not prove. Byte identity is **not** the
+ * correct criterion, and the first run of this spike against real A6400 files
+ * showed why: inserting a GPS IFD pointer adds one 12-byte IFD entry to IFD0,
+ * which shifts MakerNotes 12 bytes later in the file. A correct writer must then
+ * rewrite every absolute offset inside the block by +12. Measured on
+ * DSC00119.JPG, exactly 41 of 37,664 bytes changed, and every one of them was a
+ * value incremented by precisely 12.
+ *
+ * So bytes changing is the *expected* result, and bytes staying identical while
+ * the block moves would be the corruption. What has to be proved instead is that
+ * the content still decodes and that the offsets still resolve — see
+ * `makerNotesIntegrity`.
  */
-export async function makerNotesHash(filePath) {
+export async function makerNotesBlock(filePath) {
   try {
     const { stdout } = await run(EXIFTOOL, ['-b', '-MakerNotes', filePath], {
       encoding: 'buffer',
       maxBuffer: MAX_BUFFER,
     });
     if (!stdout || stdout.length === 0) return null;
-    return createHash('sha256').update(stdout).digest('hex');
+    return { bytes: stdout, hash: createHash('sha256').update(stdout).digest('hex') };
   } catch {
     return null;
   }
+}
+
+/** Every MakerNote tag, decoded, in numeric form. */
+async function readMakerNoteTags(filePath) {
+  const { stdout } = await run(
+    EXIFTOOL,
+    ['-json', '-n', '-G1', '-a', '-u', '-MakerNotes:all', filePath],
+    { maxBuffer: MAX_BUFFER },
+  );
+  const parsed = JSON.parse(stdout)[0] ?? {};
+  delete parsed.SourceFile;
+  return parsed;
+}
+
+/** A binary payload located by an absolute offset stored inside MakerNotes. */
+async function binaryTagHash(filePath, tag) {
+  try {
+    const { stdout } = await run(EXIFTOOL, ['-b', `-${tag}`, filePath], {
+      encoding: 'buffer',
+      maxBuffer: MAX_BUFFER,
+    });
+    if (!stdout || stdout.length === 0) return null;
+    return {
+      size: stdout.length,
+      hash: createHash('sha256').update(stdout).digest('hex'),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** ExifTool's own complaints. It is loud about maker-note offsets that do not add up. */
+async function readWarnings(filePath) {
+  try {
+    const { stdout } = await run(EXIFTOOL, ['-a', '-u', '-warning', '-error', filePath], {
+      maxBuffer: MAX_BUFFER,
+    });
+    return stdout.trim();
+  } catch (error) {
+    return `could not read warnings: ${error.message}`;
+  }
+}
+
+/**
+ * Whether Sony MakerNotes survived, judged on content rather than on bytes.
+ *
+ * Three independent angles, because no single one of them is sufficient:
+ *
+ *   1. Every MakerNote tag decodes to the same value. Catches lost or garbled
+ *      fields.
+ *   2. The embedded preview and thumbnail — both reached through absolute file
+ *      offsets held in MakerNotes — extract byte-identically. This is the check
+ *      that actually proves the offsets were repaired, because a stale offset
+ *      yields truncated or garbage bytes rather than a clean failure.
+ *   3. ExifTool reports no new warnings. It validates maker-note offset
+ *      plausibility itself and says so when they look wrong.
+ */
+export async function makerNotesIntegrity(originalPath, taggedPath) {
+  const checks = [];
+
+  const [originalBlock, taggedBlock] = await Promise.all([
+    makerNotesBlock(originalPath),
+    makerNotesBlock(taggedPath),
+  ]);
+
+  if (originalBlock === null) {
+    checks.push({
+      name: 'Sony MakerNotes present',
+      pass: false,
+      detail: 'the original has no MakerNotes — is this really a Sony file?',
+    });
+    return checks;
+  }
+
+  if (taggedBlock === null) {
+    checks.push({
+      name: 'Sony MakerNotes survived at all',
+      pass: false,
+      detail: 'MakerNotes are GONE from the tagged file — stop, the backend is destroying them',
+    });
+    return checks;
+  }
+
+  // 1. Content.
+  const [originalTags, taggedTags] = await Promise.all([
+    readMakerNoteTags(originalPath),
+    readMakerNoteTags(taggedPath),
+  ]);
+
+  const changed = Object.keys(originalTags).filter(
+    (tag) => JSON.stringify(originalTags[tag]) !== JSON.stringify(taggedTags[tag]),
+  );
+  const missing = Object.keys(originalTags).filter((tag) => !(tag in taggedTags));
+
+  checks.push({
+    name: 'Every MakerNote tag decodes to the same value',
+    pass: changed.length === 0 && missing.length === 0,
+    detail: changed.length === 0 && missing.length === 0
+      ? `all ${Object.keys(originalTags).length} tags identical`
+      : `${changed.length} changed, ${missing.length} missing: ${[...changed, ...missing].slice(0, 8).join(', ')}`,
+  });
+
+  // 2. The offsets actually resolve.
+  for (const tag of ['PreviewImage', 'ThumbnailImage']) {
+    const [before, after] = await Promise.all([
+      binaryTagHash(originalPath, tag),
+      binaryTagHash(taggedPath, tag),
+    ]);
+
+    if (before === null) {
+      checks.push({ name: `${tag} offset resolves`, pass: true, detail: 'not present in the original — skipped' });
+      continue;
+    }
+
+    checks.push({
+      name: `${tag} still resolves byte-identically`,
+      pass: after !== null && before.hash === after.hash && before.size === after.size,
+      detail: after === null
+        ? 'could not be extracted from the tagged file — a stale offset'
+        : `${before.size} B ${short(before.hash)} -> ${after.size} B ${short(after.hash)}`,
+    });
+  }
+
+  // 3. ExifTool's own verdict.
+  const [originalWarnings, taggedWarnings] = await Promise.all([
+    readWarnings(originalPath),
+    readWarnings(taggedPath),
+  ]);
+
+  checks.push({
+    name: 'No new ExifTool warnings',
+    pass: taggedWarnings === originalWarnings,
+    detail: taggedWarnings === originalWarnings
+      ? taggedWarnings === '' ? 'none, before or after' : `unchanged: ${truncate(taggedWarnings)}`
+      : `new: ${truncate(taggedWarnings)}`,
+  });
+
+  // Informational: quantify the byte drift so a *large* change still stands out.
+  const identical = originalBlock.hash === taggedBlock.hash;
+  let drift = 'identical';
+  if (!identical) {
+    if (originalBlock.bytes.length !== taggedBlock.bytes.length) {
+      drift = `LENGTH CHANGED: ${originalBlock.bytes.length} -> ${taggedBlock.bytes.length} B`;
+    } else {
+      let differing = 0;
+      for (let i = 0; i < originalBlock.bytes.length; i++) {
+        if (originalBlock.bytes[i] !== taggedBlock.bytes[i]) differing++;
+      }
+      const percent = (100 * differing) / originalBlock.bytes.length;
+      drift = `${differing} of ${originalBlock.bytes.length} bytes (${percent.toFixed(2)}%)`
+        + ' — expected, these are the rewritten offsets';
+    }
+  }
+  checks.push({ name: 'Raw MakerNotes byte drift (informational)', pass: true, detail: drift });
+
+  return checks;
+}
+
+function truncate(value, limit = 140) {
+  const text = String(value ?? '').replace(/\s+/g, ' ').trim();
+  return text.length > limit ? `${text.slice(0, limit)}…` : text;
 }
 
 /**
@@ -183,18 +356,10 @@ export async function compare({ originalPath, taggedPath, originalBytes, taggedB
   );
 
   // --- Nothing else moved ---
-  const [originalMakerNotes, taggedMakerNotes] = await Promise.all([
-    makerNotesHash(originalPath),
-    makerNotesHash(taggedPath),
-  ]);
-
-  add(
-    'Sony MakerNotes byte-identical',
-    originalMakerNotes !== null && originalMakerNotes === taggedMakerNotes,
-    originalMakerNotes === null
-      ? 'original had no MakerNotes — is this really an A6400 file?'
-      : `${short(originalMakerNotes)} -> ${short(taggedMakerNotes)}`,
-  );
+  //
+  // Judged on decoded content and resolvable offsets, not on raw byte identity,
+  // which a correct writer necessarily breaks. See makerNotesIntegrity.
+  checks.push(...(await makerNotesIntegrity(originalPath, taggedPath)));
 
   let imageOk = false;
   let imageDetail = '';

@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { buildClearLocationTags, buildGeotagTags } from '../src/exif-tags.ts';
+import {
+  REQUIRED_WRITE_ARGS,
+  buildClearLocationTags,
+  buildGeotagTags,
+} from '../src/exif-tags.ts';
 
 describe('buildGeotagTags', () => {
   it('writes unsigned EXIF magnitudes with separate hemisphere refs', () => {
@@ -20,9 +24,11 @@ describe('buildGeotagTags', () => {
     assert.equal(tags['XMP:GPSLongitude'], '-74.006');
   });
 
-  it('always states the datum', () => {
+  it('always states the datum, in XMP as well as EXIF', () => {
     const tags = buildGeotagTags({ coordinates: { latitude: 51.4778, longitude: 0 } });
     assert.equal(tags['EXIF:GPSMapDatum'], 'WGS-84');
+    // GeoSetter writes both, and matching its output is the point of this module.
+    assert.equal(tags['XMP:GPSMapDatum'], 'WGS-84');
   });
 
   it('omits altitude entirely when there is none, rather than writing zero', () => {
@@ -96,4 +102,24 @@ describe('buildClearLocationTags', () => {
       assert.equal(value, '');
     }
   });
+});
+
+describe('REQUIRED_WRITE_ARGS', () => {
+  it('asks for numeric mode, since the values are signed decimal degrees', () => {
+    assert.ok(REQUIRED_WRITE_ARGS.includes('-n'));
+  });
+
+  // Regression guard for a bug this project already had. Spike Q2 measured both
+  // of these failing against real A6400 files: -overwrite_original errors with
+  // "Error erasing original" and -P warns with "Error setting file time",
+  // because the WASM sandbox has no real filesystem. Preserving the modification
+  // date is FileStore.writeAtomic's job instead.
+  for (const forbidden of ['-P', '-overwrite_original']) {
+    it(`does not pass ${forbidden}, which fails in the WASM sandbox`, () => {
+      assert.ok(
+        !REQUIRED_WRITE_ARGS.includes(forbidden),
+        `${forbidden} breaks the write path — see spike/README.md Q2`,
+      );
+    });
+  }
 });
