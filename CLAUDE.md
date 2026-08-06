@@ -7,11 +7,19 @@ Source camera is a **Sony A6400** (no GPS receiver, so location is applied after
 
 ## Current state
 
-**Phase 0 — spike, not yet run.** The spike decides the native shell and confirms the metadata
-backend before any real architecture is committed. Nothing has been validated on real files yet.
+**Phase 0 — spike run on 2026-08-06. Q2, Q3 and Q4 answered; Q1 still open.** The spike decides the
+native shell and confirms the metadata backend before any real architecture is committed.
 
-Written so far: `packages/core/src/gps.ts` and `packages/core/src/time.ts` (pure logic, needed
-under any backend). Everything else is scaffolding.
+- `packages/core/src/gps.ts` and `packages/core/src/time.ts` are **tested and passing** (50 tests).
+- The spike needed three upstream fixes before it would run at all, all recorded in `spike/README.md`.
+- **Q1 — whether `Sony:MakerNotes` survive a write byte-identically — has never run**, because it
+  needs real A6400 files and none are available. It is now the question the backend decision turns on.
+- **Q3 found a real problem:** ExifTool-WASM writes a 24MP JPEG in ~4.5 s (~13 min for 200 photos on
+  a fast desktop, worse on a tablet). The cost is in the dependency's unbuffered WASI filesystem
+  shim, not in ExifTool, and batching cannot recover it.
+
+Do not begin Phase 1 until the backend question is closed. `packages/ui` and `packages/shells` are
+correctly still absent.
 
 Read **[HANDOFF.md](HANDOFF.md)** first — it has the exact next steps. The approved design is in
 **[docs/PLAN.md](docs/PLAN.md)**.
@@ -53,15 +61,24 @@ override for exactly that case.
 - **Licence: elect the Artistic License** where ExifTool and Perl offer the choice. No copyleft on
   our code, and it avoids the GPL/App Store conflict if iOS is ever added.
 
-## Still open — the spike decides
+## Still open
 
-- **Shell: Tauri 2 vs Capacitor.** Tauri 2 is the going-in recommendation (one codebase to desktop
-  binaries + an Android APK, ~10MB). Fall back to Capacitor if Tauri's Android SAF path can't
-  reliably write to a removable card.
-- **Whether ExifTool-WASM is viable on a tablet at all.** If it is too heavy, `piexifjs` writes
-  GPS to JPEG in ~30KB of plain JS — at the cost of the ARW/video future.
-- **Whether raw ExifTool arguments reach the write path** (`-P`, `-overwrite_original`,
-  `-XMP:GPS*`). If not, drop to zeroperl and drive ExifTool's own CLI.
+- **Q1: does a write preserve `Sony:MakerNotes` byte-identically?** Blocked on real A6400 fixtures.
+  Everything else observable passed on a synthetic file. This is the pivot.
+- **Shell: Tauri 2 vs Capacitor.** Tauri 2 remains the going-in recommendation. Nothing measured yet
+  distinguishes them; the deciding test (SAF writes to a removable card) needs the tablet. Note the
+  WASM alone is 24.2MB, against the ~10MB whole-app figure the plan assumed.
+- **Whether ExifTool-WASM is viable on a tablet.** Desktop webview matched Node, so the tablet will
+  be a CPU multiple of an already-failing write time. Unmeasured.
+
+Settled by the spike:
+
+- **Raw ExifTool arguments do reach the write path** via `{ args: [...] }`, proved by effect. But
+  `-P` and `-overwrite_original` correctly fail in the sandbox and must not be passed — there is no
+  real filesystem, and restoring mtime is the host's job.
+- **`piexifjs` is no longer the assumed escape hatch.** It re-serialises EXIF IFDs, which is the exact
+  mechanism that corrupts offset-relative MakerNotes — the same reason exiv2 is banned here. It must
+  clear the same byte-level check before being trusted.
 
 ## Scope
 
