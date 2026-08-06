@@ -157,7 +157,21 @@ floor, not a prediction.
 
 Watch for the WASM instance being rebuilt per call — a batch would pay that cost 200 times over.
 
-**Verdict: it costs too much. This is the finding that threatens the design.**
+**Verdict: it costs a lot, but less than the original bar implied.** The 200-photo bar was an
+assumption in the plan, not a requirement. Confirmed with the user on 2026-08-06: **a realistic
+session tags tens of photos, 10–50, not two hundred.** At ~4.5 s each that is roughly:
+
+| Session | Desktop | Tablet (est. 3×) |
+|---|---|---|
+| 20 photos | ~90 s | ~5 min |
+| 50 photos | ~4 min | ~12 min |
+| 200 photos | ~13 min | ~40 min+ |
+
+So this is uncomfortable rather than disqualifying, *provided* writes are backgrounded with per-file
+progress — which Phase 1 already requires for other reasons. It does mean the tablet is the weak
+point, and that a full card dump would be painful.
+
+The numbers below are unchanged; only their interpretation is.
 
 | Measurement | Node (desktop) | Webview (desktop) | Webview (tablet) |
 |---|---|---|---|
@@ -248,13 +262,14 @@ permissions bug.
 A recommendation for review, not a settled conclusion:
 
 - **Q2 and Q4 are clean.** Arguments get through, and memory is not a constraint.
-- **Q3 says ExifTool-WASM is not viable as the *write* backend for batches of 24MP JPEGs** — 4.5 s
-  each, ~13 minutes for 200 on a fast desktop, worse on a tablet, and batching recovers little.
-- **Q1 is unanswered and is now the pivot.** If ExifTool-WASM preserves Sony MakerNotes
-  byte-identically, it is the only implementation we currently trust to be *correct*, and the
-  question becomes whether to accept slow writes (background them, and note that a realistic session
-  is often tens of photos, not two hundred). If it does not preserve them, the backend is simply
-  wrong and speed never mattered.
+- **Q3 is uncomfortable but survivable at the real session size.** 4.5 s per photo means ~90 s for a
+  20-photo session and ~4 min for 50 on desktop — acceptable if writes are backgrounded with per-file
+  progress, which Phase 1 wants anyway. The tablet, at an estimated 3×, is the weak point.
+- **Q1 is unanswered and is therefore the pivot.** With speed demoted from "fatal" to "annoying",
+  correctness is the only criterion that can still disqualify this backend. If ExifTool-WASM preserves
+  Sony MakerNotes byte-identically it is very likely the right choice, slow writes and all, because it
+  is real ExifTool and nothing else here is. If it does not, the backend is wrong and the speed never
+  mattered.
 - **Reading metadata does not need this backend at all.** Reads cost ~0.5 s each — 100 s just to list
   a 200-photo folder — and parsing EXIF for display is low-risk work that plain JS does in
   milliseconds. A hybrid (read in JS, write with whatever Q1 vindicates) looks better than either
