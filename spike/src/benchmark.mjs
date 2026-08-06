@@ -175,21 +175,27 @@ async function syntheticLargeFile(bytes, targetSize) {
 }
 
 /**
- * Sum every .wasm asset under node_modules.
+ * Size of the largest distinct .wasm asset under node_modules.
  *
  * Searched from the repository root rather than the working directory, because
  * npm hoists workspace dependencies up there.
+ *
+ * Deliberately not a sum: the package ships the same zeroperl.wasm twice, once
+ * under dist/esm and once under dist/cjs, and a bundler pulls in exactly one of
+ * them. Adding them reports 50MB for a 25MB shipped artifact, which would make
+ * the Q3 cost look twice as bad as it is.
  */
 async function measureWasmSize() {
   const { glob } = await import('node:fs/promises');
   const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
   try {
-    let total = 0;
+    let largest = 0;
     for await (const entry of glob('**/node_modules/**/*.wasm', { cwd: repoRoot })) {
-      total += (await stat(path.join(repoRoot, entry))).size;
+      const { size } = await stat(path.join(repoRoot, entry));
+      if (size > largest) largest = size;
     }
-    return total || null;
+    return largest || null;
   } catch {
     return null;
   }

@@ -35,7 +35,8 @@ export async function writeGpsChecks() {
   const nativeVersion = await nativeExifToolVersion();
   if (!nativeVersion) {
     result(false, 'exiftool not found on PATH');
-    note('Install it: winget install PhilHarvey.ExifTool');
+    note('Install it: winget install OliverBetz.ExifTool');
+    note('Already installed but not on PATH? Set EXIFTOOL to the absolute path.');
     note('Without it, nothing here is independently verified and Q1 stays open.');
     return { failed: true };
   }

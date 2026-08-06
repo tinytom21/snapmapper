@@ -48,7 +48,11 @@ function zoneFormatter(timeZone: string): Intl.DateTimeFormat {
   if (!formatter) {
     formatter = new Intl.DateTimeFormat('en-US', {
       timeZone,
-      hour12: false,
+      // h23 explicitly, not hour12:false. The latter is under-specified: some
+      // engines resolve it to the h24 cycle and render midnight as hour 24,
+      // which the guard below has to clean up. Android webviews are the reason
+      // this matters — Node happens to render 00.
+      hourCycle: 'h23',
       year: 'numeric',
       month: '2-digit',
       day: '2-digit',
@@ -87,7 +91,9 @@ export function zoneOffsetMs(instantMs: number, timeZone: string): number {
     return Number(part.value);
   };
 
-  // Some engines render midnight as hour 24 under hour12:false.
+  // Belt and braces: hourCycle 'h23' should never yield 24, but an engine that
+  // ignores the option would, and an off-by-24-hours zone offset is not a
+  // failure worth discovering on a tablet.
   const hour = field('hour') % 24;
 
   const asIfUtc = Date.UTC(
@@ -137,8 +143,18 @@ export function naiveToInstant(naive: NaiveDateTime, timeZone: string): Date {
 /**
  * The true instant a photo was taken, correcting for clock drift and zone.
  *
- * Drift is removed from the wall-clock reading first, because the offset
- * describes an error in the clock's own face — not in the resulting instant.
+ * Drift is removed *after* the zone conversion, in the instant domain — the
+ * reading is resolved to an instant first, then the offset is subtracted from
+ * it. That ordering is deliberate, and the alternative is a real bug:
+ *
+ * Subtracting drift from the wall-clock reading before resolving it can land in
+ * a spring-forward gap, where the requested local time does not exist, and the
+ * resolution of a nonexistent time silently moves the answer by an hour. It also
+ * makes the correction zone-dependent, so an offset derived from a reference
+ * photo taken in winter would apply differently to a photo taken in summer.
+ * Drift is a property of the camera's crystal, not of anybody's timezone, so it
+ * belongs on the instant. `deriveClockOffsetSeconds` is the exact inverse of
+ * this, and the two are only consistent because both work in the instant domain.
  */
 export function photoInstant(naive: NaiveDateTime, clock: CameraClock): Date {
   const uncorrected = naiveToInstant(naive, clock.timeZone);

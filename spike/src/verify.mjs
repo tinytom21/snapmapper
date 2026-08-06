@@ -15,9 +15,18 @@ const run = promisify(execFile);
 /** Large buffer: A6400 MakerNotes plus an embedded thumbnail can be sizeable. */
 const MAX_BUFFER = 64 * 1024 * 1024;
 
+/**
+ * The native ExifTool to verify against.
+ *
+ * Windows installers put it in a per-user directory and only add it to the
+ * registry's PATH, so an already-running shell will not find it. Set EXIFTOOL to
+ * an absolute path to work around that without restarting anything.
+ */
+const EXIFTOOL = process.env.EXIFTOOL || 'exiftool';
+
 export async function nativeExifToolVersion() {
   try {
-    const { stdout } = await run('exiftool', ['-ver']);
+    const { stdout } = await run(EXIFTOOL, ['-ver']);
     return stdout.trim();
   } catch {
     return null;
@@ -26,7 +35,7 @@ export async function nativeExifToolVersion() {
 
 /** All tags, group-prefixed, in numeric form. */
 export async function readTags(filePath) {
-  const { stdout } = await run('exiftool', ['-json', '-n', '-G', '-a', '-u', filePath], {
+  const { stdout } = await run(EXIFTOOL, ['-json', '-n', '-G', '-a', '-u', filePath], {
     maxBuffer: MAX_BUFFER,
   });
   return JSON.parse(stdout)[0];
@@ -43,7 +52,7 @@ export async function readTags(filePath) {
  */
 export async function makerNotesHash(filePath) {
   try {
-    const { stdout } = await run('exiftool', ['-b', '-MakerNotes', filePath], {
+    const { stdout } = await run(EXIFTOOL, ['-b', '-MakerNotes', filePath], {
       encoding: 'buffer',
       maxBuffer: MAX_BUFFER,
     });
@@ -121,27 +130,50 @@ export async function compare({ originalPath, taggedPath, originalBytes, taggedB
   ]);
 
   // --- The coordinates actually landed, and a second implementation agrees ---
+  //
+  // Group-prefixed EXIF:GPSLatitude is the raw tag, and EXIF stores it
+  // *unsigned* with the hemisphere in a separate ref — so even under -n it reads
+  // back as 33.8688 for a southern location, never -33.8688. Composite:* is
+  // ExifTool's derived signed value, which is what consumers actually resolve.
+  // Comparing the raw tag against a signed expectation fails every southern and
+  // western case, which is exactly the case worth testing.
   const readBack = {
-    latitude: taggedTags['EXIF:GPSLatitude'],
-    longitude: taggedTags['EXIF:GPSLongitude'],
+    latitude: taggedTags['Composite:GPSLatitude'],
+    longitude: taggedTags['Composite:GPSLongitude'],
+    magnitudeLatitude: taggedTags['EXIF:GPSLatitude'],
+    magnitudeLongitude: taggedTags['EXIF:GPSLongitude'],
     latitudeRef: taggedTags['EXIF:GPSLatitudeRef'],
     longitudeRef: taggedTags['EXIF:GPSLongitudeRef'],
   };
 
-  // -n gives signed decimals, so compare against the signed values.
   const latitudeOk = closeEnough(readBack.latitude, expected.latitude);
   const longitudeOk = closeEnough(readBack.longitude, expected.longitude);
 
   add(
-    'GPS coordinates round-trip',
+    'GPS coordinates round-trip signed',
     latitudeOk && longitudeOk,
     `wrote ${expected.latitude}, ${expected.longitude} — read back ${readBack.latitude}, ${readBack.longitude}`,
   );
 
+  // Checked separately, because a writer that puts a signed value into the raw
+  // unsigned tag can still produce a correct Composite reading in ExifTool while
+  // confusing readers that combine magnitude and ref themselves.
+  const magnitudeOk = closeEnough(readBack.magnitudeLatitude, Math.abs(expected.latitude))
+    && closeEnough(readBack.magnitudeLongitude, Math.abs(expected.longitude));
   add(
-    'Hemisphere refs written explicitly',
-    Boolean(readBack.latitudeRef) && Boolean(readBack.longitudeRef),
-    `${readBack.latitudeRef ?? 'missing'} / ${readBack.longitudeRef ?? 'missing'}`,
+    'EXIF stores unsigned magnitudes, as the spec requires',
+    magnitudeOk,
+    `${readBack.magnitudeLatitude}, ${readBack.magnitudeLongitude}`,
+  );
+
+  const expectedLatitudeRef = expected.latitude < 0 ? 'S' : 'N';
+  const expectedLongitudeRef = expected.longitude < 0 ? 'W' : 'E';
+  add(
+    'Hemisphere refs written and correct',
+    readBack.latitudeRef === expectedLatitudeRef
+      && readBack.longitudeRef === expectedLongitudeRef,
+    `${readBack.latitudeRef ?? 'missing'} / ${readBack.longitudeRef ?? 'missing'}`
+      + ` (expected ${expectedLatitudeRef} / ${expectedLongitudeRef})`,
   );
 
   add(

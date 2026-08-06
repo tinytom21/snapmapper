@@ -23,7 +23,7 @@ winget install OpenJS.NodeJS.LTS
 ```
 
 ```bash
-winget install PhilHarvey.ExifTool
+winget install OliverBetz.ExifTool
 ```
 
 Confirm both, then install workspace dependencies:
@@ -31,6 +31,10 @@ Confirm both, then install workspace dependencies:
 ```bash
 node --version && exiftool -ver && npm install
 ```
+
+`PhilHarvey.ExifTool` does not exist in the winget repository — `OliverBetz.ExifTool` is the
+packaged Windows installer of the same tool. It installs per-user and registers PATH only in the
+registry, so open a fresh shell afterwards, or set `EXIFTOOL` to the absolute path.
 
 ### 2. Run the core tests — expect failures
 

@@ -159,6 +159,34 @@ describe('camera clock drift', () => {
     assert.equal(offset, -45);
   });
 
+  it('applies drift in the instant domain, not the wall-clock domain', () => {
+    // 02:15 on 2024-03-31 in London is 01:15Z, already BST. Removing an hour of
+    // drift from the instant gives 00:15Z. Removing it from the wall clock first
+    // would ask for 01:15 local, which does not exist that morning, and the gap
+    // resolution would silently answer 01:15Z — an hour out.
+    const instant = photoInstant(naive(2024, 3, 31, 2, 15), {
+      timeZone: 'Europe/London',
+      offsetSeconds: 3600,
+    });
+    assert.equal(instant.toISOString(), '2024-03-31T00:15:00.000Z');
+  });
+
+  it('applies an offset derived before a DST change to photos taken after it', () => {
+    // Drift is a property of the camera's clock, not of the timezone, so an
+    // offset measured in GMT has to still be correct once BST starts.
+    const timeZone = 'Europe/London';
+    const offsetSeconds = deriveClockOffsetSeconds(
+      naive(2024, 3, 30, 12, 0, 45),
+      new Date('2024-03-30T12:00:00.000Z'), // GMT: 12:00 local is 12:00Z
+      timeZone,
+    );
+    assert.equal(offsetSeconds, 45);
+
+    // Two days later the same camera reads 13:00:45 local, now BST.
+    const instant = photoInstant(naive(2024, 4, 1, 13, 0, 45), { timeZone, offsetSeconds });
+    assert.equal(instant.toISOString(), '2024-04-01T12:00:00.000Z');
+  });
+
   it('round-trips: an offset derived then applied recovers the true instant', () => {
     const trueInstant = new Date('2024-07-01T11:00:00.000Z');
     const cameraReading = naive(2024, 7, 1, 12, 3, 20);

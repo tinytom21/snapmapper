@@ -18,7 +18,7 @@ So ExifTool stays. It does not need rewriting, and it does not need replacing.
 
 | Finding | Consequence |
 |---|---|
-| ExifTool is compiled to WebAssembly via [zeroperl](https://andrews.substack.com/p/zeroperl-sandboxed-perl-with-webassembly) — [`6over3/exiftool`](https://github.com/6over3/exiftool) / `@uswriting/exiftool`, wrapping ExifTool 13.42, with a `writeMetadata()` that returns the modified file as a `Uint8Array` | Real ExifTool can run unmodified inside a webview on Android. No Perl install, no Termux, no server. |
+| ExifTool is compiled to WebAssembly via [zeroperl](https://andrews.substack.com/p/zeroperl-sandboxed-perl-with-webassembly) — [`6over3/exiftool`](https://github.com/6over3/exiftool) / `@uswriting/exiftool`, wrapping ExifTool 13.42, with a `writeMetadata()` that returns the modified file as an `ArrayBuffer` (verified against the installed package's type declarations — the earlier `Uint8Array` claim was wrong) | Real ExifTool can run unmodified inside a webview on Android. No Perl install, no Termux, no server. |
 | exiv2 corrupts Sony ARW when writing GPS ([KDE #326408](https://bugs.kde.org/show_bug.cgi?id=326408)); digiKam switched to ExifTool over exactly this | Do not use exiv2, even though it is the obvious C++ library. Matters for the later ARW phase. |
 | Chrome on Android has no `showDirectoryPicker()` ([crbug 40101963](https://issues.chromium.org/issues/40101963)) | A pure PWA cannot open a card folder and rewrite files in place. Android needs a native shell. |
 | Android 11+ refuses `ACTION_OPEN_DOCUMENT_TREE` grants on the **root** of an SD card volume | User grants `DCIM/` or `DCIM/100MSDCF/` on the card instead. Fine for this workflow, but the UI must ask for a subfolder, not the card root. |

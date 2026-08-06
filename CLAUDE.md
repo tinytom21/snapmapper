@@ -25,12 +25,18 @@ winget install OpenJS.NodeJS.LTS
 ```
 
 ```bash
-winget install PhilHarvey.ExifTool
+winget install OliverBetz.ExifTool
 ```
 
 Node 22.18+ or 24+ (the test scripts rely on built-in TypeScript stripping, no build step).
 Native ExifTool is the **independent verifier** for the spike — verifying ExifTool-WASM's output
 with a separate native ExifTool is what makes the golden-file check meaningful.
+
+There is no `PhilHarvey.ExifTool` in the winget repository; `OliverBetz.ExifTool` is the packaged
+Windows installer of Phil Harvey's ExifTool. It installs per-user to
+`%LOCALAPPDATA%\Programs\ExifTool` and only registers PATH in the registry, so an already-open
+shell will not find it. The spike reads an `EXIFTOOL` environment variable as an absolute-path
+override for exactly that case.
 
 ## Decisions already made
 

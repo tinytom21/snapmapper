@@ -139,13 +139,20 @@ function describe(output) {
   const keys = Object.keys(output);
   if (output.success === false) return `success: false, error: ${truncate(output.error)}`;
 
-  const dataType = output.data === undefined
-    ? 'no data'
-    : output.data instanceof Uint8Array
-      ? `Uint8Array(${output.data.byteLength})`
-      : typeof output.data;
+  return `keys [${keys.join(', ')}], data: ${describeData(output.data)}`;
+}
 
-  return `keys [${keys.join(', ')}], data: ${dataType}`;
+/**
+ * Writes return an ArrayBuffer, not the Uint8Array the plan assumed. Naming the
+ * concrete type here is the point of the probe, so report it precisely rather
+ * than collapsing everything unfamiliar to 'object'.
+ */
+function describeData(data) {
+  if (data === undefined) return 'no data';
+  if (data instanceof ArrayBuffer) return `ArrayBuffer(${data.byteLength})`;
+  if (ArrayBuffer.isView(data)) return `${data.constructor.name}(${data.byteLength})`;
+  if (typeof data === 'string') return `string(${data.length} chars)`;
+  return typeof data;
 }
 
 function truncate(value, limit = 120) {
