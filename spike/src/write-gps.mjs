@@ -20,6 +20,20 @@ import {
 } from './support.mjs';
 import { compare, nativeExifToolVersion } from './verify.mjs';
 
+/**
+ * Arguments for a sandboxed write. Deliberately *not* `-P` or
+ * `-overwrite_original`, which the plan assumed were mandatory.
+ *
+ * Both concern a real filesystem, and the WASM build has none — it works on a
+ * copy of the file inside a virtual FS and hands the bytes back. Asking it to
+ * erase the original fails outright ("Error erasing original"), and asking it to
+ * preserve a modification date only warns. Neither is a loss: there is nothing
+ * to overwrite, and preserving mtime is the host's job, done by `writeAtomic`
+ * on the way out. `-n` is the one that matters, so coordinates are read as
+ * decimal degrees rather than being parsed as a DMS string.
+ */
+const WRITE_ARGS = ['-n'];
+
 /** Greenwich Observatory — recognisable enough that a wrong result is obvious. */
 const TEST_LOCATION = { latitude: 51.4778, longitude: -0.0015, altitude: 45.7 };
 
@@ -76,7 +90,7 @@ export async function writeGpsChecks() {
         output = await pkg.writeMetadata(
           { name, data: originalBytes },
           tags,
-          { args: ['-n', '-P', '-overwrite_original'] },
+          { args: WRITE_ARGS },
         );
       } catch (error) {
         result(false, `${label}: writeMetadata threw — ${error.message}`);
@@ -94,9 +108,8 @@ export async function writeGpsChecks() {
       const taggedBytes = Buffer.from(output.data);
       await writeFile(outputPath, taggedBytes);
 
-      // -P should have preserved the modification date. The WASM build has no
-      // real filesystem, so it cannot do that itself — the shell has to restore
-      // it, and this is where we find out that is our job.
+      // Restoring the modification date is the host's job, not the WASM's. This
+      // is what `writeAtomic` will have to do in the real application.
       await utimes(outputPath, originalStat.atime, originalStat.mtime);
 
       note(`${label}: wrote in ${elapsed.toFixed(0)} ms -> ${path.basename(outputPath)}`);

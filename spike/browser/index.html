@@ -46,6 +46,23 @@
 
     <div id="log">Waiting for files…</div>
 
+    <!--
+      @uswriting/exiftool's ESM bundle does not inline its dependency — it
+      contains a literal `import ... from "@6over3/zeroperl-ts"`. A browser has no
+      node_modules resolution, so without this map the module fails to load with
+      "Failed to resolve module specifier" before any measurement can run.
+
+      This is a real packaging consequence, not a quirk of the spike: whatever
+      bundles the Android build has to resolve that specifier too.
+    -->
+    <script type="importmap">
+      {
+        "imports": {
+          "@6over3/zeroperl-ts": "/node_modules/@6over3/zeroperl-ts/dist/esm/index.js"
+        }
+      }
+    </script>
+
     <script type="module">
       const log = document.getElementById('log');
       const write = (text, cls) => {
@@ -68,8 +85,9 @@
       let pkg;
       const importStarted = performance.now();
       try {
-        // Served from node_modules by serve-browser.mjs.
-        pkg = await import('/vendor/exiftool/index.js');
+        // Served from node_modules by serve-browser.mjs. The package's ESM entry
+        // is dist/esm/index.js — the bare package root is not a module.
+        pkg = await import('/vendor/exiftool/dist/esm/index.js');
         write(`Module import: ${fmtMs(performance.now() - importStarted)}`, 'pass');
       } catch (error) {
         write(`Could not import the package: ${error.message}`, 'fail');
@@ -107,9 +125,9 @@
             const timings = [];
             for (let i = 0; i < 3; i++) {
               const started = performance.now();
-              const result = await pkg.writeMetadata(file, tags, {
-                args: ['-n', '-P', '-overwrite_original'],
-              });
+              // -n only. -P and -overwrite_original both fail in the WASM
+              // sandbox, which has no real filesystem to preserve or erase.
+              const result = await pkg.writeMetadata(file, tags, { args: ['-n'] });
               timings.push(performance.now() - started);
               if (!result?.success) {
                 write(`   write ${i + 1} failed: ${result?.error ?? 'unknown'}`, 'fail');

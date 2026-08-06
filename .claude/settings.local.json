@@ -4,7 +4,15 @@
       "Bash(git init *)",
       "Bash(git add *)",
       "Bash(git commit -q -m ' *)",
-      "Bash(git config *)"
+      "Bash(git config *)",
+      "Bash(grep -oE \".{300}\\\\bq\\\\b[,\\)\\\\s].{200}\" node_modules/@6over3/zeroperl-ts/dist/esm/index.js)",
+      "Bash(EXIFTOOL=\"C:/Users/tinyt/AppData/Local/Programs/ExifTool/ExifTool.exe\" npm run spike)",
+      "Bash(node \"/c/Users/tinyt/AppData/Local/Temp/claude/C--CLAUDE-CODE-photo-geotagging/c40544c1-2002-4dca-a882-4f282c22e439/scratchpad/cost-shape.mjs\")",
+      "Bash(npm run *)",
+      "Bash(cp \"/c/Users/tinyt/AppData/Local/Temp/claude/C--CLAUDE-CODE-photo-geotagging/c40544c1-2002-4dca-a882-4f282c22e439/scratchpad/where-is-the-time.mjs\" ./_tmp-where.mjs)",
+      "Bash(node ./_tmp-where.mjs)",
+      "Bash(grep -oE \"^import[^;]{0,120};|from\\\\\"[^\\\\\"]+\\\\\"|from'[^']+'\" node_modules/@uswriting/exiftool/dist/esm/index.js)",
+      "Bash(npm test *)"
     ]
   }
 }

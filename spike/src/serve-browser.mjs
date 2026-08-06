@@ -70,6 +70,19 @@ function resolvePath(pathname) {
     return path.join(BROWSER_DIR, 'index.html');
   }
 
+  // In a browser, zeroperl fetches './zeroperl.wasm' — and a relative URL in a
+  // bundled module resolves against the *document*, not the module, so the
+  // request arrives at the site root however deep the package really is. Serving
+  // it here is what makes the browser path work at all.
+  //
+  // The same applies to a real build: the 24MB WASM has to sit next to the page,
+  // not merely somewhere in the bundle.
+  if (decoded === '/zeroperl.wasm') {
+    return path.join(
+      REPO_ROOT, 'node_modules', '@6over3', 'zeroperl-ts', 'dist', 'esm', 'zeroperl.wasm',
+    );
+  }
+
   // The page imports the package straight out of node_modules.
   if (decoded.startsWith('/vendor/exiftool/')) {
     const rest = decoded.slice('/vendor/exiftool/'.length);

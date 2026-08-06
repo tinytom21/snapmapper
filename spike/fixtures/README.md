@@ -20,3 +20,15 @@ Six or so files, covering:
 
 Generic JPEGs from any other source will not do. The entire point of the exercise is proving that
 `Sony:MakerNotes` survives a write byte-identically, and only a real Sony file has those.
+
+## What the recorded numbers were measured against
+
+The Q2/Q3/Q4 results in `spike/README.md` were taken against a **synthetic** 6000×4000 JPEG
+(24MP, quality 90, 11.7MB — deliberately sized to match an A6400 fine JPEG), because no real files
+were available. It has been deleted so it cannot be mistaken for a fixture or quietly skew a later
+run.
+
+That stand-in was enough for timing, memory and argument handling, all of which depend on file
+*size* rather than file *provenance*. It was not enough for Q1: it has no MakerNotes, so the check
+the whole spike exists for has never run. Adding real files here and re-running
+`npm run write --workspace spike` is the remaining step.

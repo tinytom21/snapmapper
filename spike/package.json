@@ -9,6 +9,7 @@
     "probe": "node src/probe-api.mjs",
     "write": "node src/write-gps.mjs",
     "bench": "node src/benchmark.mjs",
+    "cost": "node src/cost-shape.mjs",
     "browser": "node src/serve-browser.mjs"
   },
   "dependencies": {

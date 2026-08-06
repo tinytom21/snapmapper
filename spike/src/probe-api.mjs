@@ -11,12 +11,27 @@
  * results really look like, and whether raw arguments have any effect.
  */
 
-import { isMain, loadFixture, section, result } from './support.mjs';
+import { isMain, loadFixture, note, section, result } from './support.mjs';
+import { patchZeroperl } from './patch-zeroperl.mjs';
 
 const REQUIRED_ARGS = ['-n', '-P', '-overwrite_original'];
 
 export async function probeApi() {
   const findings = {};
+
+  // Has to happen before the first import: the dependency cannot load its own
+  // WASM on Windows, or from any path containing a space, without this.
+  section('Upstream WASM loader patch');
+  const patch = await patchZeroperl();
+  findings.zeroperlPatch = patch;
+  if (patch.patched) {
+    result(true, 'patched @6over3/zeroperl-ts to resolve zeroperl.wasm correctly');
+    note('Upstream uses URL.pathname as a filesystem path. See patch-zeroperl.mjs.');
+  } else if (patch.alreadyPatched) {
+    result(true, 'already patched');
+  } else {
+    result(false, patch.reason);
+  }
 
   section('Package surface');
 
@@ -98,10 +113,20 @@ export async function probeApi() {
 
   const tags = { 'EXIF:GPSLatitude': '51.4778', 'EXIF:GPSLatitudeRef': 'N' };
 
+  // Each argument is tried on its own. Passing the three together only tells you
+  // that *something* in the set is a problem, and they turn out not to be
+  // equivalent: one is required, and two are actively harmful here.
   const attempts = [
-    { label: 'no options', options: {} },
-    { label: '{ args: [...] }', options: { args: REQUIRED_ARGS } },
-    { label: '{ extraArgs: [...] }', options: { extraArgs: REQUIRED_ARGS } },
+    { label: 'no options (control)', options: {} },
+    { label: "args: ['-n']", options: { args: ['-n'] } },
+    { label: "args: ['-P']", options: { args: ['-P'] } },
+    { label: "args: ['-overwrite_original']", options: { args: ['-overwrite_original'] } },
+    { label: `args: ${JSON.stringify(REQUIRED_ARGS)}`, options: { args: REQUIRED_ARGS } },
+    // The control that matters. `extraArgs` is not a real option, so if this
+    // "passes" it proves only that unknown keys are ignored — which is exactly
+    // how a passthrough check fools itself into a green tick.
+    { label: 'extraArgs (not a real option — expect it to be ignored)',
+      options: { extraArgs: REQUIRED_ARGS } },
   ];
 
   findings.writeArgSupport = {};
@@ -112,10 +137,7 @@ export async function probeApi() {
       const bytes = output?.data;
       const ok = output?.success === true && bytes && bytes.byteLength > 0;
 
-      result(
-        ok,
-        `${attempt.label} — ${describe(output)}${ok ? `, ${bytes.byteLength} bytes out` : ''}`,
-      );
+      result(ok, `${attempt.label} — ${describe(output)}`);
       findings.writeArgSupport[attempt.label] = ok ? 'accepted' : 'rejected';
     } catch (error) {
       result(false, `${attempt.label} — threw: ${error.message}`);
@@ -123,11 +145,38 @@ export async function probeApi() {
     }
   }
 
-  console.log(`
-  Being *accepted* is not the same as being *applied* — an unknown option is
-  easily ignored. write-gps.mjs settles it by checking whether the file
-  modification date survived, which is what -P exists to do.
-`);
+  // --- Passthrough proved by effect, not by exit code --------------------
+  //
+  // The only conclusive test is an argument whose result is visible in the
+  // output file. Writing a tag via `args` rather than via the tags object does
+  // that: if the description comes back, the argument genuinely reached
+  // ExifTool's command line.
+  section('Raw argument passthrough, proved by effect');
+
+  const MARKER = 'passthrough-proof-42';
+  try {
+    const written = await pkg.writeMetadata(workingFile.build(), tags, {
+      args: [`-EXIF:ImageDescription=${MARKER}`],
+    });
+
+    if (written?.success !== true) {
+      result(false, `write with a tag-setting argument failed: ${truncate(written?.error)}`);
+      findings.argsApplied = false;
+    } else {
+      const readBack = await pkg.parseMetadata(
+        { name: fixture.name, data: new Uint8Array(written.data) },
+        { args: ['-json', '-EXIF:ImageDescription'] },
+      );
+      const applied = String(readBack?.data ?? '').includes(MARKER);
+      result(applied, applied
+        ? 'an argument set a tag that reads back — arguments genuinely reach ExifTool'
+        : 'the argument was accepted but had no effect — it is being ignored');
+      findings.argsApplied = applied;
+    }
+  } catch (error) {
+    result(false, `passthrough proof threw: ${error.message}`);
+    findings.argsApplied = false;
+  }
 
   return { findings };
 }

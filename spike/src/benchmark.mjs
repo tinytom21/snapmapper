@@ -84,8 +84,10 @@ export async function benchmark() {
 
   for (let i = 0; i < BATCH_SIZE; i++) {
     const started = performance.now();
+    // -n only. -P and -overwrite_original assume a real filesystem the WASM
+    // sandbox does not have; see WRITE_ARGS in write-gps.mjs.
     const output = await pkg.writeMetadata({ name, data: bytes }, tags, {
-      args: ['-n', '-P', '-overwrite_original'],
+      args: ['-n'],
     });
     timings.push(performance.now() - started);
 
