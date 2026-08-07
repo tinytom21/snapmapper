@@ -12,21 +12,24 @@ ILCE-6400 JPEGs.**
 - **Desktop: keep ExifTool-WASM.** It is correct on real A6400 files — the only thing that could have
   ruled it out — and ~2–4.5 s per photo is acceptable at the real session size of 10–50 photos,
   provided writes are backgrounded.
-- **Android: ruled out for whole-file writes, but recovered by splicing.** A phone (Android 10, Chrome
-  150) wrote a 5.4MB JPEG in **76 s**, at **13.87 s/MB against the desktop's 0.26 s/MB** — 53× worse,
-  while reads were only 3.5× slower. Startup is not the problem (it is *faster* than desktop); the
-  per-byte write path is, and at 99% bytes batching cannot help.
-- **Q6 removes the bytes instead.** Hand ExifTool only the ~1.5% of the file that is metadata and splice
-  its output back onto the untouched scan data. Passes all 184 checks, projecting **~2 s per photo on the
-  phone instead of 76 s**. Real ExifTool still does every byte of the metadata work, so Q1's correctness
-  carries over intact.
+- **Android works, once the input is bytes rather than a `Blob`.** Measured on a phone (Android 10, Chrome
+  150), same 5.4MB file: **1.11 s** passing a `Uint8Array` against **~76 s** passing the `File` — ~69×,
+  from the input type alone. zeroperl reads Blob-backed files with one
+  `blob.slice().arrayBuffer()` per read syscall; `Uint8Array` gets a plain `set()`. **The single most
+  important line in this document: read the Blob to a `Uint8Array` yourself before calling
+  `writeMetadata`.**
+- **Q6's splice is a further 3.2× on the phone**, and worth having: **343 ms** against 1.11 s, because
+  ExifTool only sees the ~2% of the file that is metadata. It passes all 184 correctness checks, with real
+  ExifTool still doing every byte of the metadata work, so Q1's correctness carries over intact. It is now
+  an optimisation rather than a rescue.
 - **Q5 closes the escape hatch.** `piexifjs` writes in 6 ms and corrupts the file — 47 tags lost and
   ExifTool reporting incorrect maker-note offsets. Do not use it.
 
-**Consequence for the plan:** WebAssembly was chosen to run one real ExifTool on both desktop and
-Android. That premise survives, but only with the splice — a whole-file write is desktop-only. The
-remaining Android unknown is a measurement, not a design question: confirm the ~2 s projection on a
-device.
+**Consequence for the plan:** WebAssembly's premise survives intact — one real ExifTool, correct on real
+A6400 files, fast enough on desktop *and* Android. **20 photos on a phone: ~6.9 s spliced, ~22 s
+unspliced.** Nothing here argues for a second backend or a platform split.
+
+The remaining Phase 0 item is the shell choice, which needs the SAF-to-removable-card test on hardware.
 
 ## Before anything ran: three upstream defects
 
@@ -249,6 +252,40 @@ The numbers below are unchanged; only their interpretation is.
 
 Phone: **Android 10, Chrome 150, 8 cores** (Chrome's reduced user agent hides the model). No Android
 tablet was available, so a phone stands in.
+
+> ### ⚠ Correction — the mobile diagnosis below was wrong
+>
+> The 60–76 s writes and the 13.87 s/MB fit are real measurements, but the cause attributed to them —
+> "the unbuffered WASI *write* shim" — is **not** the cause, and the conclusion drawn from it ("Android is
+> ruled out") was **wrong**.
+>
+> **It was a confound in this harness.** The Node scripts always passed a `Buffer`; this page always
+> passed the browser's `File` object. On a desktop those two cost about the same, so the difference stayed
+> invisible — and every cross-platform comparison here was quietly comparing two different code paths.
+>
+> The mechanism is in zeroperl's `fd_read`. A **Blob-backed** file is read with
+>
+> ```js
+> await blob.slice(position, position + n).arrayBuffer()   // per iovec, per syscall
+> ```
+>
+> — a fresh Blob, promise and allocation for every buffered chunk ExifTool asks for, thousands of them for
+> a 5.4MB file. A **Uint8Array-backed** file is read with a plain `set()`. And `fd_write` rejects Blobs
+> outright with `EINVAL`, so the write path was never implicated at all.
+>
+> Measured on the same phone, same 5.4MB file: **~76 s passing a `File`, 1.11 s passing a `Uint8Array`**.
+> Roughly **69×**, from changing the input type and nothing else.
+>
+> The penalty exists on the desktop too — the A/B mode measures **3.99 s vs 2.38 s, 1.7×**, on a 3MB file
+> in a desktop webview. Same mechanism, and far too small to notice against everything else, which is
+> precisely how it stayed hidden while the mobile numbers were being blamed on the write shim.
+>
+> **So Android was never ruled out.** The rule for Phase 1 is one line: *read the Blob to a `Uint8Array`
+> yourself, in a single `arrayBuffer()` call, before handing it to `writeMetadata`.* Reproduce it with the
+> "Input type A/B" mode on the measurement page.
+>
+> Everything below is left as written, because the reasoning was sound given the numbers and the mistake
+> is worth being able to see. Read it as a record of how the wrong culprit got a confident write-up.
 
 ### The phone result changes the Android picture, and possibly the whole rationale
 
@@ -544,11 +581,27 @@ Plumbing confirmed in a desktop webview (stub → write → splice → verify �
 coordinates reading back, 1.8× faster). The desktop ratio is expected to be unimpressive; the phone is
 where the 38× should show up.
 
+Measured on the phone (Android 10, Chrome 150), 5.4MB JPEG:
+
 | Result | |
 |---|---|
-| Phone, spliced | _pending_ |
-| Phone, whole file | _pending_ |
-| Ratio | _pending_ |
+| Stub handed to ExifTool | 103.6 KB — **1.9% of the file** |
+| Phone, spliced | **375 / 343 / 342 ms** |
+| Phone, whole file (`Uint8Array`) | **1.11 s** |
+| Ratio | **3.2×** |
+| Phone, whole file (`File`/Blob) | ~76 s — see the correction above |
+| No new ExifTool warnings on the spliced file | **PASS** |
+| Coordinates read back | **PASS** |
+| 20 photos spliced | **6.85 s** |
+| 50 photos spliced | **17.14 s** |
+
+Both on-device verifications passed, so the splice is not merely fast on the phone — it produces a file
+ExifTool is happy with, on the device, using the same implementation the Node run proved against a native
+ExifTool.
+
+**The projection was wrong in an instructive direction.** It predicted ~2 s and the real figure is 343 ms,
+because the projection applied the (Blob-inflated) 13.87 s/MB rate to the stub. With the real bottleneck
+identified, the splice is better than advertised and the whole-file path is viable too.
 
 ### Caveats, honestly
 

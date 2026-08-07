@@ -28,20 +28,26 @@ failed on every Sony file on the first run. See the note in CLAUDE.md before you
 
 ## The write path Phase 1 should build
 
-**Do not hand the whole file to ExifTool.** Give it a stub of the metadata headers (SOI up to and
-including the SOS header, plus ~4KB of scan data and an EOI), let it write GPS exactly as it does now,
-then splice its rewritten headers onto the original scan data with a plain byte copy. Reference
-implementation: `spike/src/splice-write.mjs`.
+**1. Never pass a `File` or `Blob` to `writeMetadata`. Read it to a `Uint8Array` first,
+in one `arrayBuffer()` call.** This is worth ~69× on a phone — 1.11 s versus ~76 s for the same 5.4MB
+file — because zeroperl reads Blob-backed files with `await blob.slice(...).arrayBuffer()` once per read
+syscall. A desktop hides it entirely. It cost most of a day and produced a confident, wrong conclusion
+that Android was not viable; don't pay for it twice.
 
-That is 1.5% of the bytes on an A6400 JPEG, and it is the difference between ~2 s and ~76 s per photo on
-a phone. Real ExifTool still performs every byte of the metadata rewrite, so the correctness Q1 proved
-carries over — verified: 184 checks, zero failures, the same 0.11% offset-only MakerNotes drift.
+**2. Splice rather than sending the whole photograph.** Give ExifTool a stub of the metadata headers (SOI
+up to and including the SOS header, plus ~4KB of scan data and an EOI), let it write GPS exactly as it
+does now, then reattach the original scan data with a plain byte copy. That is ~2% of the bytes, and a
+further 3.2× on a phone: **343 ms per photo, 6.85 s for 20.** Reference implementation:
+`spike/src/splice-core.mjs`, shared by the Node verification and the browser measurement.
 
-Assert the invariant in production rather than trusting it: compare the scan data before and after and
-refuse the write if it moved.
+Real ExifTool still performs every byte of the metadata rewrite, so the correctness Q1 proved carries
+over — verified: 184 checks, zero failures, the same 0.11% offset-only MakerNotes drift.
 
-**And never re-serialise EXIF yourself.** Q5 measured `piexifjs` doing exactly that: 6 ms, 47 tags lost,
-and ExifTool reporting incorrect maker-note offsets.
+`spliceHeaders` already asserts rather than trusts, and production should keep that: it re-parses its own
+output and refuses to return a file whose scan data moved or changed length.
+
+**3. Never re-serialise EXIF yourself.** Q5 measured `piexifjs` doing exactly that: 6 ms, 47 tags lost
+including `OffsetTime`, and ExifTool reporting incorrect maker-note offsets.
 
 ## What is left before Phase 1
 
@@ -164,3 +170,6 @@ iteration loop.
   exists only in secure contexts, so over plain `http://` on a LAN address reads work and every write
   throws `crypto.randomUUID is not a function`. Testing over `localhost` hides this, because localhost
   counts as secure. Check `window.isSecureContext` in the chosen shell's webview.
+- **A `Blob` input is ~69× slower than a `Uint8Array` on mobile**, and identical on desktop. See the write
+  path above. Any benchmark that compares a Node run against a browser run must pass the same input type
+  in both, or it is comparing two different code paths — which is exactly the mistake made here.

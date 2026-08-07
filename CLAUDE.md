@@ -14,24 +14,25 @@ reasoning are in `spike/README.md`.
   intact, verified with a separate native ExifTool 13.59.
 - `packages/core` is **tested and passing** (53 tests).
 - The spike needed three upstream fixes before it would run at all — see the gotchas below.
-- **Q3 on desktop:** ~2 s per 5–7MB JPEG, ~4.5 s per 12MB one. Acceptable at the real session size
-  (10–50 photos) if writes are backgrounded; painful for a whole card. The cost is in the dependency's
-  unbuffered WASI filesystem shim, not in ExifTool, and batching cannot recover it.
-- **Q3 on mobile rules Android out for writes.** A phone (Android 10, Chrome 150) wrote a 5.4MB JPEG in
-  **76 s**: **13.87 s/MB against the desktop's 0.26 s/MB**, 53× worse, while reads were only 3.5× slower.
-  Startup is *faster* than desktop, so the fault is entirely in the per-byte write path — the unbuffered
-  WASI filesystem shim. 99% of the cost is bytes, so batching cannot help. ~25 min for 20 photos.
-- **Q6 recovers Android by not sending ExifTool the photograph.** Metadata is only ~1.5% of an A6400
-  JPEG. Give ExifTool a stub of the headers, let it do all the EXIF and MakerNote work unchanged, then
-  splice its output onto the original scan data with a byte copy. **184 checks, zero failures** — results
-  identical to Q1, including the same 0.11% offset-only MakerNotes drift. Projects to **~2 s per photo on
-  the phone instead of 76 s**. Verified that the rewritten APP1 is byte-identical whether ExifTool sees
-  1.6% of the file or all of it, so the metadata rewrite does not depend on the body.
+- **NEVER hand `writeMetadata` a `File` or `Blob`. Read it to a `Uint8Array` first.** zeroperl reads
+  Blob-backed files with `await blob.slice(...).arrayBuffer()` **once per read syscall** — thousands of
+  allocations for one photo. Measured on a phone with the same 5.4MB file: **1.11 s with a `Uint8Array`,
+  ~76 s with the `File`** (~69×). Desktop hides it completely, which is how it went unnoticed for most of
+  Phase 0 and produced a confident but wrong "Android is not viable" conclusion. `fd_write` rejects Blobs
+  outright, so this is purely about reading the input.
+- **Q3 cost, with bytes passed correctly:** desktop ~2 s per 5–7MB JPEG; phone **1.11 s** for 5.4MB.
+  Comfortable at the real session size of 10–50 photos.
+- **Q6 — splice, don't send the photograph.** Metadata is only ~2% of an A6400 JPEG. Give ExifTool a stub
+  of the headers, let it do all the EXIF and MakerNote work unchanged, then splice its output onto the
+  original scan data with a byte copy. **184 checks, zero failures** — identical to Q1, same 0.11%
+  offset-only MakerNotes drift. On the phone: **343 ms vs 1.11 s**, and **6.85 s for 20 photos**. Verified
+  that the rewritten APP1 is byte-identical whether ExifTool sees 1.6% of the file or all of it, so the
+  metadata rewrite does not depend on the body. Reference: `spike/src/splice-core.mjs`.
 - **Q5: never use `piexifjs`.** It writes in 6 ms and corrupts the file — 116 MakerNote tags changed, 47
   tags dropped including `OffsetTime`, and ExifTool reporting `Possibly incorrect maker notes offsets`.
   The exiv2 failure mode exactly. A casual check passes, which is what makes it dangerous.
-- **Remaining Android unknown is a measurement, not a design question:** confirm the ~2 s splice
-  projection on a device. The shell still needs the SAF-to-removable-card test on real hardware.
+- **Both platforms are viable on one backend.** The remaining Phase 0 item is the shell choice, which
+  needs the SAF-to-removable-card test on real hardware.
 
 `packages/ui` and `packages/shells` do not exist yet.
 

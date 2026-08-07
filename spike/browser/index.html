@@ -46,8 +46,9 @@
 
     <label for="mode">What to measure:</label>
     <select id="mode">
-      <option value="splice" selected>Splice vs whole file (the live question)</option>
-      <option value="sweep">Cost shape — size sweep (already answered; for a new device)</option>
+      <option value="splice" selected>Splice vs whole file</option>
+      <option value="input">Input type A/B — File vs Uint8Array (the real culprit)</option>
+      <option value="sweep">Cost shape — size sweep</option>
     </select>
 
     <input type="file" id="picker" accept="image/jpeg" multiple />
@@ -174,8 +175,16 @@
               'EXIF:GPSLongitudeRef': 'W',
             };
 
-            if (document.getElementById('mode').value === 'splice') {
+            const mode = document.getElementById('mode').value;
+
+            if (mode === 'splice') {
               await measureSplice(file, tags);
+              write('');
+              continue;
+            }
+
+            if (mode === 'input') {
+              await measureInputType(file, tags);
               write('');
               continue;
             }
@@ -213,12 +222,16 @@
 
             const points = [];
             for (const size of sizes) {
-              const slice = size === file.size
-                ? file
-                : new File([file.slice(0, size)], file.name, { type: file.type });
+              // Bytes, not a File. Passing a Blob makes zeroperl read it through
+              // blob.slice().arrayBuffer() once per syscall, which on mobile dwarfs
+              // everything else being measured — it is what made the first version of
+              // this sweep report 13.87 s/MB and blame the write shim.
+              const slice = new Uint8Array(await file.slice(0, size).arrayBuffer());
 
               const started = performance.now();
-              const result = await pkg.writeMetadata(slice, tags, { args: ['-n'] });
+              const result = await pkg.writeMetadata(
+                { name: file.name, data: slice }, tags, { args: ['-n'] },
+              );
               const elapsed = performance.now() - started;
 
               const ok = result?.success === true;
@@ -252,9 +265,11 @@
               // recheck of sizes[0] failed too and the drift line silently never
               // appeared — losing the one diagnostic that guards the conclusion.
               const firstSize = Math.round(points[0].mb * 1048576);
-              const slice = new File([file.slice(0, firstSize)], file.name, { type: file.type });
+              const slice = new Uint8Array(await file.slice(0, firstSize).arrayBuffer());
               const started = performance.now();
-              const result = await pkg.writeMetadata(slice, tags, { args: ['-n'] });
+              const result = await pkg.writeMetadata(
+                { name: file.name, data: slice }, tags, { args: ['-n'] },
+              );
               const elapsed = performance.now() - started;
 
               if (result?.success === true) {
@@ -305,6 +320,60 @@
 
         write('Record these numbers in spike/README.md, noting the device.');
       });
+
+      /*
+       * The A/B that corrects the record.
+       *
+       * The first phone runs handed `writeMetadata` the File object and measured
+       * 60-76 s for a 5.4MB JPEG. The splice run handed it a Uint8Array and measured
+       * 1.11 s for the same whole file on the same device. That was a confound in the
+       * harness, not a property of mobile: the Node scripts always passed Buffers and
+       * the page always passed a File, and on a desktop the two cost the same, so it
+       * stayed invisible.
+       *
+       * The mechanism is in zeroperl's fd_read. A Blob-backed file is read with
+       *
+       *     await blob.slice(pos, pos + n).arrayBuffer()
+       *
+       * once per iovec per syscall — a fresh Blob, promise and allocation for every
+       * buffered chunk ExifTool asks for, thousands of them for a 5.4MB file. A
+       * Uint8Array-backed file is read with a plain set(). fd_write refuses Blobs
+       * outright (EINVAL), so the write path was never implicated.
+       *
+       * This measures both on one device so the claim rests on a controlled
+       * comparison rather than on two runs a conversation apart.
+       */
+      async function measureInputType(file, tags) {
+        const asBytes = new Uint8Array(await file.arrayBuffer());
+
+        write('   Uint8Array (bulk copy in, one allocation):');
+        const bytesMs = await timeWrite({ name: file.name, data: asBytes }, tags);
+        write(`      ${bytesMs === null ? 'failed' : fmtMs(bytesMs)}`, bytesMs === null ? 'fail' : 'pass');
+
+        write('   File / Blob (one blob.slice().arrayBuffer() per read syscall):');
+        write('      this is the slow one — up to a minute or two…');
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        const fileMs = await timeWrite(file, tags);
+        write(`      ${fileMs === null ? 'failed' : fmtMs(fileMs)}`, fileMs === null ? 'fail' : 'fail');
+
+        if (bytesMs !== null && fileMs !== null) {
+          write('');
+          write(`   passing a File costs ${(fileMs / bytesMs).toFixed(1)}x more than passing its bytes`,
+            fileMs / bytesMs > 3 ? 'fail' : 'pass');
+          write('   => always read the Blob to a Uint8Array yourself, in one call, first.');
+        }
+      }
+
+      async function timeWrite(input, tags) {
+        try {
+          const started = performance.now();
+          const result = await pkg.writeMetadata(input, tags, { args: ['-n'] });
+          const elapsed = performance.now() - started;
+          return result?.success === true ? elapsed : null;
+        } catch {
+          return null;
+        }
+      }
 
       /*
        * Splice against whole-file, on the same device, in one pass.
