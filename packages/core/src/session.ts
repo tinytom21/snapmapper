@@ -281,6 +281,31 @@ export function markSaved(session: Session, savedNames: readonly string[]): Sess
   return { ...session, photos, edits, history: [], future: [] };
 }
 
+/**
+ * Add photos to an open session, keeping everything else.
+ *
+ * Needed because the clock-sync reference frame is shot *after* work has started, so there has
+ * to be a way to bring one more file in without discarding the staged edits, the measurement,
+ * or the undo history.
+ *
+ * Not undoable, and deliberately so: adding a photo is not an edit to anything, and putting it
+ * on the undo stack would mean Ctrl+Z made a file disappear from the list.
+ *
+ * Entries whose names are already present are ignored rather than replacing what is there.
+ * Re-reading a photo already open would throw away nothing useful and cost a metadata read —
+ * three seconds on a phone — for no gain.
+ */
+export function addPhotos(session: Session, entries: readonly PhotoEntry[]): Session {
+  const present = new Set(session.photos.map((entry) => entry.ref.name));
+  const fresh = entries.filter((entry) => !present.has(entry.ref.name));
+  if (fresh.length === 0) return session;
+
+  const photos = [...session.photos, ...fresh]
+    .sort((a, b) => a.ref.name.localeCompare(b.ref.name, undefined, { numeric: true }));
+
+  return { ...session, photos };
+}
+
 // --- Undo / redo -------------------------------------------------------------
 
 export function canUndo(session: Session): boolean {

@@ -38,11 +38,19 @@ export interface ClockPanelProps {
   readonly onClearSync: () => void;
   /** Reads the reference photo and looks for the clock code. */
   readonly onScanReference: (name: string) => Promise<string | null>;
+  /**
+   * How to bring the reference frame in, which differs by how the session was opened.
+   *
+   * A picked selection has no folder to re-scan, so the reference photo is added with the file
+   * picker instead. Naming the actual button avoids instructions that do not match the screen.
+   */
+  readonly addPhotosLabel: string;
   readonly busy: boolean;
 }
 
 export function ClockPanel({
   session,
+  addPhotosLabel,
   onTimeZone,
   onOffsetSeconds,
   onSync,
@@ -92,7 +100,9 @@ export function ClockPanel({
         <div className="sync">
           <ol className="steps">
             <li>Photograph this code with the camera.</li>
-            <li>Copy the photo into the folder and press <strong>Re-scan folder</strong>.</li>
+            <li>
+              Bring that photo in with <strong>{addPhotosLabel}</strong>.
+            </li>
             <li>Select that one photo, then press <strong>Read clock from photo</strong>.</li>
           </ol>
 

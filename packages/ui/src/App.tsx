@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
+  addPhotos as addPhotosToSession,
   applySync,
   assignLocation,
   canRedo,
@@ -35,6 +36,7 @@ import {
   type Coordinates,
   type MetadataBackend,
   type PhotoEntry,
+  type PhotoRef,
   type Session,
 } from '@geotagger/core';
 
@@ -43,10 +45,12 @@ import { PlatformReport } from './PlatformReport.tsx';
 import { PhotoMap, type MapPin } from './PhotoMap.tsx';
 import { scanForSyncCode } from './clock-sync-qr.ts';
 import {
+  LARGE_FOLDER_THRESHOLD,
   MTIME_LIMITATION,
   createBrowserFileStore,
+  isFilePickerSupported,
   isFileSystemAccessSupported,
-  pickFolder,
+  isFolderPickerSupported,
   type BrowserFolder,
 } from './browser-file-store.ts';
 import {
@@ -73,6 +77,8 @@ export function App() {
   const [saving, setSaving] = useState<SaveProgress | null>(null);
   const [outcomes, setOutcomes] = useState<SaveOutcome[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** Something worth saying that is not a failure — duplicates skipped, files read-only. */
+  const [notice, setNotice] = useState<string | null>(null);
 
   /**
    * The WASM backend, loaded once and lazily.
@@ -91,14 +97,19 @@ export function App() {
     return created;
   }, []);
 
-  /** Read a folder, replacing whatever was loaded. Shared by open and re-scan. */
-  const scanFolder = useCallback(async (target: BrowserFolder, keepClock?: CameraClock) => {
-    const refs = await store.listFolder(target);
-    if (refs.length === 0) {
-      setError(`No JPEGs in “${target.displayName}”.`);
-      return;
-    }
-
+  /**
+   * Read metadata for a set of files and start a session from them.
+   *
+   * Only ever called with a set somebody has already chosen — a picked selection, or a folder
+   * small enough to be worth reading whole. Parsing is the expensive part: about half a second
+   * per photo on a desktop and three on a phone, so what gets passed here matters far more
+   * than how fast it runs.
+   */
+  const loadRefs = useCallback(async (
+    refs: readonly PhotoRef[],
+    target: BrowserFolder,
+    keepClock?: CameraClock,
+  ) => {
     setLoading({ done: 0, total: refs.length, current: '' });
     const loaded = await loadPhotos(refs, store, await getBackend(), setLoading);
 
@@ -106,26 +117,124 @@ export function App() {
       revokeThumbnailUrls(previous);
       return toThumbnailUrls(loaded.thumbnails);
     });
+    setFolder(target);
     setSession(createSession(loaded.entries, keepClock ?? defaultClock()));
   }, [getBackend]);
 
-  const openFolder = useCallback(async () => {
+  /**
+   * The file picker. The right way in for a camera card.
+   *
+   * A card holds hundreds or thousands of photos in one folder, and reading all of them before
+   * anything can be done would run for the better part of an hour on a phone. Letting the OS
+   * picker narrow the set first is the difference between unusable and instant.
+   */
+  const openPhotos = useCallback(async () => {
     setError(null);
     setOutcomes(null);
+    setNotice(null);
 
     try {
-      const picked = await pickFolder();
+      const picked = await store.pickPhotos();
       if (!picked) return;
 
-      setFolder(picked);
       setSession(null);
-      await scanFolder(picked);
+      await loadRefs(picked.refs, picked.folder);
+      setNotice(describePicked(picked));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setLoading(null);
     }
-  }, [scanFolder]);
+  }, [loadRefs]);
+
+  /**
+   * Add more photos to what is already open.
+   *
+   * The clock-sync flow needs this: the reference frame is shot *after* the session started, so
+   * there has to be a way to bring one more file in without discarding the work so far. In
+   * folder mode that is Re-scan; here it is this.
+   *
+   * Only the *new* files are parsed. Re-reading the whole selection would cost a metadata read
+   * per photo already open — three seconds each on a phone — so adding one reference frame to a
+   * twenty-photo session would take a minute, which would defeat the point of picking files in
+   * the first place.
+   */
+  const addPhotos = useCallback(async () => {
+    if (!session || !folder) return;
+    setError(null);
+    setNotice(null);
+
+    try {
+      const open = session.photos.map((entry) => entry.ref);
+      const picked = await store.pickPhotos({ add: open });
+      if (!picked) return;
+
+      const openNames = new Set(open.map((ref) => ref.name));
+      const fresh = picked.refs.filter((ref) => !openNames.has(ref.name));
+
+      if (fresh.length === 0) {
+        setNotice(describePicked(picked) ?? 'Those photos are already open.');
+        return;
+      }
+
+      setLoading({ done: 0, total: fresh.length, current: '' });
+      const loaded = await loadPhotos(fresh, store, await getBackend(), setLoading);
+
+      // Append rather than rebuild, so staged edits, the clock measurement and the undo
+      // history all survive.
+      setThumbnails((previous) => new Map([...previous, ...toThumbnailUrls(loaded.thumbnails)]));
+      setSession((current) => (current ? addPhotosToSession(current, loaded.entries) : current));
+      setNotice(describePicked(picked));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setLoading(null);
+    }
+  }, [session, folder, getBackend]);
+
+  /**
+   * The folder picker, with a guard.
+   *
+   * One permission prompt covers a whole folder, which is much less clicking — but a camera
+   * card's folder holds far too much to read whole, so the count is checked *before* any
+   * metadata is touched and a large folder asks first rather than silently starting.
+   */
+  const openFolder = useCallback(async () => {
+    setError(null);
+    setOutcomes(null);
+    setNotice(null);
+
+    try {
+      const picked = await store.pickFolder();
+      if (!picked) return;
+
+      // Counting only enumerates names; it reads no metadata, so it is fast even for
+      // thousands of files.
+      const count = await store.countFolder(picked);
+      if (count === 0) {
+        setError(`No JPEGs in “${picked.displayName}”.`);
+        return;
+      }
+
+      if (count > LARGE_FOLDER_THRESHOLD) {
+        const minutes = Math.ceil((count * 0.6) / 60);
+        const proceed = window.confirm(
+          `“${picked.displayName}” holds ${count} photos. Reading them all takes roughly `
+          + `${minutes} minute${minutes === 1 ? '' : 's'} here, and considerably longer on a `
+          + 'phone.\n\nUse “Select photos…” to choose just the ones you want instead.'
+          + '\n\nRead all of them anyway?',
+        );
+        if (!proceed) return;
+      }
+
+      setSession(null);
+      await loadRefs(await store.listFolder(picked), picked);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setLoading(null);
+    }
+  }, [loadRefs]);
 
   /**
    * Re-read the folder, keeping the clock settings.
@@ -135,7 +244,7 @@ export function App() {
    * edits are lost, so this warns first when there are any.
    */
   const rescanFolder = useCallback(async () => {
-    if (!folder) return;
+    if (!folder?.directory) return;
 
     if (session && hasPendingChanges(session)) {
       const count = pendingPhotos(session).length;
@@ -148,14 +257,15 @@ export function App() {
 
     setError(null);
     setOutcomes(null);
+    setNotice(null);
     try {
-      await scanFolder(folder, session?.clock);
+      await loadRefs(await store.listFolder(folder), folder, session?.clock);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setLoading(null);
     }
-  }, [folder, session, scanFolder]);
+  }, [folder, session, loadRefs]);
 
   const save = useCallback(async () => {
     if (!session) return;
@@ -296,13 +406,26 @@ export function App() {
     <div className="app">
       <header>
         <h1>photo-geotagger</h1>
-        <button type="button" onClick={openFolder} disabled={busy}>
-          {folder ? 'Open another folder…' : 'Open folder…'}
-        </button>
+        {isFilePickerSupported() && (
+          <button type="button" className="primary" onClick={openPhotos} disabled={busy}>
+            Select photos…
+          </button>
+        )}
+        {isFolderPickerSupported() && (
+          <button type="button" onClick={openFolder} disabled={busy}>Open whole folder…</button>
+        )}
         {folder && (
           <>
             <span className="folder">{folder.displayName}</span>
-            <button type="button" onClick={rescanFolder} disabled={busy}>Re-scan folder</button>
+            {folder.directory
+              ? (
+                <button type="button" onClick={rescanFolder} disabled={busy}>
+                  Re-scan folder
+                </button>
+              )
+              : session && (
+                <button type="button" onClick={addPhotos} disabled={busy}>Add photos…</button>
+              )}
           </>
         )}
 
@@ -339,6 +462,12 @@ export function App() {
       </header>
 
       {error && <div className="banner error">{error}</div>}
+      {notice && (
+        <div className="banner warn">
+          {notice}
+          <button type="button" onClick={() => setNotice(null)}>Dismiss</button>
+        </div>
+      )}
 
       {loading && (
         <div className="banner">
@@ -362,6 +491,7 @@ export function App() {
               <>
                 <ClockPanel
                   session={session}
+                  addPhotosLabel={folder?.directory ? 'Re-scan folder' : 'Add photos…'}
                   busy={busy}
                   onTimeZone={(zone) => setSession(setTimeZone(session, zone))}
                   onOffsetSeconds={(seconds) => setSession(setOffsetSeconds(session, seconds))}
@@ -387,7 +517,13 @@ export function App() {
             : !loading && (
               <>
                 <div className="empty">
-                  <p>Open a folder of JPEGs to begin.</p>
+                  <p><strong>Select photos…</strong> to choose the ones you want.</p>
+                  <p className="note">
+                    Best for a camera card: a folder there can hold a thousand photos, and
+                    reading metadata for all of them takes minutes on a desktop and far longer
+                    on a phone. Opening a whole folder needs only one permission prompt, so it
+                    is the easier route when the folder is small.
+                  </p>
                   <p className="note">{MTIME_LIMITATION}</p>
                 </div>
                 <PlatformReport />
@@ -405,6 +541,33 @@ export function App() {
       </div>
     </div>
   );
+}
+
+/** What is worth telling the user about a pick, if anything. */
+function describePicked(picked: {
+  skippedDuplicates: readonly string[];
+  readOnly: readonly string[];
+}): string | null {
+  const parts: string[] = [];
+
+  if (picked.skippedDuplicates.length > 0) {
+    // Not cosmetic: photos are keyed by filename, so two files with the same name would be
+    // treated as one and an edit meant for one could be written into the other.
+    parts.push(
+      `Skipped ${picked.skippedDuplicates.length} file(s) whose names clash with photos already `
+      + `open (${picked.skippedDuplicates.slice(0, 3).join(', ')}). Photos are identified by `
+      + 'filename, so two with the same name cannot both be edited.',
+    );
+  }
+
+  if (picked.readOnly.length > 0) {
+    parts.push(
+      `${picked.readOnly.length} file(s) are readable but not writable, so they cannot be `
+      + `saved (${picked.readOnly.slice(0, 3).join(', ')}).`,
+    );
+  }
+
+  return parts.length > 0 ? parts.join(' ') : null;
 }
 
 function PhotoList({

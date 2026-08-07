@@ -44,6 +44,10 @@ http://localhost:5173/ (see HANDOFF.md; `localhost` is required for a secure con
   Access API. **20 tests** covering save orchestration, partial failure and QR scan scaling.
   Thumbnails come from the camera's own embedded ~6KB JPEG, and shift-click selects a range.
   Placement is select-then-click on the map, and only that — see below.
+- **Two ways in: the OS file picker (default) or a whole folder.** The picker exists because a
+  camera card holds ~1000 photos in one folder and metadata costs ~0.5 s each on a desktop,
+  ~3 s on a phone — parsing a card before the user can act would take most of an hour. Folder
+  mode counts first, without reading metadata, and asks before reading more than 200.
 - `packages/shells` does not exist. Deliberately: the shell decision is still open, and the
   browser gives a faster loop for the desktop MVP. Only `browser-file-store.ts` is throwaway.
 

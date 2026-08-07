@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 
 import {
   UNDO_LIMIT,
+  addPhotos,
   assignLocation,
   canRedo,
   canUndo,
@@ -176,6 +177,73 @@ describe('markSaved', () => {
     );
     assert.equal(canUndo(session), false);
     assert.equal(canRedo(session), false);
+  });
+});
+
+describe('addPhotos', () => {
+  it('appends new photos in filename order', () => {
+    const session = addPhotos(
+      createSession([entry('DSC00119.JPG'), entry('DSC00121.JPG')], CLOCK),
+      [entry('DSC00120.JPG')],
+    );
+    assert.deepEqual(
+      session.photos.map((photo) => photo.ref.name),
+      ['DSC00119.JPG', 'DSC00120.JPG', 'DSC00121.JPG'],
+    );
+  });
+
+  it('keeps staged edits, so adding a photo does not discard work', () => {
+    // The clock-sync flow adds the reference frame mid-session. Losing staged edits at that
+    // moment would be infuriating and hard to notice.
+    let session = assignLocation(createSession([entry('a.jpg')], CLOCK), ['a.jpg'], GREENWICH);
+    session = addPhotos(session, [entry('ref.jpg')]);
+
+    assert.deepEqual(locationOf(session, 'a.jpg'), { kind: 'pending', coordinates: GREENWICH });
+    assert.equal(pendingPhotos(session).length, 1);
+  });
+
+  it('keeps the clock, the measurement and the undo history', () => {
+    let session = setTimeZone(createSession([entry('a.jpg')], CLOCK), 'America/New_York');
+    session = assignLocation(session, ['a.jpg'], GREENWICH);
+    const before = session.history.length;
+
+    session = addPhotos(session, [entry('b.jpg')]);
+
+    assert.equal(session.clock.timeZone, 'America/New_York');
+    assert.equal(session.history.length, before);
+    assert.equal(canUndo(session), true);
+  });
+
+  it('is not undoable, so Ctrl+Z cannot make a photo vanish from the list', () => {
+    const session = addPhotos(createSession([entry('a.jpg')], CLOCK), [entry('b.jpg')]);
+    assert.equal(canUndo(session), false);
+  });
+
+  it('ignores a photo already present rather than reloading it', () => {
+    // Re-reading a photo already open costs a metadata read — three seconds on a phone — and
+    // gains nothing.
+    const session = createSession([entry('a.jpg')], CLOCK);
+    assert.equal(addPhotos(session, [entry('a.jpg')]), session);
+  });
+
+  it('keeps the existing entry when a name collides, not the newcomer', () => {
+    const located = createSession([entry('a.jpg', { existing: SANTIAGO })], CLOCK);
+    const after = addPhotos(located, [entry('a.jpg')]);
+
+    assert.equal(after.photos.length, 1);
+    assert.deepEqual(locationOf(after, 'a.jpg'), { kind: 'saved', coordinates: SANTIAGO });
+  });
+
+  it('is a no-op for an empty list', () => {
+    const session = createSession([entry('a.jpg')], CLOCK);
+    assert.equal(addPhotos(session, []), session);
+  });
+
+  it('leaves the selection alone', () => {
+    const session = addPhotos(
+      select(createSession([entry('a.jpg')], CLOCK), ['a.jpg']), [entry('b.jpg')],
+    );
+    assert.deepEqual([...session.selected], ['a.jpg']);
   });
 });
 

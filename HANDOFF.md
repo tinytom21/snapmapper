@@ -22,6 +22,30 @@ A6400 files. All four questions are answered.
 npm run dev
 ```
 
+### Two ways in, and the picker is the right one for a card
+
+**Select photos…** uses the OS file picker, multi-select. This is the way in for a camera card:
+a card folder holds hundreds or thousands of photos, and reading metadata costs about half a
+second each on a desktop and three seconds on a phone — so parsing a 1000-photo folder before
+anything can be done would run for the better part of an hour. Letting the picker narrow the set
+first is the difference between unusable and instant.
+
+**Open whole folder…** takes one permission prompt for everything inside, which is less clicking
+when a folder really is small. It counts the folder *before* reading any metadata and asks first
+if there are more than 200 photos, rather than silently starting a long parse.
+
+The two grant different things, which is worth knowing: a directory handle can be asked for
+`readwrite` up front, but `showOpenFilePicker` yields read-only handles, so write access is
+requested per file — at pick time, never partway through a save.
+
+In picked mode there is **Add photos…** instead of Re-scan, which is how the clock-sync
+reference frame comes in. It parses only the new files and keeps staged edits, the clock
+measurement and the undo history.
+
+Photos are identified by filename, so two files with the same name cannot both be open. A pick
+that collides reports the skipped file rather than silently dropping it — an edit meant for one
+must never be written into the other.
+
 Placement is **select photos, then click the map**. Shift-click extends a range, ctrl-click
 toggles one. Dragging a thumbnail onto the map was tried and deliberately removed.
 
