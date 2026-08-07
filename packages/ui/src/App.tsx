@@ -44,6 +44,8 @@ import { PlatformReport } from './PlatformReport.tsx';
 import { Sidebar } from './Sidebar.tsx';
 import { PhotoMap, type MapPin } from './PhotoMap.tsx';
 import { PhotoPreview } from './PhotoPreview.tsx';
+import { Landing } from './Landing.tsx';
+import { UPDATE_READY_EVENT, activateUpdate } from './register-sw.ts';
 import { isMapVisible } from './map-focus.ts';
 import { scanForSyncCode } from './clock-sync-qr.ts';
 import {
@@ -115,6 +117,8 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   /** Which photo is open full size, if any. */
   const [preview, setPreview] = useState<string | null>(null);
+  /** A new version is installed and will take over on reload. */
+  const [updateReady, setUpdateReady] = useState(false);
   /** Something worth saying that is not a failure — duplicates skipped, files read-only. */
   const [notice, setNotice] = useState<string | null>(null);
   /**
@@ -391,6 +395,12 @@ export function App() {
     }
   }, [session]);
 
+  useEffect(() => {
+    const onReady = () => setUpdateReady(true);
+    window.addEventListener(UPDATE_READY_EVENT, onReady);
+    return () => window.removeEventListener(UPDATE_READY_EVENT, onReady);
+  }, []);
+
   // Undo/redo on the keyboard, because this is a desktop app and people expect it.
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -514,12 +524,16 @@ export function App() {
           folder name onto three lines on a phone, which cost more height than the photo list got.
         */}
         <div className="actions">
-        {isFilePickerSupported() && (
+        {/*
+          Only once something is open. On the landing screen the hero carries these, and having
+          them in both places made a first impression of a toolbar with no subject.
+        */}
+        {session && isFilePickerSupported() && (
           <button type="button" className="primary" onClick={openPhotos} disabled={busy}>
             Select photos…
           </button>
         )}
-        {isFolderPickerSupported() && (
+        {session && isFolderPickerSupported() && (
           <button type="button" onClick={openFolder} disabled={busy}>Open whole folder…</button>
         )}
         {folder && (
@@ -590,6 +604,34 @@ export function App() {
           }}
           onSaveInPlace={() => applyDestination({ kind: 'in-place' })}
         />
+      )}
+
+      {updateReady && (
+        <div className="banner ok">
+          <strong>A new version is ready.</strong>
+          <div className="note">
+            {session && hasPendingChanges(session)
+              ? 'Save your changes first — reloading discards anything unsaved.'
+              : 'It takes effect on reload, or by itself next time you open the app.'}
+          </div>
+          <div className="row">
+            <button
+              type="button"
+              onClick={() => {
+                // Reloading with staged edits would throw them away, and the app has no way to
+                // put them back. Ask, rather than quietly deciding for them.
+                if (session && hasPendingChanges(session)
+                  && !window.confirm(
+                    `${pendingPhotos(session).length} unsaved change(s) will be lost. Reload anyway?`,
+                  )) return;
+                activateUpdate();
+              }}
+            >
+              Reload now
+            </button>
+            <button type="button" onClick={() => setUpdateReady(false)}>Later</button>
+          </div>
+        </div>
       )}
 
       {error && <div className="banner error">{error}</div>}
@@ -677,22 +719,13 @@ export function App() {
                 />
               )
               : !loading && (
-                <>
-                  <div className="empty">
-                    <p><strong>Select photos…</strong> to choose the ones you want.</p>
-                    <p className="note">
-                      Best for a camera card: a folder there can hold a thousand photos, and
-                      reading metadata for all of them takes minutes on a desktop and far longer
-                      on a phone. Opening a whole folder needs only one permission prompt, so it
-                      is the easier route when the folder is small.
-                    </p>
-                    <p className="note">
-                      Saves go to a <code>{OUTPUT_FOLDER_NAME}</code> folder beside your photos
-                      by default, so the originals are never touched.
-                    </p>
-                  </div>
-                  <PlatformReport />
-                </>
+                <Landing
+                  canPickFiles={isFilePickerSupported()}
+                  canPickFolder={isFolderPickerSupported()}
+                  busy={busy}
+                  onPickPhotos={openPhotos}
+                  onPickFolder={openFolder}
+                />
               )}
 
             {/*

@@ -212,6 +212,35 @@ override for exactly that case.
 - **Licence: elect the Artistic License** where ExifTool and Perl offer the choice. No copyleft on
   our code, and it avoids the GPL/App Store conflict if iOS is ever added.
 
+### The landing screen is a landing screen, not an empty state
+
+What greeted a stranger was the empty state of a working screen: a paragraph of caveats about
+folder sizes, and the **device capability report** — which existed to settle whether Android needed
+a native shell, a question that has been answered. `Landing.tsx` replaces it with what the app is,
+three steps, and the two ways in. The report still exists where it earns its place: in the
+sidebar's "This device" section once photos are open, and on the gate screen for a browser that
+cannot do this at all, where it is the explanation rather than clutter.
+
+The header's own pick buttons are hidden until a session exists, because having them in the header
+*and* the hero made the first impression a toolbar with no subject.
+
+### An invisible update looks exactly like a failed deploy
+
+The worker still refuses to `skipWaiting()` on install — swapping assets under a running page is
+how staged edits that have not reached disk get lost. But saying *nothing* was worse than it
+sounds: the user loaded the site, saw the previous version, and reasonably concluded the change had
+not shipped. It had; their browser was serving the cached shell, exactly as designed.
+
+So the page is now told. `register-sw.ts` watches for a waiting worker and dispatches
+`UPDATE_READY_EVENT`; `App` offers **Reload now**, and warns first if there are unsaved changes,
+because reloading discards them and nothing can put them back. The worker takes a `skip-waiting`
+message and only then claims the page.
+
+Two details that are easy to get wrong: the reload must be driven by `controllerchange`, not fired
+straight after the message — reload too early and the old shell answers, so the update appears not
+to have happened. And a flag guards against a second controller change reloading a page nobody
+asked to reload.
+
 ### The full-size preview shows the original, not the embedded preview
 
 **A claim that used to be in this file was wrong, and it was the plan for this feature:** that the

@@ -246,6 +246,88 @@ code { font-family: ui-monospace, monospace; font-size: 0.95em; }
 }
 .panel-body { padding: 0 0.9rem 0.9rem; }
 
+/* --- The landing screen -------------------------------------------------
+   The first thing a stranger sees, so it explains itself rather than presenting the empty state of
+   a working screen. Held to a readable measure and centred: this pane is the full window width
+   when no map is mounted beside it. */
+
+.landing {
+  padding: 2rem 1.25rem 3rem;
+  max-width: 46rem;
+  margin: 0 auto;
+}
+
+.landing-hero { text-align: center; }
+
+.landing-mark {
+  width: 56px;
+  height: 56px;
+  color: var(--accent);
+  margin-bottom: 0.25rem;
+}
+
+.landing h2 {
+  font-size: 1.6rem;
+  line-height: 1.25;
+  margin: 0 0 0.5rem;
+  letter-spacing: -0.01em;
+}
+
+.landing-lead { font-size: 1.02rem; margin: 0 auto 1.4rem; max-width: 32rem; opacity: 0.8; }
+
+.landing-actions {
+  display: flex;
+  gap: 0.6rem;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-bottom: 0.7rem;
+}
+button.big { padding: 0.7rem 1.2rem; font-size: 1rem; border-radius: 8px; }
+
+.landing-hint { font-size: 0.85rem; opacity: 0.6; margin: 0 auto; max-width: 30rem; }
+
+/* Numbered by the counter rather than by list markers, so the number can sit in its own column
+   and the text can wrap under itself rather than under the number. */
+.landing-steps {
+  list-style: none;
+  counter-reset: step;
+  padding: 0;
+  margin: 2.2rem 0 0;
+  display: grid;
+  gap: 0.9rem;
+}
+.landing-steps li {
+  counter-increment: step;
+  display: grid;
+  grid-template-columns: 2rem 1fr;
+  gap: 0.2rem 0.75rem;
+  align-items: baseline;
+}
+.landing-steps li::before {
+  content: counter(step);
+  grid-row: span 2;
+  width: 2rem;
+  height: 2rem;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  color: var(--accent);
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+.landing-steps strong { font-weight: 600; }
+.landing-steps span { font-size: 0.9rem; opacity: 0.75; }
+
+.landing-privacy {
+  margin: 2rem 0 0;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  font-size: 0.88rem;
+}
+
 /* --- The full-size preview ----------------------------------------------
    A 76px thumbnail tells photographs apart; it does not confirm you are about to write GPS into
    the right frame. The thumbnail is the way in, because it is the one affordance that behaves
@@ -498,6 +580,13 @@ code { font-family: ui-monospace, monospace; font-size: 0.95em; }
   .save-bar .note { text-align: left; }
 
   /* At least 44px across, which is the smallest thing a thumb hits reliably. */
+  /* Full-width buttons on a phone: two side by side at 375px leaves each too narrow to read. */
+  .landing { padding: 1.5rem 1rem 2.5rem; }
+  .landing h2 { font-size: 1.35rem; }
+  .landing-lead { font-size: 0.95rem; }
+  .landing-actions { flex-direction: column; }
+  .landing-actions button { width: 100%; }
+
   .preview-step { font-size: 2.2rem; padding: 0.8rem 1rem; min-width: 46px; }
   .preview-bar .note { font-size: 0.78rem; }
 

@@ -81,6 +81,18 @@ self.addEventListener('activate', (event) => {
   })());
 });
 
+self.addEventListener('message', (event) => {
+  /*
+   * Take over now, because the page has asked.
+   *
+   * The default is deliberately not to — see `activate` above. But an update that only appears on
+   * the next launch is indistinguishable from a deploy that did not happen, which is exactly how
+   * it looked in practice. So the page offers a Reload when it knows an update is waiting, and
+   * only then, at a moment it has checked is safe.
+   */
+  if (event.data === 'skip-waiting') self.skipWaiting();
+});
+
 self.addEventListener('fetch', (event) => {
   const request = event.request;
   if (request.method !== 'GET') return;

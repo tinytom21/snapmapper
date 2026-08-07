@@ -70,10 +70,23 @@ describe('sw-template.js', () => {
     assert.match(template, /WASM_CACHE/);
   });
 
-  it('never claims a page mid-session', () => {
-    // `skipWaiting()` would swap the assets under a running page, which is how staged edits
-    // that have not reached disk get lost. A new version takes over on the next launch.
-    // The comment explaining the choice says the word, so this looks for the call.
-    assert.doesNotMatch(template, /self\.skipWaiting\(\)/);
+  it('never claims a page except when the page asks', () => {
+    /*
+     * `skipWaiting()` on install would swap the assets under a running page, which is how staged
+     * edits that have not reached disk get lost. But refusing outright made an update
+     * indistinguishable from a deploy that never happened — it appeared only on the next launch,
+     * with nothing said. So it is offered, and taken only on an explicit message from the page.
+     *
+     * The two halves of that: exactly one call, and it is inside the message handler.
+     */
+    assert.equal(occurrences(template, 'self.skipWaiting()'), 1);
+    assert.match(template, /event\.data === 'skip-waiting'\) self\.skipWaiting\(\)/);
+
+    for (const handler of ['install', 'activate']) {
+      const at = template.indexOf(`addEventListener('${handler}'`);
+      const body = template.slice(at, template.indexOf('\n});', at));
+      // The call, not the word: the `activate` handler's comment explains why it does not do this.
+      assert.doesNotMatch(body, /self\.skipWaiting\(\)/, `${handler} must not claim the page`);
+    }
   });
 });
