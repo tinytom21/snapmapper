@@ -30,6 +30,22 @@ None of this worked out of the box, and all three matter beyond the spike.
 3. **In a browser, zeroperl fetches `./zeroperl.wasm` relative to the document**, not the module, so
    the request lands at the site root regardless of where the package really lives. The 24MB WASM
    has to be served next to the page.
+4. **Writes require a secure context.** `@uswriting/exiftool` names its temp output file with
+   `crypto.randomUUID()`, which the spec exposes *only* in a secure context. Over plain `http://` on a
+   LAN address it does not exist, so **reads succeed and every write fails** with
+   `crypto.randomUUID is not a function`. This only showed up on a real phone: the desktop webview was
+   tested over `localhost`, which counts as secure and hid the problem completely.
+
+   The measurement page now polyfills it from `crypto.getRandomValues` (which *is* available
+   insecurely), verified to produce 2000/2000 well-formed unique v4 UUIDs with a real write succeeding
+   through it. The cost is one UUID per write, far below the noise floor of a multi-second measurement.
+
+   **This is a constraint on the shipped app, not only on the spike.** It is *expected* to be harmless,
+   because Capacitor serves the webview from `https://localhost` (and `capacitor://` on iOS) and Tauri
+   from `http://tauri.localhost`, and Chromium treats `localhost` and `*.localhost` as potentially
+   trustworthy origins. **That reasoning has not been confirmed on a device**, so it belongs on the
+   shell evaluation checklist: whichever shell is chosen, check `window.isSecureContext` inside its
+   webview before assuming writes work at all.
 
 Also fixed in the harness itself: `verify.mjs` compared `EXIF:GPSLatitude` against a *signed*
 expectation, but EXIF stores GPS unsigned with the hemisphere in a separate ref, so the
@@ -206,14 +222,22 @@ point, and that a full card dump would be painful.
 
 The numbers below are unchanged; only their interpretation is.
 
-| Measurement | Node (desktop) | Webview (desktop) | Webview (tablet) |
+| Measurement | Node (desktop) | Webview (desktop) | Webview (phone) |
 |---|---|---|---|
-| Module import | 1–3 ms | 46 ms | _not yet run_ |
-| First call (read) | 595 ms | 1089 ms @ 4.8MB | _not yet run_ |
-| Warm call (read) | 615 ms | — | _not yet run_ |
-| Median write, 11.7MB | **4.48 s** | ~1.5 s @ 4.8MB | _not yet run_ |
-| 200-photo projection | **761 s (12.7 min)** | — | _not yet run_ |
-| Instance reused? | **No** — 595 ms then 615 ms | — | _not yet run_ |
+| Module import | 1–3 ms | 46 ms | loaded OK |
+| First call (read) | 595 ms @ 11.7MB | 1089 ms @ 4.8MB | **3.54 s @ 5.4MB** |
+| Warm call (read) | 615 ms | — | _pending_ |
+| Median write, 11.7MB | **4.48 s** | ~1.5 s @ 4.8MB | _pending_ |
+| 200-photo projection | **761 s (12.7 min)** | — | _pending_ |
+| Instance reused? | **No** — 595 ms then 615 ms | — | _pending_ |
+
+No Android tablet was available, so a phone stands in. A phone is if anything slower than the tablet
+the app would be used on, so a tolerable number here is a safe result rather than an optimistic one.
+The 24MB WASM loaded without trouble, which was the main worry about mobile.
+
+**Read cost scales as expected:** 3.54 s for 5.4MB on the phone against 1.09 s for 4.8MB in the desktop
+webview is roughly **3× slower**, matching the 3–5× rule of thumb. Write timings are still pending —
+the first attempt died on the secure-context defect above, which is now polyfilled.
 
 Bundle: `.wasm` size **24.2 MB** — this ships inside the APK. (Measured as the largest single asset,
 not a sum: the package ships the same `zeroperl.wasm` under both `dist/esm` and `dist/cjs`, and a

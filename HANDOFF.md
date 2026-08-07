@@ -143,3 +143,7 @@ iteration loop.
   filesystem. Do not pass them. Restoring mtime is the host's job.
 - **The wrapper reports `success: false` for a bare warning.** Read the error text; do not trust the
   boolean, or one benign warning will look like a failed write.
+- **Writes need a secure context.** The wrapper names its temp file with `crypto.randomUUID()`, which
+  exists only in secure contexts, so over plain `http://` on a LAN address reads work and every write
+  throws `crypto.randomUUID is not a function`. Testing over `localhost` hides this, because localhost
+  counts as secure. Check `window.isSecureContext` in the chosen shell's webview.

@@ -80,7 +80,42 @@
       write(`User agent: ${navigator.userAgent}`);
       write(`Cores: ${navigator.hardwareConcurrency ?? 'unknown'}`);
       if (navigator.deviceMemory) write(`Device memory: ~${navigator.deviceMemory} GB`);
+      write(`Secure context: ${window.isSecureContext}`);
       write('');
+
+      /*
+       * @uswriting/exiftool builds its temp output filename with
+       * crypto.randomUUID(), which the spec exposes **only in a secure context**.
+       * Over plain http:// on a LAN address it does not exist, so reads succeed
+       * and every write dies with "crypto.randomUUID is not a function".
+       *
+       * That is a genuine constraint on the shipped app, not just on this page —
+       * see spike/README.md. It happens not to bite in practice, because both
+       * Capacitor and Tauri serve the webview from an origin the browser treats as
+       * trustworthy. It bites here only because a LAN IP over http is not one.
+       *
+       * Polyfilled rather than worked around with HTTPS, because the alternative is
+       * a self-signed certificate on a phone and the cost is one UUID per write —
+       * far below the noise floor of a multi-second measurement.
+       */
+      if (typeof crypto.randomUUID !== 'function') {
+        const hex = (n) => n.toString(16).padStart(2, '0');
+        const polyfill = () => {
+          const b = crypto.getRandomValues(new Uint8Array(16));
+          b[6] = (b[6] & 0x0f) | 0x40; // version 4
+          b[8] = (b[8] & 0x3f) | 0x80; // variant 1
+          const h = [...b].map(hex).join('');
+          return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+        };
+        try {
+          crypto.randomUUID = polyfill;
+        } catch {
+          Object.defineProperty(Crypto.prototype, 'randomUUID', { value: polyfill, configurable: true });
+        }
+        write('Note: crypto.randomUUID polyfilled — this origin is not a secure context.');
+        write('Timings are unaffected; see the comment in this page for why.');
+        write('');
+      }
 
       let pkg;
       const importStarted = performance.now();

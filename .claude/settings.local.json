@@ -13,7 +13,11 @@
       "Bash(node ./_tmp-where.mjs)",
       "Bash(grep -oE \"^import[^;]{0,120};|from\\\\\"[^\\\\\"]+\\\\\"|from'[^']+'\" node_modules/@uswriting/exiftool/dist/esm/index.js)",
       "Bash(npm test *)",
-      "Bash(EXIFTOOL=\"C:/Users/tinyt/AppData/Local/Programs/ExifTool/ExifTool.exe\" npm run write --workspace spike)"
+      "Bash(EXIFTOOL=\"C:/Users/tinyt/AppData/Local/Programs/ExifTool/ExifTool.exe\" npm run write --workspace spike)",
+      "Bash(curl -s -o /dev/null -w \"server: HTTP %{http_code}\\\\n\" http://localhost:8080/)",
+      "Bash(netstat -ano)",
+      "Bash(powershell -NoProfile -Command 'Get-CimInstance Win32_Process -Filter \"Name='\\\\''node.exe'\\\\''\" | Select-Object ProcessId, @{n='\\\\''Started'\\\\'';e={$_.CreationDate}}, @{n='\\\\''Cmd'\\\\'';e={$_.CommandLine.Substring\\(0,[Math]::Min\\(70,$_.CommandLine.Length\\)\\)}} | Format-Table -AutoSize')",
+      "Bash(taskkill //PID 22060 //F)"
     ]
   }
 }
