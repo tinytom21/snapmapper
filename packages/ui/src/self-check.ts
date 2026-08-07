@@ -40,6 +40,44 @@ export interface SelfCheckResult {
   readonly checks: readonly { name: string; ok: boolean; detail: string }[];
 }
 
+/**
+ * What this platform can actually do about files.
+ *
+ * Exists to settle a premise rather than inherit it. `docs/PLAN.md` rules out a pure PWA on
+ * Android because Chrome there has no `showDirectoryPicker`, and the whole native-shell
+ * question rests on that. It was true when written and it is cheap to re-check, and this
+ * project has twice now had a confident written-down premise turn out to be wrong.
+ *
+ * Run it on the device in question. If `showDirectoryPicker` is present on Android, the app
+ * that already exists can write to a card folder and no shell is needed at all.
+ */
+export function describePlatform(): Record<string, string | boolean | number> {
+  const has = (name: string) => typeof (globalThis as Record<string, unknown>)[name] === 'function';
+
+  return {
+    userAgent: navigator.userAgent,
+    platform: navigator.platform,
+    cores: navigator.hardwareConcurrency ?? 0,
+    secureContext: window.isSecureContext,
+
+    // The one that decides whether Android needs a native shell at all.
+    showDirectoryPicker: has('showDirectoryPicker'),
+    showOpenFilePicker: has('showOpenFilePicker'),
+    showSaveFilePicker: has('showSaveFilePicker'),
+
+    // Writing in place needs a writable stream on a file handle, not just a picker.
+    fileSystemWritableFileStream: typeof FileSystemWritableFileStream !== 'undefined',
+    createWritableOnHandle: typeof FileSystemFileHandle !== 'undefined'
+      && 'createWritable' in FileSystemFileHandle.prototype,
+    // Origin Private File System — present on Android, but invisible to other apps, so it
+    // cannot geotag a photo on a card. Reported to avoid mistaking it for the real thing.
+    originPrivateFileSystem: typeof navigator.storage?.getDirectory === 'function',
+
+    // Needed by the write path, and absent outside a secure context.
+    cryptoRandomUUID: typeof crypto.randomUUID === 'function',
+  };
+}
+
 export async function runSelfCheck(): Promise<SelfCheckResult> {
   const checks: { name: string; ok: boolean; detail: string }[] = [];
   const add = (name: string, ok: boolean, detail: string) => checks.push({ name, ok, detail });
