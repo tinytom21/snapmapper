@@ -13,6 +13,7 @@
  */
 
 import { OUTPUT_FOLDER_NAME } from './browser-file-store.ts';
+import { Wordmark } from './Wordmark.tsx';
 
 export function Landing({
   canPickFiles,
@@ -30,11 +31,12 @@ export function Landing({
   return (
     <div className="landing">
       <div className="landing-hero">
-        {/* The app's own icon, inline, so the hero costs no request and scales cleanly. */}
-        <svg className="landing-mark" viewBox="0 0 64 64" aria-hidden="true">
-          <circle cx="32" cy="27" r="12" fill="none" stroke="currentColor" strokeWidth="5" />
-          <path d="M32 39 L32 52" stroke="currentColor" strokeWidth="5" strokeLinecap="round" />
-        </svg>
+        {/*
+          The wordmark, then the sentence. The name is the mark's job and the headline's job is to
+          say what the thing does — running them together would leave a heading that has to do both
+          and does neither.
+        */}
+        <h1 className="landing-wordmark"><Wordmark variant="hero" /></h1>
 
         <h2>Put your snapshots on the map</h2>
         <p className="landing-lead">

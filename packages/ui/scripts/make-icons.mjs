@@ -3,17 +3,20 @@
  *
  * `node scripts/make-icons.mjs`
  *
- * Written by hand rather than with an image library because the icon is two circles and a
- * triangle, and a dependency that draws it would be larger than the encoder. PNG is a
- * signature, three chunks and a CRC; `zlib` is in Node.
+ * Written by hand rather than with an image library because the icon is a handful of shapes, and
+ * a dependency that drew it would be larger than the encoder. PNG is a signature, three chunks
+ * and a CRC; `zlib` is in Node.
  *
- * Android needs raster icons for an install prompt — an SVG is accepted inconsistently, and
- * "the install button did not appear" is a miserable thing to debug on a phone.
+ * Android needs raster icons for an install prompt — an SVG is accepted inconsistently, and "the
+ * install button did not appear" is a miserable thing to debug on a phone.
  *
- * Full-bleed and declared `maskable`: Android crops the icon to whatever shape the launcher
- * uses, so the artwork carries no rounded corners of its own and keeps the pin inside the
- * central 60% safe zone. A rounded square drawn into the file would be cropped again and
- * come out visibly clipped.
+ * The drawing is the same mark as `Wordmark.tsx`: a landscape photo frame with a pin's point
+ * dropping out of its base, a horizon and a sun inside it. Filled here rather than stroked,
+ * because at 48px on a launcher a 1.7px stroke disappears.
+ *
+ * Full-bleed and declared `maskable`: Android crops the icon to whatever shape the launcher uses,
+ * so the artwork carries no rounded corners of its own and keeps the glyph inside the central
+ * safe zone. A rounded square drawn into the file would be cropped again and come out clipped.
  */
 
 import { deflateSync } from 'node:zlib';
@@ -22,61 +25,94 @@ import path from 'node:path';
 
 const OUT = path.join(import.meta.dirname, '..', 'public', 'icons');
 
-/** Matches `--accent` in styles.css. */
-const ACCENT = [0x25, 0x63, 0xeb];
-const WHITE = [0xff, 0xff, 0xff];
+/** The light theme's accent, from styles.css. The launcher shows this behind the glyph. */
+const GROUND = [0x1a, 0x63, 0x5b];
+const GLYPH = [0xff, 0xff, 0xff];
+
+/* --- shapes, in the same 24-unit space the SVG uses ---------------------------------------- */
+
+const roundedRect = (x, y, left, top, right, bottom, r) => {
+  if (x < left || x > right || y < top || y > bottom) return false;
+
+  // Only the four corner boxes need the radius test; everything else is inside.
+  const cx = x < left + r ? left + r : x > right - r ? right - r : x;
+  const cy = y < top + r ? top + r : y > bottom - r ? bottom - r : y;
+  return (x - cx) ** 2 + (y - cy) ** 2 <= r * r || (cx === x && cy === y);
+};
+
+const circle = (x, y, cx, cy, r) => (x - cx) ** 2 + (y - cy) ** 2 <= r * r;
+
+/** Point-in-triangle by barycentric sign, which needs no winding assumptions. */
+const triangle = (x, y, [ax, ay], [bx, by], [cx, cy]) => {
+  const d = (bx - ax) * (cy - ay) - (cx - ax) * (by - ay);
+  const u = ((bx - x) * (cy - y) - (cx - x) * (by - y)) / d;
+  const v = ((cx - x) * (ay - y) - (ax - x) * (cy - y)) / d;
+  return u >= 0 && v >= 0 && u + v <= 1;
+};
 
 /**
- * A map pin, drawn in coordinates normalised to the icon's size.
+ * The mark, sampled at a point in 0..24 space.
  *
- * Resolution-independent so 192 and 512 are the same picture, not one resampled from the
- * other. Everything sits within the central 60%, which is the maskable safe zone.
+ * A pin, with the photograph inside its head: a hill and a sun in the negative space of a ring.
+ *
+ * The first attempt hung the pin's point off the base of a rounded rectangle, which read as a
+ * speech bubble rather than a photograph — a rounded box with a tail is a tooltip in every
+ * interface anyone has ever used. A pin silhouette cannot be mistaken for anything else, and it
+ * echoes the markers already dropped on the map.
  */
-function pinColourAt(x, y) {
-  // Head: a ring, centred a little above the middle.
-  const headX = 0.5;
-  const headY = 0.42;
-  const outer = 0.185;
-  const inner = 0.075;
-  const dx = x - headX;
-  const dy = y - headY;
-  const distance = Math.hypot(dx, dy);
+function markAt(x, y) {
+  const head = circle(x, y, 12, 9.8, 6.7);
+  const tail = triangle(x, y, [6.9, 13.4], [17.1, 13.4], [12, 21.8]);
+  const inside = circle(x, y, 12, 9.8, 4.9);
 
-  if (distance <= inner) return ACCENT;
-  if (distance <= outer) return WHITE;
+  if (!head && !tail) return false;
+  // The ring, and the tail below the head's own circle.
+  if (!inside) return true;
 
-  // Tail: a triangle from the head down to the point, so head and tail meet without a seam.
-  const tipY = 0.78;
-  if (y >= headY && y <= tipY) {
-    const along = (y - headY) / (tipY - headY);
-    const halfWidth = outer * (1 - along);
-    if (Math.abs(dx) <= halfWidth) return WHITE;
-  }
-
-  return ACCENT;
+  // Inside the head: the picture, in glyph colour on the ground showing through.
+  const hill = triangle(x, y, [7.6, 13.0], [11.1, 8.2], [14.6, 13.0]);
+  const sun = circle(x, y, 14.6, 7.6, 1.25);
+  return hill || sun;
 }
 
+/**
+ * Render with 3x3 supersampling.
+ *
+ * Without it the diagonals of the point and the hill come out as staircases at 192px, which is
+ * exactly the size a launcher shows.
+ */
 function renderRgba(size) {
-  // One filter byte (0, "none") per scanline, then RGBA pixels.
   const rows = Buffer.alloc(size * (1 + size * 4));
+  const scale = 24 / size;
+  const offsets = [1 / 6, 3 / 6, 5 / 6];
 
   for (let row = 0; row < size; row += 1) {
     const start = row * (1 + size * 4);
-    rows[start] = 0;
+    rows[start] = 0; // filter: none
 
     for (let column = 0; column < size; column += 1) {
-      // Sample at pixel centres, so the shape is not biased half a pixel up and left.
-      const [r, g, b] = pinColourAt((column + 0.5) / size, (row + 0.5) / size);
+      let hits = 0;
+      for (const dy of offsets) {
+        for (const dx of offsets) {
+          if (markAt((column + dx) * scale, (row + dy) * scale)) hits += 1;
+        }
+      }
+
+      const coverage = hits / 9;
       const at = start + 1 + column * 4;
-      rows[at] = r;
-      rows[at + 1] = g;
-      rows[at + 2] = b;
+      for (let channel = 0; channel < 3; channel += 1) {
+        rows[at + channel] = Math.round(
+          GROUND[channel] + (GLYPH[channel] - GROUND[channel]) * coverage,
+        );
+      }
       rows[at + 3] = 0xff;
     }
   }
 
   return rows;
 }
+
+/* --- PNG ---------------------------------------------------------------------------------- */
 
 const CRC_TABLE = (() => {
   const table = new Int32Array(256);
@@ -109,7 +145,7 @@ function png(size) {
   header.writeUInt32BE(size, 4);
   header[8] = 8; // bit depth
   header[9] = 6; // colour type: RGBA
-  // 10..12 are compression, filter and interlace methods; 0 is the only valid value for each.
+  // 10..12 are compression, filter and interlace; 0 is the only valid value for each.
 
   return Buffer.concat([
     Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),

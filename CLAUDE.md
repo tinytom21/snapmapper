@@ -212,6 +212,44 @@ override for exactly that case.
 - **Licence: elect the Artistic License** where ExifTool and Perl offer the choice. No copyleft on
   our code, and it avoids the GPL/App Store conflict if iOS is ever added.
 
+### The look is "Quiet", and the palette is contrast-driven
+
+Chosen from three mocked directions. Cool paper, soft rules, 9px corners, generous spacing, and one
+muted slate teal — teal rather than blue because the photographs are landscapes full of blues and
+greens, and a saturated blue accent competes with them. Dark follows the system: the same geometry
+and the same teal family on a **soft slate `#1e2427`**, not black, with separation coming from
+`--surface` sitting a shade above `--bg` rather than from heavier rules. That is what keeps a dark
+interface from looking drawn on.
+
+**The values are measured, not chosen by eye, and `styles.test.ts` reads them back out of
+`styles.css`.** The user reported the Save button as illegible and they were right: white on the
+first teal was **4.88:1** — legal for body text, muddy on a button. Worse, white on the *dark*
+theme's lifted teal is **2.56:1**, an outright failure. So `--accent-ink` is white in the light
+theme and near-black in the dark one, both at 9:1 or better, and a test forbids a literal
+`color: #fff` in any rule that also sets `background: var(--accent)` — the exact trap, which had
+caught both the Save button and the map's placement pill.
+
+The test parses the stylesheet rather than holding its own copy of the palette. A test with its own
+copy passes while the app ships something else.
+
+It also asserts the dark block contains **only token overrides, no component selectors**. That is
+the whole reason a palette swap is cheap; a component styled inside the media query is a component
+maintained twice.
+
+### The mark is a pin with a photograph in it
+
+`Wordmark.tsx` draws it in strokes for the interface; `scripts/make-icons.mjs` draws the same shapes
+filled for the launcher, where a 1.7px stroke would vanish. A hill and a sun inside a pin's head —
+the two things the app does, and it echoes the markers on the map.
+
+The first attempt was a rounded rectangle with a point hanging off its base, and read unmistakably
+as a **speech bubble**: a rounded box with a tail is a tooltip in every interface anyone has used.
+Worth remembering before redrawing it.
+
+The wordmark leans on weight — **Snap** at 700 against *mapper* at 400 — because a second colour
+would mean a second accent and the palette allows one. It is hidden on a phone once photos are open;
+see below.
+
 ### Undo and Redo say what they would undo
 
 `SessionAction` in `session.ts` records *what* each history step was — `{kind:'place',count:5}` and

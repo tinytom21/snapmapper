@@ -11,7 +11,10 @@
       like a browser tab with the chrome hidden.
     -->
     <link rel="manifest" href="manifest.webmanifest" />
-    <meta name="theme-color" content="#2563eb" />
+    <!-- Media-scoped, so an installed app's status bar matches the ground rather than fighting
+         it. One unconditional colour would be wrong in one of the two themes. -->
+    <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#1e2427" media="(prefers-color-scheme: dark)" />
     <link rel="icon" href="icons/icon-192.png" />
     <link rel="apple-touch-icon" href="icons/icon-192.png" />
   </head>

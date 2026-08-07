@@ -47,6 +47,7 @@ import { Sidebar } from './Sidebar.tsx';
 import { PhotoMap, type MapPin } from './PhotoMap.tsx';
 import { PhotoPreview } from './PhotoPreview.tsx';
 import { ActionMenu } from './ActionMenu.tsx';
+import { Wordmark } from './Wordmark.tsx';
 import { describeAction, explainAction } from './describe-action.ts';
 import { Landing } from './Landing.tsx';
 import { UPDATE_READY_EVENT, activateUpdate } from './register-sw.ts';
@@ -505,7 +506,7 @@ export function App() {
   if (!isFileSystemAccessSupported()) {
     return (
       <main className="gate">
-        <h1>Snapmapper</h1>
+        <h1><Wordmark variant="hero" /></h1>
         <p>
           This browser cannot open a folder and write to your photos in place. Use{' '}
           <strong>Chrome or Edge on the desktop</strong>.
@@ -537,7 +538,7 @@ export function App() {
         and it is still on the landing screen, the browser tab and the home-screen icon.
       */}
       <header className={narrow && session ? 'working' : ''}>
-        <h1>Snapmapper</h1>
+        <h1><Wordmark /></h1>
         {/*
           A horizontally scrolling row rather than a wrapping one. Wrapping put four buttons and a
           folder name onto three lines on a phone, which cost more height than the photo list got.
