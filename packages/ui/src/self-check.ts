@@ -75,6 +75,12 @@ export function describePlatform(): Record<string, string | boolean | number> {
 
     // Needed by the write path, and absent outside a secure context.
     cryptoRandomUUID: typeof crypto.randomUUID === 'function',
+
+    // Whether this can run with no server at all: a worker to hold the files, and whether it
+    // is already installed to the home screen.
+    serviceWorker: 'serviceWorker' in navigator,
+    serviceWorkerActive: Boolean(navigator.serviceWorker?.controller),
+    installed: window.matchMedia('(display-mode: standalone)').matches,
   };
 }
 

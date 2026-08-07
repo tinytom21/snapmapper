@@ -10,7 +10,9 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "node --test \"test/**/*.test.ts\"",
-    "dev:lan": "vite --mode lan"
+    "dev:lan": "vite --mode lan",
+    "preview:lan": "vite preview --mode lan --host",
+    "icons": "node scripts/make-icons.mjs"
   },
   "dependencies": {
     "@geotagger/core": "*",

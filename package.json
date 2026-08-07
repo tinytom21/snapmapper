@@ -17,7 +17,9 @@
     "spike": "npm run spike --workspace spike",
     "dev": "npm run dev --workspace @geotagger/ui",
     "build": "npm run build --workspace @geotagger/ui",
-    "dev:lan": "npm run dev:lan --workspace @geotagger/ui"
+    "dev:lan": "npm run dev:lan --workspace @geotagger/ui",
+    "preview": "npm run preview --workspace @geotagger/ui",
+    "preview:lan": "npm run preview:lan --workspace @geotagger/ui"
   },
   "devDependencies": {
     "@types/node": "^26.1.2",
