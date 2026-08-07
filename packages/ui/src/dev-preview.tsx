@@ -117,7 +117,6 @@ export function previewPhotoList(
       <Sidebar
         session={session}
         thumbnails={thumbnails}
-        narrow={window.matchMedia('(max-width: 900px)').matches}
         busy={false}
         addPhotosLabel="Add photos…"
         onToggle={(name) => again(toggleSelected(session, name))}

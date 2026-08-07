@@ -64,12 +64,12 @@ export function PhotoList(props: PhotoListProps) {
     else props.onSelectOnly(name);
   };
 
+  /*
+   * No heading of its own: the accordion's header carries the name and the count, and two of them
+   * would be one too many. This returns the section's contents and lets the section be the box.
+   */
   return (
-    <section className="panel grow">
-      <h2>
-        Photos <span className="count">{session.photos.length}</span>
-      </h2>
-
+    <>
       <div className="row views">
         <button
           type="button"
@@ -173,7 +173,7 @@ export function PhotoList(props: PhotoListProps) {
             ))}
           </ul>
         )}
-    </section>
+    </>
   );
 }
 

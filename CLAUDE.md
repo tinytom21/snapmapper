@@ -117,43 +117,40 @@ never unmounted, because rebuilding a MapLibre instance would discard the tiles,
 every marker. Chrome is compressed to match: the header actions become one horizontally scrolling
 line rather than three wrapped ones, and the destination bar collapses to a single line.
 
-**Nothing in the sidebar may be allowed to squeeze another thing below its content.** Text whose
-box has been shrunk under its own height does not clip — it paints over whatever comes next, which
-is how "the sections are drawn over the photo list" has now happened twice. Four declarations hold
-that line, and each of them replaced a real bug:
+**The sidebar is an accordion: exactly one section open.** That is a structural fix, not a
+preference. Independent collapsibles meant two open sections competing for a height neither could
+have — the photo list wants the whole sidebar, and the Camera clock is the tallest thing in it
+because of the QR code — and every attempt to divide it fairly failed in a different way:
 
-- `.sidebar { overflow-y: auto }`, **not `hidden`** as it was. Hidden only stopped things escaping
-  the sidebar; the sections inside still overlapped each other once an expanded panel left the list
-  less room than it needed. `auto` gives the overflow somewhere to go — a short window scrolls.
-- `.panel.grow { min-height: min-content }`. A *length* here is a guess that is wrong at some
-  browser zoom: `10rem` was measured leaving an **8px list**, because the heading, two button rows
-  and the hint had already taken 150 of it.
-- `.panel.grow > h2, > .row, > .note { flex: none }`. Flex children shrink by default, and this
-  chrome must not — the list is the only thing that should give.
-- `.photos, .photo-grid { min-height: 6rem; max-height: 55vh }`. The minimum stops an expanded
-  section squeezing the list to nothing; the maximum keeps it a scrolling region rather than a
-  column thousands of pixels tall, which would push the Camera clock below a mile of photographs.
+1. the list squeezed to **eight pixels** while the chrome above it kept its size;
+2. sections **painted over one another**, because text whose box is shrunk below its own height
+   does not clip;
+3. and then a Camera clock scrolling inside **three centimetres**, which is what "the camera clock
+   section doesn't work" meant.
 
-An expanded section shrinks and scrolls internally rather than taking its full height —
-`.panel-collapse[open] { flex: 0 1 auto; min-height: 3rem; overflow-y: auto }`. The Camera clock is
-the tallest thing in the sidebar because of the QR code, and `flex: none` let it starve everything
-above it.
+With one section open there is nothing to divide. Closed sections are their header; the open one
+takes what is left. `.section { flex: none }` and `.section.open { flex: 1; min-height: 0 }` is the
+whole layout, and the list can go back to a plain `min-height: 0` because nothing competes with it.
 
-On mobile all of this is *undone* — `display: block; flex: none; overflow: visible; max-height:
-none` — or the rows past the fold are clipped away and reachable by nothing. The whole column
-scrolls there instead.
+Radio semantics, not toggles: clicking the open section does nothing rather than closing it. All
+three shut is a sidebar showing nothing, which is not a state worth reaching by accident.
 
-Verified by measurement at 375px and at 1280x560 and 1280x900, at root font sizes of 16, 20 and
-24px — browser zoom is what took the reported case over the edge — in both views, with the clock
-section open and shut. That is 30-odd combinations and it needs to be, because a list that fits is
-the case that always worked.
+A closed section still answers the question you would open it to ask — `24 · 2 selected · 1 unsaved`,
+`Europe/London, 45s fast` — and its body is **unmounted**, not hidden, so a closed clock is not
+redrawing a QR code four times a second.
 
-**Use `findOverlaps()` in `dev-preview.tsx`.** This check has been written from scratch three times
-and produced phantoms every time: an element scrolled out of a container still reports its real
-off-screen rect, and an element inside a *closed* `<details>` reports a rect although nothing is
-painted. It now clips to every scrolling ancestor and asks `checkVisibility()` first. Do not write
-a fourth one.
+On mobile all of it is undone — `display: block`, nothing flexing, nothing scrolling separately —
+so the whole column scrolls as before.
 
+Verified at 375px, 1280x560 and 1280x720, at root font sizes 16, 20 and 24px, with each of the
+three sections open in turn: **exactly one open, zero overlaps, and the photo list still scrolls
+inside its own section.**
+
+**Use `findOverlaps()` in `dev-preview.tsx`** for any layout check of this kind. It has been written
+from scratch three times and produced phantoms every time: an element scrolled out of a container
+still reports its real off-screen rect, and an element inside a *closed* `<details>` reports a rect
+although nothing is painted. It clips to every scrolling ancestor and asks `checkVisibility()`
+first. Do not write a fourth one.
 
 ### Camera-clock sync stores the measurement, not the offset
 

@@ -741,7 +741,6 @@ export function App() {
                 <Sidebar
                   session={session}
                   thumbnails={thumbnails}
-                  narrow={narrow}
                   busy={busy}
                   addPhotosLabel={folder?.directory ? 'Re-scan folder' : 'Add photos…'}
                   onToggle={(name) => setSession(toggleSelected(session, name))}
