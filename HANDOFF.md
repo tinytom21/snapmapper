@@ -73,9 +73,17 @@ the map's loading path and deserves its own go. The plan's real offline answer i
 **Getting to that first HTTPS load** is the one thing that still needs something outside the
 phone. Options, best first:
 
-1. **A static host** — GitHub Pages, Netlify, Cloudflare Pages. `npm run build` produces
-   `packages/ui/dist`; upload it. The app never sends a photograph anywhere, so hosting it costs
-   nothing in privacy. This is the only option that does not need the PC switched on.
+1. **GitHub Pages, already wired up.** `.github/workflows/deploy.yml` typechecks, tests, builds
+   and publishes on every push to `main`. The base path comes from the repository name
+   (`SNAPMAPPER_BASE=/${{ github.event.repository.name }}/`), so renaming the repo does not
+   require editing the workflow. This is the only option that does not need the PC switched on.
+
+   **A project site is served from `/<repo>/`, and that has to reach four places** — Vite's `base`,
+   the service worker's `BASE` (its precache list, its navigation fallback and the WASM path), the
+   registration scope, and the manifest. The manifest handles it by using relative URLs, which
+   resolve against its own location and so work at either. Getting it wrong is quiet: the worker
+   registers, reports itself active, and caches nothing, because `addAll` 404s on the first entry.
+   Verified served under `/snapmapper/` and then with the server killed. Pinned by tests.
 2. **`npm run preview:lan`** from the PC, over the LAN. Note the caveat: the certificate is
    self-signed, and browsers refuse to register a service worker on an untrusted certificate even
    after the warning is accepted. Fine for *using* the app on a phone; not a way to install it.
@@ -296,7 +304,7 @@ registry, so open a fresh shell afterwards, or set `EXIFTOOL` to the absolute pa
 ### 2. Run the core tests
 
 ```bash
-npm test --workspace @geotagger/core
+npm test --workspace @snapmapper/core
 ```
 
 **53 passing.** The DMS carry logic and the DST-boundary conversion were expected to be the two
@@ -350,7 +358,7 @@ whether Android is viable at all.
 
 ## Open questions for the user
 
-- **App name.** `photo-geotagger` is a placeholder throughout.
+- **App name.** `snapmapper` is a placeholder throughout.
 - **Whether mtime matters enough to want a native desktop build.** It is the only thing a browser
   cannot do, and copy mode makes it much less painful.
 - **Camera timezone default.** `time.ts` requires an IANA zone. Worth defaulting to the system

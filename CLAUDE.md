@@ -1,4 +1,4 @@
-# photo-geotagger
+# snapmapper
 
 A cross-platform replacement for [GeoSetter](https://geosetter.de/en/main-en/): put photos on a
 map, place them by hand, write GPS into the files. Targets Android phone/tablet **and** any PC.
@@ -223,7 +223,7 @@ override for exactly that case.
   the service worker, so it is paid once per version rather than per visit.
 - **Offline map tiles.** The app opens offline and photos can be placed by coordinates, but the map
   is blank over ground never loaded online. See the PWA section.
-- **App name.** `photo-geotagger` is a placeholder.
+- **App name.** `snapmapper` is a placeholder.
 - **Whether mtime matters enough to want a native desktop build.** The one thing a browser cannot do.
   Copy mode makes it much less painful, since originals keep their dates.
 

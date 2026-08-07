@@ -1,0 +1,64 @@
+# Build and publish the app to GitHub Pages on every push to the default branch.
+#
+# The base path is derived from the repository name rather than hard-coded, because a Pages
+# project site is served from `/<repo>/` and getting that wrong fails quietly: the service worker
+# registers, reports itself active, and answers nothing. Renaming the repository therefore does
+# not require editing this file.
+#
+# Tests and the typecheck run before the build on purpose. A deploy that ships a broken app to a
+# phone is worse than no deploy, and the phone would keep the broken version until the next launch.
+name: Deploy to Pages
+
+on:
+  push:
+    branches: [main]
+  # So a deploy can be re-run from the Actions tab without an empty commit.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never two deploys at once; queue instead of cancelling, so the last push always wins.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # The test scripts rely on Node's built-in TypeScript stripping, so there is no build
+          # step for `packages/core` and no transpiler to install.
+          node-version: '24'
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run typecheck
+      - run: npm test
+
+      - run: npm run build
+        env:
+          SNAPMAPPER_BASE: /${{ github.event.repository.name }}/
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: packages/ui/dist
+
+  deploy:
+    needs: build
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

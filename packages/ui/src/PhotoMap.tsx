@@ -19,7 +19,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import maplibregl, { type Map as MapLibreMap, type Marker, type StyleSpecification } from 'maplibre-gl';
 
 import { boundsOf, selectionFocus } from './map-focus.ts';
-import type { Coordinates } from '@geotagger/core';
+import type { Coordinates } from '@snapmapper/core';
 
 export interface MapPin {
   readonly name: string;

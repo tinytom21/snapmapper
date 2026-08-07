@@ -16,7 +16,7 @@
  * moiré, perspective and scaling are what its finder patterns exist for.
  */
 
-import { parseSyncPayload } from '@geotagger/core';
+import { parseSyncPayload } from '@snapmapper/core';
 import * as jsQRModule from 'jsqr';
 
 /**

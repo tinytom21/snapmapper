@@ -26,6 +26,8 @@ const NEVER_PRECACHE = new Set(['zeroperl.wasm', 'sw.js']);
 export function serviceWorker(): Plugin {
   let template: string;
   let publicFiles: string[] = [];
+  /** Always starts and ends with a slash; '/' at a domain root. */
+  let base = '/';
 
   return {
     name: 'service-worker',
@@ -49,6 +51,7 @@ export function serviceWorker(): Plugin {
      * remembering this file.
      */
     async configResolved(config) {
+      base = config.base;
       // Resolves to '' when public asset copying is turned off.
       if (!config.publicDir) return;
       publicFiles = await listFiles(config.publicDir);
@@ -68,12 +71,18 @@ export function serviceWorker(): Plugin {
         .filter((name) => !NEVER_PRECACHE.has(name))
         .sort();
 
-      // '/' rather than '/index.html': it is what a navigation actually requests, and the
-      // worker answers navigations from this entry.
+      /*
+       * Base-prefixed, every one of them.
+       *
+       * The base itself rather than `index.html`, because that is what a navigation actually
+       * requests and what the worker answers it from. A precache list written for '/' on a site
+       * served from '/snapmapper/' fails at install: `addAll` rejects on the first 404 and
+       * nothing at all is cached, so the app simply has no offline support and says nothing.
+       */
       const precache = [
-        '/',
-        ...assets.map((name) => `/${name}`),
-        ...publicFiles,
+        base,
+        ...assets.map((name) => `${base}${name}`),
+        ...publicFiles.map((url) => `${base}${url.replace(/^\//, '')}`),
       ].filter((url, index, all) => all.indexOf(url) === index);
 
       /*
@@ -91,6 +100,7 @@ export function serviceWorker(): Plugin {
       let source = replaceOnce(template, "'__VERSION__'", JSON.stringify(version));
       // The quotes are part of the token: the value is an array, not a string.
       source = replaceOnce(source, "'__PRECACHE__'", JSON.stringify(precache));
+      source = replaceOnce(source, "'__BASE__'", JSON.stringify(base));
 
       this.emitFile({ type: 'asset', fileName: 'sw.js', source });
     },

@@ -2,7 +2,7 @@
  * The desktop MVP.
  *
  * Open a folder, see the photos, place them on the map, save. Everything of substance is
- * in `@geotagger/core`; this wires it to a screen.
+ * in `@snapmapper/core`; this wires it to a screen.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -37,7 +37,7 @@ import {
   type PhotoEntry,
   type PhotoRef,
   type Session,
-} from '@geotagger/core';
+} from '@snapmapper/core';
 
 import { Collapsible } from './Collapsible.tsx';
 import { PlatformReport } from './PlatformReport.tsx';
@@ -450,7 +450,7 @@ export function App() {
   if (!isFileSystemAccessSupported()) {
     return (
       <main className="gate">
-        <h1>photo-geotagger</h1>
+        <h1>Snapmapper</h1>
         <p>
           This browser cannot open a folder and write to your photos in place. Use{' '}
           <strong>Chrome or Edge on the desktop</strong>.
@@ -477,7 +477,7 @@ export function App() {
   return (
     <div className="app">
       <header>
-        <h1>photo-geotagger</h1>
+        <h1>Snapmapper</h1>
         {/*
           A horizontally scrolling row rather than a wrapping one. Wrapping put four buttons and a
           folder name onto three lines on a phone, which cost more height than the photo list got.

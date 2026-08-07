@@ -11,7 +11,7 @@ import { writeGpsChecks } from './write-gps.mjs';
 import { benchmark } from './benchmark.mjs';
 
 console.log(`
-\x1b[1mphoto-geotagger — Phase 0 spike\x1b[0m
+\x1b[1msnapmapper — Phase 0 spike\x1b[0m
 
 Answering, in order:
   Q1  Does ExifTool-WASM write correct GPS to a real A6400 JPEG, intact?

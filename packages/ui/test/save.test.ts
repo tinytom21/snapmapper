@@ -14,7 +14,7 @@ import {
   type MetadataBackend,
   type PhotoEntry,
   type PhotoRef,
-} from '@geotagger/core';
+} from '@snapmapper/core';
 
 import { saveSession } from '../src/save.ts';
 import { loadPhotos } from '../src/load-photos.ts';

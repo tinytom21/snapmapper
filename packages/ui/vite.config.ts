@@ -28,11 +28,23 @@ export default defineConfig(({ mode }) => {
   const lan = mode === 'lan';
 
   return {
+    /*
+     * Where the app will be served from.
+     *
+     * A GitHub Pages project site lives at `/<repo>/`, not at the domain root, so every
+     * absolute URL in the app has to carry that prefix — and the service worker's scope has to
+     * as well, or it silently controls nothing. Set `SNAPMAPPER_BASE=/snapmapper/` for that
+     * deploy; the default suits localhost, a user site and any other host serving from the root.
+     *
+     * An environment variable rather than a mode, because the deploy sets it in CI where a
+     * `--mode` flag would also drag in the LAN certificate arrangement.
+     */
+    base: process.env.SNAPMAPPER_BASE ?? '/',
     plugins: [react(), zeroperlWasm(), serviceWorker(), ...(lan ? [basicSsl()] : [])],
     server: lan ? { host: true, port: 5173 } : { host: 'localhost', port: 5173 },
-    // @geotagger/core is consumed as TypeScript source, so Vite must transpile it rather
+    // @snapmapper/core is consumed as TypeScript source, so Vite must transpile it rather
     // than treat it as a pre-built dependency.
-    optimizeDeps: { exclude: ['@geotagger/core'] },
+    optimizeDeps: { exclude: ['@snapmapper/core'] },
     build: { target: 'es2023' },
   };
 });

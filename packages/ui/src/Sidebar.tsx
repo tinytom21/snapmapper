@@ -11,7 +11,7 @@ import { ClockPanel, describeClock } from './ClockPanel.tsx';
 import { Collapsible } from './Collapsible.tsx';
 import { PhotoList } from './PhotoList.tsx';
 import { PlatformReport, describePlatformBriefly } from './PlatformReport.tsx';
-import type { ClockSync, Session } from '@geotagger/core';
+import type { ClockSync, Session } from '@snapmapper/core';
 
 export interface SidebarProps {
   readonly session: Session;

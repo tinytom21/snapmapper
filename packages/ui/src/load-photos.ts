@@ -20,8 +20,8 @@ import {
   type MetadataBackend,
   type PhotoEntry,
   type PhotoRef,
-} from '@geotagger/core';
-import { buildHeaderStub, findScanStart } from '@geotagger/core';
+} from '@snapmapper/core';
+import { buildHeaderStub, findScanStart } from '@snapmapper/core';
 
 export interface LoadProgress {
   readonly done: number;

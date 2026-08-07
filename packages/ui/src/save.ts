@@ -27,7 +27,7 @@ import {
   type Session,
   type WriteVerification,
   type WrittenFile,
-} from '@geotagger/core';
+} from '@snapmapper/core';
 
 import { headerOnly } from './load-photos.ts';
 

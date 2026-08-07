@@ -28,7 +28,7 @@ import {
   type NaiveDateTime,
   type PhotoEntry,
   type Session,
-} from '@geotagger/core';
+} from '@snapmapper/core';
 
 export interface ClockPanelProps {
   readonly session: Session;

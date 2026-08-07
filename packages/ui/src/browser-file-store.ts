@@ -37,8 +37,8 @@
  * native shell — see `MTIME_LIMITATION`, which the UI surfaces rather than hiding.
  */
 
-import type { FileStore, FolderHandle, PhotoRef, WrittenFile } from '@geotagger/core';
-import { FileWriteError } from '@geotagger/core';
+import type { FileStore, FolderHandle, PhotoRef, WrittenFile } from '@snapmapper/core';
+import { FileWriteError } from '@snapmapper/core';
 
 /**
  * Stated in one place so the UI can show it and a native shell can drop it.

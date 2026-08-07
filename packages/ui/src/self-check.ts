@@ -29,7 +29,7 @@ import {
   metadataFraction,
   readTags,
   writeMetadataSpliced,
-} from '@geotagger/core';
+} from '@snapmapper/core';
 import QRCode from 'qrcode';
 
 import { scanForSyncCode } from './clock-sync-qr.ts';

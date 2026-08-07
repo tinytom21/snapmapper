@@ -13,7 +13,7 @@ import {
   locationOf,
   type PhotoEntry,
   type Session,
-} from '@geotagger/core';
+} from '@snapmapper/core';
 
 export function PhotoList({
   session,

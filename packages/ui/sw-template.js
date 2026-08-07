@@ -1,9 +1,10 @@
 /**
  * The service worker, so the app runs on a phone with no server anywhere.
  *
- * Not shipped as written: `vite-plugin-service-worker.ts` substitutes __VERSION__ and
- * __PRECACHE__ at build time and emits the result at the site root. It has to be at the root
- * because a worker's scope cannot rise above its own directory, and this one must control `/`.
+ * Not shipped as written: `vite-plugin-service-worker.ts` substitutes __VERSION__, __PRECACHE__
+ * and __BASE__ at build time and emits the result beside `index.html`. It has to sit there
+ * because a worker's scope cannot rise above its own directory, and this one must control the
+ * whole app — which on a GitHub Pages project site is `/<repo>/` rather than `/`.
  *
  * Plain JavaScript rather than TypeScript for the same reason `zeroperl.wasm` is emitted by
  * name: the file must arrive at a fixed URL, unhashed and unbundled, and the less machinery
@@ -37,7 +38,18 @@
 const VERSION = '__VERSION__';
 const SHELL = '__PRECACHE__';
 
-const SHELL_CACHE = `shell-${VERSION}`;
+/*
+ * Where the app is served from: '/' at a domain root, '/snapmapper/' on a GitHub Pages project
+ * site. Everything below is relative to this.
+ *
+ * A worker cannot see `import.meta.env`, and `self.registration.scope` is an absolute URL that
+ * would need parsing, so the build substitutes it. Getting this wrong is quiet: the worker
+ * registers, reports itself active, and answers nothing, because the URLs it is watching for do
+ * not exist on this host.
+ */
+const BASE = '__BASE__';
+
+const SHELL_CACHE = `shell-${BASE}-${VERSION}`;
 /*
  * Deliberately unversioned, so it survives an app update.
  *
@@ -45,7 +57,7 @@ const SHELL_CACHE = `shell-${VERSION}`;
  * mirror image: the binary is fetched by a fixed name, so a zeroperl upgrade would be served
  * the old bytes from here forever. Bump this cache's name when that dependency changes.
  */
-const WASM_CACHE = 'wasm';
+const WASM_CACHE = `wasm-${BASE}`;
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(SHELL_CACHE).then((cache) => cache.addAll(SHELL)));
@@ -61,8 +73,9 @@ self.addEventListener('activate', (event) => {
    */
   event.waitUntil((async () => {
     for (const name of await caches.keys()) {
-      // Old shells go; the wasm cache is meant to outlive a version.
-      if (name.startsWith('shell-') && name !== SHELL_CACHE) await caches.delete(name);
+      // Old shells go; the wasm cache is meant to outlive a version. Scoped to this base, so a
+      // sibling app on the same github.io origin is left alone.
+      if (name.startsWith(`shell-${BASE}-`) && name !== SHELL_CACHE) await caches.delete(name);
     }
     await self.clients.claim();
   })());
@@ -82,20 +95,22 @@ self.addEventListener('fetch', (event) => {
    * revalidates this file on navigation, installs the new shell, and the next launch uses it.
    */
   if (request.mode === 'navigate') {
-    event.respondWith(cacheFirst(SHELL_CACHE, new Request('/', { credentials: 'same-origin' })));
+    event.respondWith(cacheFirst(SHELL_CACHE, new Request(BASE, { credentials: 'same-origin' })));
     return;
   }
 
-  if (url.origin === self.location.origin && url.pathname === '/zeroperl.wasm') {
+  // Anything on another host — map tiles — is left entirely alone. So is anything on this host
+  // outside the app's own base, which on a shared domain like github.io is somebody else's site.
+  if (url.origin !== self.location.origin || !url.pathname.startsWith(BASE)) return;
+
+  if (url.pathname === `${BASE}zeroperl.wasm`) {
     event.respondWith(cacheFirst(WASM_CACHE, request));
     return;
   }
 
-  // Everything else same-origin is a hashed asset: immutable, so cache-first is safe and a
+  // Everything else under the base is a hashed asset: immutable, so cache-first is safe and a
   // miss simply goes to the network.
-  if (url.origin === self.location.origin) {
-    event.respondWith(cacheFirst(SHELL_CACHE, request));
-  }
+  event.respondWith(cacheFirst(SHELL_CACHE, request));
 });
 
 async function cacheFirst(cacheName, request) {

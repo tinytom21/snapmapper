@@ -5,7 +5,7 @@
  * needs a browser, while this is arithmetic over coordinates and needs nothing.
  */
 
-import type { Coordinates } from '@geotagger/core';
+import type { Coordinates } from '@snapmapper/core';
 
 /** `[[west, south], [east, north]]`, MapLibre's `LngLatBoundsLike`. */
 export type Bounds = [[number, number], [number, number]];

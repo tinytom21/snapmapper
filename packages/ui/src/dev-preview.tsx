@@ -23,7 +23,7 @@ import {
   select,
   type PhotoEntry,
   type Session,
-} from '@geotagger/core';
+} from '@snapmapper/core';
 
 import { Sidebar } from './Sidebar.tsx';
 

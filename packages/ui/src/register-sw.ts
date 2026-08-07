@@ -20,7 +20,13 @@ export function registerServiceWorker(): void {
   // After load, so 24MB of WASM and the first tiles are not competing with a precache for
   // bandwidth on the very first visit.
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js', { scope: '/' }).then(
+    /*
+     * `BASE_URL`, not '/'. On a GitHub Pages project site the app lives at `/<repo>/`, and a
+     * worker's scope cannot rise above its own directory — registering at '/' from there is
+     * rejected outright. Vite fills this in at build time and it always ends in a slash.
+     */
+    const base = import.meta.env.BASE_URL;
+    navigator.serviceWorker.register(`${base}sw.js`, { scope: base }).then(
       (registration) => {
         /*
          * A waiting worker means a new version is installed but not in charge, because the
@@ -29,11 +35,11 @@ export function registerServiceWorker(): void {
          * launch. Logged rather than surfaced: nothing is wrong, and nothing needs doing.
          */
         if (registration.waiting) {
-          console.info('photo-geotagger: an update is installed and starts on next launch');
+          console.info('snapmapper: an update is installed and starts on next launch');
         }
       },
       (error: unknown) => {
-        console.warn('photo-geotagger: offline support unavailable —', error);
+        console.warn('snapmapper: offline support unavailable —', error);
       },
     );
   });

@@ -27,6 +27,21 @@ describe('sw-template.js', () => {
     // substitution has to consume them. The build throws if either count is not 1.
     assert.equal(occurrences(template, "'__VERSION__'"), 1);
     assert.equal(occurrences(template, "'__PRECACHE__'"), 1);
+    assert.equal(occurrences(template, "'__BASE__'"), 1);
+  });
+
+  it('resolves every URL against the base, not the domain root', () => {
+    /*
+     * A GitHub Pages project site is served from `/<repo>/`. A worker written for '/' there is a
+     * quiet failure, not a loud one: it registers, reports itself active, and matches nothing,
+     * because `addAll` 404s on the first entry and caches none of them.
+     *
+     * So no absolute path may be hard-coded. These are the three places one would creep back in.
+     */
+    assert.match(template, /new Request\(BASE\b/);
+    assert.match(template, /\$\{BASE\}zeroperl\.wasm/);
+    assert.match(template, /startsWith\(BASE\)/);
+    assert.doesNotMatch(template, /['"`]\/zeroperl\.wasm['"`]/);
   });
 
   it('is valid JavaScript once substituted', () => {

@@ -55,7 +55,7 @@ A platform-agnostic TypeScript core, a web UI, and thin native shells. Everythin
 `core`; the shells only supply file access and packaging.
 
 ```
-photo-geotagger/
+snapmapper/
   packages/
     core/        # TS, zero platform deps — the whole brain
       exiftool/  # driver around @uswriting/exiftool (WASM)
