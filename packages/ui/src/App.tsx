@@ -41,7 +41,6 @@ import {
   type Session,
 } from '@snapmapper/core';
 
-import { Collapsible } from './Collapsible.tsx';
 import { PlatformReport } from './PlatformReport.tsx';
 import { Sidebar } from './Sidebar.tsx';
 import { PhotoMap, type MapPin } from './PhotoMap.tsx';
@@ -213,16 +212,17 @@ export function App() {
       setNotice(describePicked(picked));
 
       /*
-       * Ask where copies go, now rather than at save time.
+       * The destination is *not* asked for here, and that is the fix for a real bug.
        *
-       * Picked files carry no folder, so there is nowhere to put a `geotagged` subfolder without
-       * asking. Two dialogs in a row — files, then destination — is a far better trade than a
-       * permission prompt per file, and it means Save is ready to use immediately.
+       * This used to chain `pickOutputFolder()` straight after the pick, so that Save was ready
+       * immediately. It cannot work: a file picker may only open while the browser considers a
+       * user gesture to be in flight, and by this point the gesture has been spent on the first
+       * picker and several seconds of metadata reading have gone by. The result was
+       * "Failed to execute 'showDirectoryPicker' on 'Window': Must be handling a user gesture",
+       * on desktop and phone alike.
+       *
+       * So the destination bar asks instead, and its button *is* the gesture.
        */
-      if (store.getDestination().kind === 'copy-pending') {
-        const output = await store.pickOutputFolder();
-        if (output) applyDestination(output);
-      }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -642,7 +642,6 @@ export function App() {
       {session && (
         <DestinationBar
           destination={destination}
-          narrow={narrow}
           busy={busy}
           onSaveCopies={async () => {
             setError(null);
@@ -698,15 +697,6 @@ export function App() {
       {loading && (
         <div className="banner">
           Reading metadata {loading.done}/{loading.total} — {loading.current}
-        </div>
-      )}
-
-      {/* On a narrow screen the save bar in the Photos pane says this and does something about
-          it, so a banner would only be spending height to repeat itself. */}
-      {!narrow && session && hasPendingChanges(session) && (
-        <div className="banner warn">
-          {pending} photo{pending === 1 ? '' : 's'} with unsaved changes. Nothing is written
-          until you press Save.
         </div>
       )}
 
@@ -878,107 +868,74 @@ function describePicked(picked: {
  * Shown rather than buried in a settings panel, because "which file am I about to change" is the
  * single most important thing to know before pressing Save.
  */
+/**
+ * Where saves are going, and how to change it.
+ *
+ * Shown rather than buried in a settings screen, because "which file am I about to change" is the
+ * single most important thing to know before pressing Save.
+ *
+ * **Once it is settled it is one line.** It was three — a heading, a reassurance and a row of two
+ * buttons — which is a lot of permanent chrome to spend on a question that has been answered. The
+ * unanswered case still gets the full treatment, because then it is a blocker rather than a fact.
+ */
 function DestinationBar({
   destination,
-  narrow,
   busy,
   onSaveCopies,
   onSaveInPlace,
 }: {
   destination: SaveDestination;
-  narrow: boolean;
   busy: boolean;
   onSaveCopies: () => void;
   onSaveInPlace: () => void;
 }) {
-  const copying = destination.kind === 'copy';
-  const pendingChoice = destination.kind === 'copy-pending';
-
-  /*
-   * On a narrow screen this collapses to one line. It is reference information — "where will
-   * Save put things" — and as five lines with two buttons it was taking more height than the
-   * photo list. Left open when no destination is chosen yet, because then it is a blocker
-   * rather than reference.
-   */
-  if (narrow && !pendingChoice) {
+  if (destination.kind === 'copy-pending') {
     return (
-      <Collapsible
-        title={copying ? 'Saving copies' : 'Overwriting originals'}
-        state={copying ? `${destination.label}/` : 'originals change'}
-        defaultOpen={false}
-      >
-        <div className="panel-body">
-          <DestinationChoices
-            copying={copying}
-            pendingChoice={pendingChoice}
-            busy={busy}
-            onSaveCopies={onSaveCopies}
-            onSaveInPlace={onSaveInPlace}
-          />
+      <div className="banner error">
+        <strong>Choose where copies should go before saving</strong>
+        <div className="note">
+          Pick the folder your photos are in and a <code>{OUTPUT_FOLDER_NAME}</code> folder will be
+          created inside it.
         </div>
-      </Collapsible>
+        <div className="row">
+          <button type="button" className="primary" onClick={onSaveCopies} disabled={busy}>
+            {`Choose the ${OUTPUT_FOLDER_NAME} folder…`}
+          </button>
+          <button type="button" onClick={onSaveInPlace} disabled={busy}>
+            Write over originals
+          </button>
+        </div>
+      </div>
     );
   }
 
-  return (
-    <div className={`banner ${copying ? 'ok' : pendingChoice ? 'error' : 'warn'}`}>
-      {copying && (
-        <>
-          <strong>Saving copies to {destination.label}/</strong>
-          <div className="note">Your originals are not modified.</div>
-        </>
-      )}
-      {pendingChoice && (
-        <>
-          <strong>Choose where copies should go before saving</strong>
-          <div className="note">
-            Pick the folder your photos are in and a <code>{OUTPUT_FOLDER_NAME}</code> folder will
-            be created inside it.
-          </div>
-        </>
-      )}
-      {destination.kind === 'in-place' && (
-        <>
-          <strong>Saving over the originals</strong>
-          <div className="note">{MTIME_LIMITATION_IN_PLACE}</div>
-        </>
-      )}
-      <DestinationChoices
-        copying={copying}
-        pendingChoice={pendingChoice}
-        busy={busy}
-        onSaveCopies={onSaveCopies}
-        onSaveInPlace={onSaveInPlace}
-      />
-    </div>
-  );
-}
+  const copying = destination.kind === 'copy';
 
-function DestinationChoices({
-  copying,
-  pendingChoice,
-  busy,
-  onSaveCopies,
-  onSaveInPlace,
-}: {
-  copying: boolean;
-  pendingChoice: boolean;
-  busy: boolean;
-  onSaveCopies: () => void;
-  onSaveInPlace: () => void;
-}) {
   return (
-    <div className="row">
+    <div className={`destination ${copying ? 'ok' : 'warn'}`}>
+      <span className="dot" aria-hidden="true" />
+      {copying
+        ? (
+          <span className="where">
+            Copies to <code>{destination.label}/</code>
+            <span className="aside"> · originals untouched</span>
+          </span>
+        )
+        : (
+          <span className="where">
+            <strong>Writing over your originals</strong>
+            <span className="aside"> · {MTIME_LIMITATION_IN_PLACE}</span>
+          </span>
+        )}
+
+      {/* The switch, small and last: reading this line is the common case, changing it is not. */}
       <button
         type="button"
-        className={pendingChoice ? 'primary' : ''}
-        onClick={onSaveCopies}
-        disabled={busy || copying}
+        className="link"
+        onClick={copying ? onSaveInPlace : onSaveCopies}
+        disabled={busy}
       >
-        {`Choose the ${OUTPUT_FOLDER_NAME} folder…`}
-      </button>
-      <button type="button" onClick={onSaveInPlace} disabled={busy || !copying}>
-        Write over originals
+        {copying ? 'Write over originals instead' : 'Save copies instead…'}
       </button>
     </div>
   );

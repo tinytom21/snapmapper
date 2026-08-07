@@ -74,7 +74,55 @@ body {
   color: var(--fg);
 }
 
-.app { display: flex; flex-direction: column; height: 100vh; }
+/*
+ * `dvh`, not `vh`, and this is the fix for "I have to scroll down to see the Save button".
+ *
+ * On a phone `100vh` is the viewport with the browser's chrome *retracted* — a height the page does
+ * not actually have until you scroll. So the app was laid out taller than the screen and anything
+ * anchored to its bottom sat below the fold. `dvh` tracks the real height as the URL bar comes and
+ * goes; the `vh` line before it is the fallback for anything that does not know `dvh`.
+ */
+.app { display: flex; flex-direction: column; height: 100vh; height: 100dvh; }
+
+/* --- Where saves go, in one line ----------------------------------------
+   It was three — a heading, a reassurance and a row of two buttons — which is a lot of permanent
+   chrome for a question that has already been answered. */
+
+.destination {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  padding: 0.45rem 0.95rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  font-size: 0.85rem;
+}
+.destination .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+  align-self: center;
+  background: var(--ok);
+}
+.destination.warn .dot { background: var(--pending); }
+.destination .where { min-width: 0; }
+.destination .aside { color: var(--dim); }
+.destination code { font-family: ui-monospace, monospace; }
+
+/* A button that reads as a link: available, and not competing with Save. */
+button.link {
+  background: none;
+  border: 0;
+  padding: 0.1rem 0;
+  margin-left: auto;
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  font-size: 0.82rem;
+}
+button.link:hover:not(:disabled) { text-decoration-thickness: 2px; }
 
 header {
   display: flex;

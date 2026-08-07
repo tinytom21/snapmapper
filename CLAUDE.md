@@ -212,6 +212,38 @@ override for exactly that case.
 - **Licence: elect the Artistic License** where ExifTool and Perl offer the choice. No copyleft on
   our code, and it avoids the GPL/App Store conflict if iOS is ever added.
 
+### A second picker cannot be chained after the first
+
+`showDirectoryPicker` and friends only open while the browser considers a **user gesture** to be in
+flight. Picking photos and then immediately asking for the output folder looks reasonable and
+cannot work: the gesture was spent on the first dialog, and several seconds of metadata reading go
+by before the second is reached. It failed with *"Must be handling a user gesture to show a file
+picker"* — on desktop and phone alike.
+
+The destination bar asks instead, and **its button is the gesture**. Do not put the two dialogs back
+in a row.
+
+### `100dvh`, not `100vh`
+
+On a phone `100vh` is the viewport with the browser chrome *retracted* — a height the page does not
+have until you scroll. The app was therefore laid out taller than the screen, and anything anchored
+to its bottom, the Save bar included, sat below the fold. `height: 100vh; height: 100dvh;` gives the
+real height with a fallback for anything that does not know `dvh`.
+
+### Chrome earns its height or goes
+
+The destination bar was a heading, a reassurance and a row of two buttons, and beside it sat a
+banner repeating the pending count the Save button already carries. Measured: **162px of permanent
+chrome at 1280px, replaced by 38px** — a single line with a status dot and one link-styled button,
+and the duplicate banner deleted. At 375px it is 68px against 160px.
+
+The unanswered case keeps the full treatment, because a destination that has not been chosen is a
+blocker rather than a fact.
+
+Also: `prepareOutput` compares folder names **case-insensitively**. Picking a folder already called
+`Geotagged` produced `Geotagged/geotagged` — the app dutifully creating a second copy of a folder
+that was already there, one capital letter apart.
+
 ### Vector tiles, because a raster tile has a resolution and a phone has three times it
 
 The MVP used raster OSM tiles, reasoning that a vector style needs an API key. Right about the key,

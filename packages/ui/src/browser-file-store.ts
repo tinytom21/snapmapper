@@ -402,7 +402,13 @@ export function createBrowserFileStore(): BrowserFileStore {
  * the interface can be honest about where files went.
  */
 async function prepareOutput(chosen: FileSystemDirectoryHandle): Promise<SaveDestination> {
-  if (chosen.name === OUTPUT_FOLDER_NAME) {
+  /*
+   * Case-insensitively, because folder names on Windows and macOS are.
+   *
+   * Picking a folder already called `Geotagged` produced `Geotagged/geotagged` — the app solemnly
+   * creating a second copy of a folder that was already there, one capital letter apart.
+   */
+  if (chosen.name.toLowerCase() === OUTPUT_FOLDER_NAME.toLowerCase()) {
     return { kind: 'copy', directory: chosen, label: chosen.name };
   }
 

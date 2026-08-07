@@ -295,3 +295,53 @@ describe('LARGE_FOLDER_THRESHOLD', () => {
     assert.ok(LARGE_FOLDER_THRESHOLD < 1000);
   });
 });
+
+/**
+ * A directory handle that records what was created inside it.
+ *
+ * `pickOutputFolder` cannot be driven — it opens an operating-system dialog — but the part that
+ * decides *where* copies land is ours, and it got this wrong in front of the user.
+ */
+function fakeOutputDirectory(name: string) {
+  const created: string[] = [];
+  const handle = {
+    kind: 'directory' as const,
+    name,
+    async getDirectoryHandle(child: string) {
+      created.push(child);
+      return fakeOutputDirectory(child).handle;
+    },
+    async queryPermission() { return 'granted'; },
+    async requestPermission() { return 'granted'; },
+  };
+  return { handle, created };
+}
+
+describe('choosing where copies go', () => {
+  const pick = async (folderName: string) => {
+    const chosen = fakeOutputDirectory(folderName);
+    (globalThis as Record<string, unknown>).showDirectoryPicker = async () => chosen.handle;
+    const store = createBrowserFileStore();
+    const destination = await store.pickOutputFolder();
+    return { destination, created: chosen.created };
+  };
+
+  it('creates a geotagged folder inside the folder you pick', () => {
+    return pick('100MSDCF').then(({ destination, created }) => {
+      assert.deepEqual(created, ['geotagged']);
+      assert.equal(destination?.kind, 'copy');
+      assert.equal(destination?.kind === 'copy' && destination.label, '100MSDCF/geotagged');
+    });
+  });
+
+  it('uses a folder that is already the geotagged one, whatever its capitalisation', async () => {
+    // Reported from the app: picking a folder named `Geotagged` produced `Geotagged/geotagged` —
+    // a second copy of a folder that was already there, one capital letter apart. Folder names on
+    // Windows and macOS are case-insensitive.
+    for (const name of ['geotagged', 'Geotagged', 'GEOTAGGED']) {
+      const { destination, created } = await pick(name);
+      assert.deepEqual(created, [], `${name} should not have had a folder created inside it`);
+      assert.equal(destination?.kind === 'copy' && destination.label, name);
+    }
+  });
+});
