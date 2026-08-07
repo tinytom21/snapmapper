@@ -318,6 +318,19 @@ input.invalid { border-color: var(--danger); }
   padding: 0 0 0.5rem;
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(var(--tile-min, 150px), 1fr));
+  /*
+   * `max-content`, and this line is the whole reason the grid works.
+   *
+   * The implicit rows were `auto`, and in a grid with a definite height — this one has `flex: 1` —
+   * `auto` rows are stretched to share it out. Measured with ten photos: rows of **25.78px** for
+   * tiles **107px** tall, so every tile overflowed into the ones below it and the grid appeared as
+   * a heap of overlapping images. It changed with the height available, which is why it looked like
+   * it depended on which sections were open.
+   *
+   * A `max-content` row does not stretch, and a tile's `aspect-ratio` does contribute to its
+   * max-content height. `align-content: start` alone does *not* fix it — measured, still 25.78px.
+   */
+  grid-auto-rows: max-content;
   gap: 0.35rem;
   overflow-y: auto;
   flex: 1;

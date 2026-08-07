@@ -108,6 +108,22 @@ describe('the palette in styles.css', () => {
     assert.deepEqual(offenders, [], 'use var(--accent-ink) instead of a literal');
   });
 
+  it('sizes the grid rows to their content, not to the space available', () => {
+    /*
+     * The bug this pins shipped and was plainly visible: overlapping photographs.
+     *
+     * The implicit rows were `auto`, and in a grid with a definite height — `.photo-grid` has
+     * `flex: 1` — `auto` rows get stretched to share that height out. Measured with ten photos:
+     * rows of 25.78px for tiles 107px tall, so every tile overflowed into the ones below. It moved
+     * around as sections were opened and closed, because that changed the height available.
+     *
+     * `max-content` rows do not stretch, and a tile's `aspect-ratio` does contribute to its
+     * max-content height. `align-content: start` alone does not fix it — that was measured too.
+     */
+    const rule = /\.photo-grid\s*\{([\s\S]*?)\}/.exec(css)?.[1] ?? '';
+    assert.match(rule, /grid-auto-rows:\s*max-content/);
+  });
+
   it('defines the dark theme by overriding tokens, not by restyling components', () => {
     // The whole reason a palette swap is cheap. A component styled inside the media query is a
     // component that has to be maintained twice.

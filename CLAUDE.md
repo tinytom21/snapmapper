@@ -212,6 +212,24 @@ override for exactly that case.
 - **Licence: elect the Artistic License** where ExifTool and Perl offer the choice. No copyleft on
   our code, and it avoids the GPL/App Store conflict if iOS is ever added.
 
+### `auto` grid rows stretch; `max-content` rows do not
+
+The grid shipped with overlapping photographs, and the cause is worth knowing because it looks like
+a spacing mistake and is not.
+
+`.photo-grid` has `flex: 1`, so its height is **definite**. Its implicit rows were `auto`, and auto
+rows in a definite-height grid are stretched to share that height out. Measured with ten photos:
+**rows of 25.78px for tiles 107px tall** — so every tile overflowed into the ones below it, and the
+amount of overlap changed as sections were opened and closed, because that changed the height
+available. That is exactly how it was reported.
+
+`grid-auto-rows: max-content` fixes it: a max-content row does not stretch, and a tile's
+`aspect-ratio` does contribute to its max-content height. **`align-content: start` alone does not** —
+measured, still 25.78px. Verified afterwards at 375px and 1280px, in both grid sizes, with the clock
+section open and closed: **zero overlapping pairs** in all of them, against 48 before.
+
+`styles.test.ts` asserts the declaration is still there.
+
 ### A second picker cannot be chained after the first
 
 `showDirectoryPicker` and friends only open while the browser considers a **user gesture** to be in
