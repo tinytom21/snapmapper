@@ -8,7 +8,7 @@
 
 import { createServer } from 'node:http';
 import { createReadStream } from 'node:fs';
-import { stat } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import { networkInterfaces } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -26,6 +26,23 @@ const CONTENT_TYPES = {
   '.json': 'application/json; charset=utf-8',
   '.map': 'application/json; charset=utf-8',
 };
+
+/**
+ * `.ts` served to a browser has its types stripped on the way out.
+ *
+ * The splice now lives in `packages/core/src/jpeg.ts`, because it is shipping code
+ * rather than spike code, and the measurement page imports it from there. A browser
+ * cannot parse type annotations, and standing up a bundler for one static page is not
+ * worth it — Node strips them itself, which keeps the phone measuring the exact code
+ * that ships instead of a copy that will drift from it.
+ */
+async function readMaybeStrippingTypes(filePath) {
+  const source = await readFile(filePath, 'utf8');
+  if (!filePath.endsWith('.ts')) return null;
+
+  const { stripTypeScriptTypes } = await import('node:module');
+  return stripTypeScriptTypes(source, { mode: 'strip' });
+}
 
 const server = createServer(async (request, response) => {
   const url = new URL(request.url, `http://${request.headers.host}`);
@@ -47,6 +64,17 @@ const server = createServer(async (request, response) => {
     const info = await stat(filePath);
     if (info.isDirectory()) {
       response.writeHead(404).end('Not found');
+      return;
+    }
+
+    const stripped = await readMaybeStrippingTypes(filePath);
+    if (stripped !== null) {
+      const body = Buffer.from(stripped, 'utf8');
+      response.writeHead(200, {
+        'Content-Type': 'text/javascript; charset=utf-8',
+        'Content-Length': body.byteLength,
+      });
+      response.end(body);
       return;
     }
 
@@ -88,6 +116,12 @@ function resolvePath(pathname) {
   // Two copies of this algorithm would make the measurement meaningless.
   if (decoded.startsWith('/src/')) {
     return contain(path.join(REPO_ROOT, 'spike', 'src'), decoded.slice('/src/'.length));
+  }
+
+  // spike/src/splice-core.mjs re-exports packages/core/src/jpeg.ts, so the relative
+  // import resolves up to here. Types are stripped on the way out.
+  if (decoded.startsWith('/packages/')) {
+    return contain(REPO_ROOT, decoded.slice(1));
   }
 
   // The page imports the package straight out of node_modules.
