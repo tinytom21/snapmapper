@@ -8,7 +8,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { boundsOf, selectionFocus } from '../src/map-focus.ts';
+import { boundsOf, isMapVisible, selectionFocus } from '../src/map-focus.ts';
 
 const pin = (name: string, latitude: number, longitude: number, selected = true) => ({
   name,
@@ -75,5 +75,26 @@ describe('boundsOf', () => {
       ]),
       [[-70.6693, -34.6037], [-58.3816, -33.4489]],
     );
+  });
+});
+
+describe('isMapVisible', () => {
+  it('shows nothing before any photos are open', () => {
+    // An empty map on the landing screen costs a MapLibre instance and a screenful of tiles to
+    // show somebody the mid-Atlantic before they have chosen a photograph.
+    assert.equal(isMapVisible(false, false, 'map'), false);
+    assert.equal(isMapVisible(false, true, 'map'), false);
+  });
+
+  it('shows the map beside the list on a wide screen, whatever the tab says', () => {
+    // `pane` is a narrow-screen concept; on a desktop both panes are on screen at once, so a
+    // stale value must not be able to hide the map.
+    assert.equal(isMapVisible(true, false, 'photos'), true);
+    assert.equal(isMapVisible(true, false, 'map'), true);
+  });
+
+  it('shows one pane at a time on a narrow screen', () => {
+    assert.equal(isMapVisible(true, true, 'photos'), false);
+    assert.equal(isMapVisible(true, true, 'map'), true);
   });
 });

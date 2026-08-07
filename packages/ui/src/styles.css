@@ -292,6 +292,16 @@ code { font-family: ui-monospace, monospace; font-size: 0.95em; }
   min-height: 0;
   overflow: hidden;
 }
+/*
+ * The landing screen, where no photos are open yet and so no map is mounted.
+ *
+ * The sidebar is 25rem beside a map; on its own that leaves two thirds of the window empty. It
+ * takes the full width instead, with the text held to a readable measure rather than stretched
+ * across a 27-inch monitor.
+ */
+.body.solo aside { width: 100%; max-width: none; border-right: 0; overflow-y: auto; }
+.body.solo .empty, .body.solo .panel { max-width: 44rem; }
+
 .map-slot { display: flex; flex: 1; min-width: 0; min-height: 0; }
 .map-slot.hidden { display: none; }
 

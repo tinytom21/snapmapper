@@ -7,6 +7,25 @@
 
 import type { Coordinates } from '@snapmapper/core';
 
+/**
+ * Whether the map should be on screen at all.
+ *
+ * A rule rather than an inline condition because all three of its answers were bugs at some
+ * point: a map shown on the landing screen before any photo was chosen, a map given 40vh beside a
+ * crushed photo list on a phone, and a map torn down and rebuilt on every tab switch — which
+ * discards the tiles and the viewport, so returning lands somewhere other than where you left.
+ *
+ * The caller mounts the map the first time this is true and only hides it afterwards.
+ */
+export function isMapVisible(
+  hasSession: boolean,
+  narrow: boolean,
+  pane: 'photos' | 'map',
+): boolean {
+  if (!hasSession) return false;
+  return !narrow || pane === 'map';
+}
+
 /** `[[west, south], [east, north]]`, MapLibre's `LngLatBoundsLike`. */
 export type Bounds = [[number, number], [number, number]];
 

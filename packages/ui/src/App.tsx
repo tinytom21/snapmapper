@@ -43,6 +43,7 @@ import { Collapsible } from './Collapsible.tsx';
 import { PlatformReport } from './PlatformReport.tsx';
 import { Sidebar } from './Sidebar.tsx';
 import { PhotoMap, type MapPin } from './PhotoMap.tsx';
+import { isMapVisible } from './map-focus.ts';
 import { scanForSyncCode } from './clock-sync-qr.ts';
 import {
   LARGE_FOLDER_THRESHOLD,
@@ -447,6 +448,29 @@ export function App() {
     setSession((current) => (current ? select(current, [name]) : current));
   }, []);
 
+  /*
+   * No session, no map.
+   *
+   * An empty map is not merely unhelpful on the landing screen — it costs a MapLibre instance and
+   * a screenful of tile requests to show somebody the mid-Atlantic before they have chosen a
+   * photograph.
+   */
+  const mapVisible = isMapVisible(session !== null, narrow, pane);
+
+  /*
+   * Mounted the first time it would be visible, and never unmounted after that.
+   *
+   * Both halves matter. Constructing a MapLibre map inside a `display: none` container gives it a
+   * zero-sized viewport — on a phone the Photos tab is the default, so mounting with the session
+   * would mean every map on a phone was born blind and dependent on a later `resize()`. And once
+   * it exists, hiding beats unmounting, because a rebuild discards the tiles, the viewport and
+   * every marker, so returning to the tab would land somewhere other than where you left.
+   */
+  const [mapMounted, setMapMounted] = useState(false);
+  useEffect(() => {
+    if (mapVisible) setMapMounted(true);
+  }, [mapVisible]);
+
   if (!isFileSystemAccessSupported()) {
     return (
       <main className="gate">
@@ -468,7 +492,6 @@ export function App() {
   const busy = loading !== null || saving !== null;
   const pending = session ? pendingPhotos(session).length : 0;
   const selected = session?.selected.size ?? 0;
-  const mapVisible = !(narrow && session !== null && pane !== 'map');
   const saveDisabled = pending === 0 || saving !== null || destination.kind === 'copy-pending';
   const saveLabel = saving
     ? `Saving ${saving.done}/${saving.total}…`
@@ -615,7 +638,9 @@ export function App() {
         </div>
       )}
 
-      <div className="body">
+      {/* `solo` when there is no map beside it, so the landing screen is not a narrow column
+          with an empty two-thirds to its right. */}
+      <div className={`body${mapMounted ? '' : ' solo'}`}>
         {(!narrow || !session || pane === 'photos') && (
           <aside>
             {session
@@ -685,21 +710,23 @@ export function App() {
         )}
 
         {/*
-          The map is never unmounted, only hidden. Rebuilding a MapLibre instance on every tab
-          switch would throw away the tiles, the viewport and every marker, so switching back
-          would jump to a different place than the one just left.
+          Once mounted the map is hidden rather than unmounted. Rebuilding a MapLibre instance on
+          every tab switch would throw away the tiles, the viewport and every marker, so switching
+          back would jump somewhere other than the place just left.
         */}
-        <div className={`map-slot${mapVisible ? '' : ' hidden'}`}>
-          <PhotoMap
-            pins={pins}
-            onPlace={place}
-            onSelectPin={selectOnly}
-            onMovePin={movePin}
-            armed={Boolean(session && session.selected.size > 0)}
-            selectedCount={selected}
-            visible={mapVisible}
-          />
-        </div>
+        {mapMounted && (
+          <div className={`map-slot${mapVisible ? '' : ' hidden'}`}>
+            <PhotoMap
+              pins={pins}
+              onPlace={place}
+              onSelectPin={selectOnly}
+              onMovePin={movePin}
+              armed={Boolean(session && session.selected.size > 0)}
+              selectedCount={selected}
+              visible={mapVisible}
+            />
+          </div>
+        )}
       </div>
     </div>
   );
