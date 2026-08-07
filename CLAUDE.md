@@ -72,6 +72,19 @@ Note that `draggable={false}` on the thumbnail `<img>` is load-bearing. Browsers
 draggable by default, so without it a click-and-drag on a thumbnail starts a native image
 drag with a ghost image, which reads as a bug.
 
+### The layout stacks below 900px
+
+The sidebar was `max-width: 42vw`, which is about 150px on a phone — the photo list was present
+but crushed to nothing, so photos could only be selected all at once. Below 900px the map and the
+list stack instead: the map takes 40vh and the list gets the rest and scrolls. Touch targets grow
+too — 80px rows and 26px checkboxes against 56px and 18px on a desktop.
+
+Measured rather than eyeballed, at 375px and 1280px, using `dev-preview.tsx`. That harness exists
+because the photo list sits behind an OS file picker that cannot be scripted, so checking spacing
+at a phone's width otherwise meant picking real photos on a real phone every time.
+
+`PhotoList` lives in its own module so it can be mounted alone.
+
 ### Camera-clock sync stores the measurement, not the offset
 
 `clock-sync.ts` holds the camera's reading plus the true instant, and `setTimeZone` re-derives

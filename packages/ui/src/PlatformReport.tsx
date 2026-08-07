@@ -23,9 +23,7 @@ export function PlatformReport() {
   const picker = report.showDirectoryPicker === true;
 
   return (
-    <section className="panel">
-      <h2>This device</h2>
-
+    <div className="panel-body">
       <Verdict secure={secure} picker={picker} />
 
       <div className="row">
@@ -52,8 +50,17 @@ export function PlatformReport() {
           ))}
         </dl>
       )}
-    </section>
+    </div>
   );
+}
+
+/** One line for a collapsed summary. */
+export function describePlatformBriefly(): string {
+  const report = describePlatform();
+  if (report.showDirectoryPicker === true || report.showOpenFilePicker === true) {
+    return 'can write to your photos';
+  }
+  return report.secureContext === true ? 'cannot write here' : 'not a secure context';
 }
 
 /**

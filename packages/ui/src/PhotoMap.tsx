@@ -35,6 +35,13 @@ export interface PhotoMapProps {
   readonly onMovePin: (name: string, coordinates: Coordinates) => void;
   /** True when clicking the map would assign a location. Drives the cursor. */
   readonly armed: boolean;
+  /**
+   * How many photos a tap would place.
+   *
+   * Shown over the map because on a narrow screen the list is below the fold, and "what am I
+   * about to move" is the one thing you must know before tapping.
+   */
+  readonly selectedCount: number;
 }
 
 /**
@@ -59,7 +66,9 @@ const TILE_STYLE: StyleSpecification = {
   layers: [{ id: 'osm', type: 'raster', source: 'osm' }],
 };
 
-export function PhotoMap({ pins, onPlace, onSelectPin, onMovePin, armed }: PhotoMapProps) {
+export function PhotoMap({
+  pins, onPlace, onSelectPin, onMovePin, armed, selectedCount,
+}: PhotoMapProps) {
   const container = useRef<HTMLDivElement>(null);
   const map = useRef<MapLibreMap | null>(null);
   const markers = useRef(new Map<string, Marker>());
@@ -162,7 +171,16 @@ export function PhotoMap({ pins, onPlace, onSelectPin, onMovePin, armed }: Photo
     instance.fitBounds(bounds, { padding: 80, maxZoom: 14, duration: 0 });
   }, [bounds]);
 
-  return <div className="map" ref={container} />;
+  return (
+    <div className="map-wrap">
+      <div className="map" ref={container} />
+      {armed && (
+        <div className="map-hint">
+          {selectedCount} selected — tap the map to place {selectedCount === 1 ? 'it' : 'them'}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function paint(element: HTMLElement, pin: MapPin): void {

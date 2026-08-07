@@ -80,9 +80,7 @@ export function ClockPanel({
   }
 
   return (
-    <section className="panel">
-      <h2>Camera clock</h2>
-
+    <div className="panel-body">
       <p className="note">
         GPS timestamps are written in UTC, so the drift and the zone both matter. Getting
         the zone wrong shifts every timestamp by hours.
@@ -153,8 +151,22 @@ export function ClockPanel({
           Typing here replaces the measurement, so a later zone change will not re-derive it.
         </p>
       )}
-    </section>
+    </div>
   );
+}
+
+/**
+ * The clock in one line, for a collapsed panel's summary.
+ *
+ * A section that hides its contents has to say enough while shut to be worth leaving shut —
+ * otherwise it has to be opened every time just to check, which is worse than not collapsing it.
+ */
+export function describeClock(session: Session): string {
+  const drift = session.clock.offsetSeconds === 0
+    ? 'no drift'
+    : describeOffset(session.clock.offsetSeconds).replace('Clock runs ', '');
+
+  return `${session.clock.timeZone}, ${drift}${session.sync ? ' (measured)' : ''}`;
 }
 
 /** The live code. Redrawn on a fixed interval so the decoded instant is bounded. */

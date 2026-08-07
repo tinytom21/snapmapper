@@ -221,3 +221,92 @@ input.invalid { border-color: var(--danger); }
 .report > div.no dd { color: var(--danger); font-weight: 600; }
 .gate .panel { border: 1px solid var(--line); border-radius: 8px; margin-top: 1.5rem; }
 code { font-family: ui-monospace, monospace; font-size: 0.95em; }
+
+/* --- Collapsible sidebar sections --------------------------------------- */
+
+.panel-collapse { border-bottom: 1px solid var(--line); flex: none; }
+.panel-collapse > summary {
+  cursor: pointer;
+  padding: 0.7rem 0.9rem;
+  display: flex;
+  justify-content: space-between;
+  gap: 0.6rem;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  opacity: 0.7;
+}
+.panel-collapse[open] > summary { opacity: 1; }
+.panel-collapse > summary .state {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
+  opacity: 0.75;
+  text-align: right;
+}
+.panel-body { padding: 0 0.9rem 0.9rem; }
+
+/* --- The map, and what a tap will do ------------------------------------ */
+
+.map-wrap { position: relative; flex: 1; min-width: 0; min-height: 0; display: flex; }
+.map { flex: 1; min-width: 0; }
+
+.map-hint {
+  position: absolute;
+  left: 50%;
+  bottom: 0.75rem;
+  transform: translateX(-50%);
+  z-index: 2;
+  padding: 0.4rem 0.75rem;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.82rem;
+  font-weight: 600;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.35);
+  pointer-events: none;
+  white-space: nowrap;
+  max-width: 90%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Slightly larger even with a mouse; a 13px checkbox is a small target for anyone. */
+.photo input[type='checkbox'] { width: 18px; height: 18px; flex: none; }
+
+/* --- Narrow screens ------------------------------------------------------
+   The sidebar was 42vw, which is about 150px on a phone — the photo list was there but
+   crushed to nothing. Below this width the map and the list stack instead, and every target
+   grows to something a finger can hit. */
+
+@media (max-width: 900px) {
+  .body { flex-direction: column; }
+
+  /* The map takes a fixed slice; the list gets the rest and scrolls. */
+  .map-wrap { order: 1; flex: none; height: 40vh; min-height: 200px; }
+  aside {
+    order: 2;
+    width: 100%;
+    max-width: none;
+    flex: 1;
+    min-height: 0;
+    border-right: 0;
+    border-top: 1px solid var(--line);
+  }
+
+  header { padding: 0.5rem 0.6rem; gap: 0.4rem; }
+  header h1 { font-size: 0.95rem; width: 100%; margin: 0; }
+  header button { padding: 0.5rem 0.8rem; }
+
+  .panel { padding: 0.7rem 0.6rem; }
+  .panel-body { padding: 0 0.6rem 0.8rem; }
+
+  .photo { padding: 0.65rem 0.5rem; gap: 0.7rem; }
+  .photo input[type='checkbox'] { width: 26px; height: 26px; }
+  .photo .name { font-size: 0.9rem; }
+  .photo .meta { font-size: 0.8rem; }
+  .thumb { width: 76px; height: 57px; }
+
+  .row button { padding: 0.5rem 0.75rem; font-size: 0.9rem; }
+  .banner { padding: 0.6rem; }
+}

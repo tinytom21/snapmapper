@@ -18,7 +18,6 @@ import {
   createSession,
   createWasmBackend,
   hasPendingChanges,
-  instantOf,
   isValidTimeZone,
   locationOf,
   markSaved,
@@ -40,8 +39,9 @@ import {
   type Session,
 } from '@geotagger/core';
 
-import { ClockPanel } from './ClockPanel.tsx';
-import { PlatformReport } from './PlatformReport.tsx';
+import { ClockPanel, describeClock } from './ClockPanel.tsx';
+import { PhotoList } from './PhotoList.tsx';
+import { PlatformReport, describePlatformBriefly } from './PlatformReport.tsx';
 import { PhotoMap, type MapPin } from './PhotoMap.tsx';
 import { scanForSyncCode } from './clock-sync-qr.ts';
 import {
@@ -71,7 +71,57 @@ function defaultClock(): CameraClock {
   return { timeZone: isValidTimeZone(timeZone) ? timeZone : 'UTC', offsetSeconds: 0 };
 }
 
+/**
+ * Whether the screen is too narrow for the map and the list side by side.
+ *
+ * The breakpoint is about layout, not about phones: a narrow desktop window has the same
+ * problem, and a tablet in landscape does not.
+ */
+function useIsNarrow(): boolean {
+  const [narrow, setNarrow] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia('(max-width: 900px)').matches,
+  );
+
+  useEffect(() => {
+    const query = window.matchMedia('(max-width: 900px)');
+    const update = () => setNarrow(query.matches);
+    query.addEventListener('change', update);
+    return () => query.removeEventListener('change', update);
+  }, []);
+
+  return narrow;
+}
+
+/**
+ * A section that can be shut, saying enough while shut to be worth leaving shut.
+ *
+ * On a narrow screen the photo list needs the room, and a clock panel that has to be opened just
+ * to check the timezone would be worse than one that never collapsed.
+ */
+function Collapsible({
+  title,
+  state,
+  defaultOpen,
+  children,
+}: {
+  title: string;
+  state: string;
+  defaultOpen: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <details className="panel-collapse" open={defaultOpen}>
+      <summary>
+        <span>{title}</span>
+        <span className="state">{state}</span>
+      </summary>
+      {children}
+    </details>
+  );
+}
+
 export function App() {
+  const narrow = useIsNarrow();
   const [session, setSession] = useState<Session | null>(null);
   const [folder, setFolder] = useState<BrowserFolder | null>(null);
   const [thumbnails, setThumbnails] = useState<Map<string, string>>(new Map());
@@ -548,16 +598,6 @@ export function App() {
           {session
             ? (
               <>
-                <ClockPanel
-                  session={session}
-                  addPhotosLabel={folder?.directory ? 'Re-scan folder' : 'Add photos…'}
-                  busy={busy}
-                  onTimeZone={(zone) => setSession(setTimeZone(session, zone))}
-                  onOffsetSeconds={(seconds) => setSession(setOffsetSeconds(session, seconds))}
-                  onSync={(sync: ClockSync) => setSession(applySync(session, sync))}
-                  onClearSync={() => setSession(clearSync(session))}
-                  onScanReference={scanReference}
-                />
                 <PhotoList
                   session={session}
                   thumbnails={thumbnails}
@@ -571,6 +611,27 @@ export function App() {
                   onClear={() => setSession(clearLocation(session, [...session.selected]))}
                   onRevert={() => setSession(revert(session, [...session.selected]))}
                 />
+
+                <Collapsible
+                  title="Camera clock"
+                  state={describeClock(session)}
+                  defaultOpen={!narrow}
+                >
+                  <ClockPanel
+                    session={session}
+                    addPhotosLabel={folder?.directory ? 'Re-scan folder' : 'Add photos…'}
+                    busy={busy}
+                    onTimeZone={(zone) => setSession(setTimeZone(session, zone))}
+                    onOffsetSeconds={(seconds) => setSession(setOffsetSeconds(session, seconds))}
+                    onSync={(sync: ClockSync) => setSession(applySync(session, sync))}
+                    onClearSync={() => setSession(clearSync(session))}
+                    onScanReference={scanReference}
+                  />
+                </Collapsible>
+
+                <Collapsible title="This device" state={describePlatformBriefly()} defaultOpen={false}>
+                  <PlatformReport />
+                </Collapsible>
               </>
             )
             : !loading && (
@@ -599,6 +660,7 @@ export function App() {
           onSelectPin={selectOnly}
           onMovePin={movePin}
           armed={Boolean(session && session.selected.size > 0)}
+          selectedCount={session?.selected.size ?? 0}
         />
       </div>
     </div>
@@ -630,153 +692,6 @@ function describePicked(picked: {
   }
 
   return parts.length > 0 ? parts.join(' ') : null;
-}
-
-function PhotoList({
-  session,
-  thumbnails,
-  onToggle,
-  onSelectOnly,
-  onSelectRange,
-  onSelectAll,
-  onSelectNone,
-  onClear,
-  onRevert,
-}: {
-  session: Session;
-  thumbnails: Map<string, string>;
-  onToggle: (name: string) => void;
-  onSelectOnly: (name: string) => void;
-  onSelectRange: (from: string, to: string, add: boolean) => void;
-  onSelectAll: () => void;
-  onSelectNone: () => void;
-  onClear: () => void;
-  onRevert: () => void;
-}) {
-  const selectedCount = session.selected.size;
-
-  /** Where the last plain click landed, so shift-click has something to extend from. */
-  const anchor = useRef<string | null>(null);
-
-  return (
-    <section className="panel grow">
-      <h2>
-        Photos <span className="count">{session.photos.length}</span>
-      </h2>
-
-      <div className="row">
-        <button type="button" onClick={onSelectAll}>All</button>
-        <button type="button" onClick={onSelectNone} disabled={selectedCount === 0}>None</button>
-        <button type="button" onClick={onClear} disabled={selectedCount === 0}>
-          Clear location
-        </button>
-        <button type="button" onClick={onRevert} disabled={selectedCount === 0}>Revert</button>
-      </div>
-
-      <p className="note">
-        {selectedCount === 0
-          ? 'Click a photo, then click the map to place it. Shift-click for a range.'
-          : `${selectedCount} selected — click the map to place ${selectedCount === 1 ? 'it' : 'them'}.`}
-      </p>
-
-      <ul className="photos">
-        {session.photos.map((entry) => (
-          <PhotoRow
-            key={entry.ref.name}
-            entry={entry}
-            session={session}
-            thumbnail={thumbnails.get(entry.ref.name)}
-            onToggle={onToggle}
-            onClick={(event) => {
-              if (event.shiftKey && anchor.current) {
-                onSelectRange(anchor.current, entry.ref.name, event.ctrlKey || event.metaKey);
-                return;
-              }
-              anchor.current = entry.ref.name;
-              if (event.ctrlKey || event.metaKey) onToggle(entry.ref.name);
-              else onSelectOnly(entry.ref.name);
-            }}
-          />
-        ))}
-      </ul>
-    </section>
-  );
-}
-
-function PhotoRow({
-  entry,
-  session,
-  thumbnail,
-  onToggle,
-  onClick,
-}: {
-  entry: PhotoEntry;
-  session: Session;
-  thumbnail: string | undefined;
-  onToggle: (name: string) => void;
-  onClick: (event: React.MouseEvent) => void;
-}) {
-  const location = locationOf(session, entry.ref.name);
-  const selected = session.selected.has(entry.ref.name);
-  const instant = instantOf(session, entry);
-  const broken = entry.error !== undefined;
-
-  return (
-    <li
-      className={`photo${selected ? ' selected' : ''}${broken ? ' broken' : ''}`}
-      onClick={onClick}
-    >
-      <input
-        type="checkbox"
-        checked={selected}
-        onChange={() => onToggle(entry.ref.name)}
-        onClick={(event) => event.stopPropagation()}
-        disabled={broken}
-        aria-label={`Select ${entry.ref.name}`}
-      />
-
-      {/*
-        draggable={false} matters even though nothing here handles a drag: browsers make
-        images draggable by default, so without it a click-and-drag on a thumbnail starts a
-        native image drag with a ghost image, which looks like the interface misbehaving.
-      */}
-      {thumbnail
-        ? <img className="thumb" src={thumbnail} alt="" draggable={false} loading="lazy" />
-        : <span className="thumb placeholder" aria-hidden="true" />}
-
-      <div className="details">
-        <span className="name">{entry.ref.name}</span>
-        <div className="meta">
-          {broken
-            ? <span className="error">unreadable — {entry.error}</span>
-            : (
-              <>
-                <span>
-                  {instant
-                    ? `${instant.toISOString().replace('T', ' ').slice(0, 19)}Z`
-                    : 'no date'}
-                </span>
-                <LocationLabel location={location} />
-              </>
-            )}
-        </div>
-      </div>
-    </li>
-  );
-}
-
-function LocationLabel({ location }: { location: ReturnType<typeof locationOf> }) {
-  if (location.kind === 'none') return <span className="dim">no location</span>;
-  if (location.kind === 'pending-clear') {
-    return <span className="pendingText">location will be removed</span>;
-  }
-
-  const { latitude, longitude } = location.coordinates;
-  const text = `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
-
-  return location.kind === 'pending'
-    ? <span className="pendingText">{text} (unsaved)</span>
-    : <span>{text}</span>;
 }
 
 /**
