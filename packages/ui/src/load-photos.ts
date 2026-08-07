@@ -122,7 +122,7 @@ export function revokeThumbnailUrls(urls: Map<string, string>): void {
  * Falling back to the full file matters: a file we cannot parse should still get its
  * tags read and be *shown*. Refusing to parse only ever blocks a *write*.
  */
-function headerOnly(bytes: Uint8Array): Uint8Array {
+export function headerOnly(bytes: Uint8Array): Uint8Array {
   try {
     return buildHeaderStub(bytes, findScanStart(bytes));
   } catch {

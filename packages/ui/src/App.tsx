@@ -562,17 +562,31 @@ function Outcomes({
   onDismiss: () => void;
 }) {
   const failed = outcomes.filter((outcome) => !outcome.ok);
+  const unverified = failed.filter((outcome) => outcome.writtenButUnverified);
   const warned = outcomes.filter((outcome) => outcome.warnings.length > 0);
 
   return (
     <div className={`banner ${failed.length > 0 ? 'error' : 'ok'}`}>
       <strong>Saved {outcomes.length - failed.length} of {outcomes.length}</strong>
+      {failed.length === 0 && (
+        <div className="note">Each file was read back and confirmed.</div>
+      )}
       {failed.length > 0 && (
         <ul>
           {failed.map((outcome) => (
             <li key={outcome.name}>{outcome.name} — {outcome.message}</li>
           ))}
         </ul>
+      )}
+      {unverified.length > 0 && (
+        <div className="note">
+          <strong>
+            {unverified.length === 1 ? 'That file was' : 'Those files were'} changed on disk
+          </strong>{' '}
+          but did not read back as intended, so {unverified.length === 1 ? 'it is' : 'they are'}
+          {' '}still listed as unsaved. Check {unverified.length === 1 ? 'it' : 'them'} before
+          saving again.
+        </div>
       )}
       {warned.map((outcome) => (
         <div key={outcome.name} className="note">

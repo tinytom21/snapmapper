@@ -4,6 +4,7 @@ export * from './exiftool.ts';
 export * from './exiftool-wasm.ts';
 export * from './session.ts';
 export * from './clock-sync.ts';
+export * from './verify-write.ts';
 export * from './time.ts';
 export * from './storage.ts';
 export * from './exif-tags.ts';

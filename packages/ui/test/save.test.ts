@@ -76,7 +76,18 @@ function fakeStore(options: FakeStoreOptions = {}) {
   return { store, written };
 }
 
-function fakeBackend(options: { failFor?: readonly string[]; message?: string } = {}): MetadataBackend {
+interface FakeBackendOptions {
+  failFor?: readonly string[];
+  message?: string;
+  /** Overrides what a read returns, so verification can be made to fail. */
+  readData?: string;
+  /** Coordinates the verification read should report. Defaults to what was asked for. */
+  readsBack?: { latitude: number; longitude: number } | null;
+  /** A warning the verification read should report. */
+  readWarning?: string;
+}
+
+function fakeBackend(options: FakeBackendOptions = {}): MetadataBackend {
   return {
     async write(input) {
       if (options.failFor?.includes(input.name)) {
@@ -85,12 +96,34 @@ function fakeBackend(options: { failFor?: readonly string[]; message?: string } 
       // Return a structurally valid stub so the splice succeeds.
       return { ok: true, data: jpeg(16), message: options.message };
     },
-    async read() {
-      return {
-        ok: true,
-        data: '[{"SourceFile":"x","EXIF:DateTimeOriginal":"2024:05:17 14:32:08"}]',
-        message: undefined,
-      };
+    async read(input) {
+      if (options.readData !== undefined) {
+        return { ok: true, data: options.readData, message: undefined };
+      }
+
+      // A load read passes -fast2; a verification read deliberately does not, so that maker
+      // notes are parsed and their warnings surface. That is the honest discriminator — both
+      // reads ask for Composite:GPSLatitude, so the tag list cannot tell them apart.
+      const verifying = !input.args.includes('-fast2');
+      if (!verifying) {
+        return {
+          ok: true,
+          data: '[{"SourceFile":"x","EXIF:DateTimeOriginal":"2024:05:17 14:32:08"}]',
+          message: undefined,
+        };
+      }
+
+      const coords = options.readsBack === undefined ? GREENWICH : options.readsBack;
+      const tags: Record<string, string | number> = { SourceFile: 'x' };
+      if (coords) {
+        tags['Composite:GPSLatitude'] = coords.latitude;
+        tags['Composite:GPSLongitude'] = coords.longitude;
+        tags['EXIF:GPSLatitudeRef'] = coords.latitude < 0 ? 'S' : 'N';
+        tags['EXIF:GPSLongitudeRef'] = coords.longitude < 0 ? 'W' : 'E';
+      }
+      if (options.readWarning) tags['ExifTool:Warning'] = options.readWarning;
+
+      return { ok: true, data: JSON.stringify([tags]), message: undefined };
     },
   };
 }
@@ -218,10 +251,149 @@ describe('saveSession', () => {
     const session = clearLocation(createSession([located], CLOCK), ['a.jpg']);
     const { store, written } = fakeStore();
 
-    const { outcomes } = await saveSession(session, store, fakeBackend());
+    // readsBack: null — the file really has no coordinates afterwards. Verification checks a
+    // clear as an *absence*, so a fake that still reported coordinates would correctly fail.
+    const { outcomes } = await saveSession(session, store, fakeBackend({ readsBack: null }));
 
     assert.equal(outcomes[0]?.ok, true);
     assert.equal(written.size, 1);
+  });
+});
+
+describe('verify after save', () => {
+  it('confirms a good write and counts it as saved', async () => {
+    const session = assignLocation(createSession([entry('a.jpg')], CLOCK), ['a.jpg'], GREENWICH);
+    const { store } = fakeStore();
+
+    const { outcomes, savedNames } = await saveSession(session, store, fakeBackend());
+
+    assert.equal(outcomes[0]?.ok, true);
+    assert.deepEqual(savedNames, ['a.jpg']);
+  });
+
+  it('catches a write that landed somewhere else entirely', async () => {
+    // The file was written and the write reported success, but it does not say what was
+    // intended. Without reading back, this is indistinguishable from a correct save.
+    const session = assignLocation(createSession([entry('a.jpg')], CLOCK), ['a.jpg'], GREENWICH);
+    const { store, written } = fakeStore();
+
+    const { outcomes, savedNames } = await saveSession(
+      session, store, fakeBackend({ readsBack: { latitude: 12.3, longitude: 45.6 } }),
+    );
+
+    assert.equal(outcomes[0]?.ok, false);
+    assert.equal(outcomes[0]?.writtenButUnverified, true);
+    assert.match(outcomes[0]?.message ?? '', /latitude reads 12.3/);
+    // The bytes did reach the file, and the result must not imply otherwise.
+    assert.equal(written.size, 1);
+    assert.deepEqual(savedNames, [], 'an unverified file must not count as saved');
+  });
+
+  it('catches a write that silently did nothing', async () => {
+    const session = assignLocation(createSession([entry('a.jpg')], CLOCK), ['a.jpg'], GREENWICH);
+    const { store } = fakeStore();
+
+    const { outcomes } = await saveSession(session, store, fakeBackend({ readsBack: null }));
+
+    assert.equal(outcomes[0]?.ok, false);
+    assert.match(outcomes[0]?.message ?? '', /no coordinates could be read back/);
+  });
+
+  it('catches the maker-note damage that tag values alone would hide', async () => {
+    // The coordinates read back perfectly here. Only the warning betrays the damage, which
+    // is exactly how piexifjs looked from the outside.
+    const session = assignLocation(createSession([entry('a.jpg')], CLOCK), ['a.jpg'], GREENWICH);
+    const { store } = fakeStore();
+
+    const { outcomes, savedNames } = await saveSession(
+      session, store,
+      fakeBackend({ readWarning: '[minor] Possibly incorrect maker notes offsets (fix by -53?)' }),
+    );
+
+    assert.equal(outcomes[0]?.ok, false);
+    assert.equal(outcomes[0]?.writtenButUnverified, true);
+    assert.match(outcomes[0]?.message ?? '', /maker notes offsets/);
+    assert.deepEqual(savedNames, []);
+  });
+
+  it('verifies a clear as an absence, so a failed clear cannot pass', async () => {
+    const located = entryFromTags(ref('a.jpg'), {
+      'Composite:GPSLatitude': 51.4778,
+      'Composite:GPSLongitude': -0.0015,
+    });
+    const session = clearLocation(createSession([located], CLOCK), ['a.jpg']);
+    const { store } = fakeStore();
+
+    // The file still reports coordinates, so the clear did not take.
+    const { outcomes } = await saveSession(session, store, fakeBackend({ readsBack: GREENWICH }));
+
+    assert.equal(outcomes[0]?.ok, false);
+    assert.match(outcomes[0]?.message ?? '', /should have been removed/);
+  });
+
+  it('accepts a clear that really removed the location', async () => {
+    const located = entryFromTags(ref('a.jpg'), {
+      'Composite:GPSLatitude': 51.4778,
+      'Composite:GPSLongitude': -0.0015,
+    });
+    const session = clearLocation(createSession([located], CLOCK), ['a.jpg']);
+    const { store } = fakeStore();
+
+    const { outcomes, savedNames } = await saveSession(
+      session, store, fakeBackend({ readsBack: null }),
+    );
+
+    assert.equal(outcomes[0]?.ok, true);
+    assert.deepEqual(savedNames, ['a.jpg']);
+  });
+
+  it('reports a benign warning without failing the save', async () => {
+    const session = assignLocation(createSession([entry('a.jpg')], CLOCK), ['a.jpg'], GREENWICH);
+    const { store } = fakeStore();
+
+    const { outcomes } = await saveSession(
+      session, store, fakeBackend({ readWarning: 'Odd offset for ThumbnailImage' }),
+    );
+
+    assert.equal(outcomes[0]?.ok, true);
+    assert.ok(outcomes[0]?.warnings.some((w) => /Odd offset/.test(w)));
+  });
+
+  it('can be turned off, and then does not read back at all', async () => {
+    const session = assignLocation(createSession([entry('a.jpg')], CLOCK), ['a.jpg'], GREENWICH);
+    const { store } = fakeStore();
+
+    // Would fail verification if it ran.
+    const { outcomes, savedNames } = await saveSession(
+      session, store, fakeBackend({ readsBack: { latitude: 1, longitude: 2 } }),
+      undefined, { verify: false },
+    );
+
+    assert.equal(outcomes[0]?.ok, true);
+    assert.deepEqual(savedNames, ['a.jpg']);
+  });
+
+  it('is on by default, so nobody has to remember to ask for it', async () => {
+    const session = assignLocation(createSession([entry('a.jpg')], CLOCK), ['a.jpg'], GREENWICH);
+    const { store } = fakeStore();
+
+    const { outcomes } = await saveSession(
+      session, store, fakeBackend({ readsBack: { latitude: 1, longitude: 2 } }),
+    );
+    assert.equal(outcomes[0]?.ok, false, 'verification should have run without being asked');
+  });
+
+  it('keeps checking the rest after one file fails verification', async () => {
+    const session = assignLocation(
+      createSession([entry('a.jpg'), entry('b.jpg')], CLOCK), ['a.jpg', 'b.jpg'], GREENWICH,
+    );
+    const { store } = fakeStore();
+
+    const { outcomes } = await saveSession(
+      session, store, fakeBackend({ readsBack: { latitude: 9, longitude: 9 } }),
+    );
+    assert.equal(outcomes.length, 2);
+    assert.ok(outcomes.every((outcome) => outcome.writtenButUnverified));
   });
 });
 

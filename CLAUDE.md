@@ -79,6 +79,23 @@ The true instant comes from a QR code the app displays and the user photographs.
 its error correction means a misread cannot silently yield a plausible wrong time — it either
 decodes exactly or not at all.
 
+### Every save is verified by reading the file back
+
+`verify-write.ts` re-reads each written file and checks the coordinates landed *and* that
+ExifTool raises no structural warning. The warning half is the load-bearing part: a file whose
+maker notes have been wrecked still reports perfect coordinates, so a check that only compared
+tag values would pass it. That is exactly how `piexifjs` looked from the outside.
+
+Two details that are easy to undo by accident:
+
+- **The verification read must not pass `-fast2`.** Measured: with it, a corrupted file reports
+  no warning at all; without it, `[minor] Possibly incorrect maker notes offsets`. `-fast2`
+  stops before parsing maker notes. Pinned by a test.
+- **A clear is verified as an absence.** Otherwise a clear that silently did nothing passes.
+
+A failure is reported as *written but not verified*, not as a plain failure — the bytes are on
+disk, and implying otherwise would be worse than saying nothing.
+
 ### Do not use byte-identity as the MakerNotes test
 
 This nearly killed the project. Writing GPS to a file with no existing GPS adds a 12-byte IFD entry to

@@ -12,16 +12,23 @@
  */
 
 import {
+  VERIFY_ARGS,
+  VERIFY_TAGS,
   buildClearLocationTags,
   buildGeotagTags,
   instantOf,
   pendingPhotos,
+  verifyWrittenLocation,
   writeMetadataSpliced,
+  type Coordinates,
   type FileStore,
   type MetadataBackend,
   type PhotoEntry,
   type Session,
+  type WriteVerification,
 } from '@geotagger/core';
+
+import { headerOnly } from './load-photos.ts';
 
 export interface SaveOutcome {
   readonly name: string;
@@ -30,6 +37,25 @@ export interface SaveOutcome {
   readonly elapsedMs: number;
   /** Warnings ExifTool raised that were judged benign. Worth showing, not alarming. */
   readonly warnings: readonly string[];
+  /**
+   * Set when the file was written but did not read back as intended.
+   *
+   * Distinguished from an ordinary failure because the file on disk **has changed**. Saying
+   * only "failed" would imply nothing happened, which would be the wrong thing to believe.
+   */
+  readonly writtenButUnverified?: boolean;
+}
+
+export interface SaveOptions {
+  /**
+   * Read every file back after writing and confirm it says what was intended.
+   *
+   * On by default. It costs one extra metadata read per photo — a few hundred milliseconds
+   * against a write of one to two seconds — and it is the difference between "the write
+   * returned successfully" and "the photograph now has the right location in it". For
+   * irreplaceable files that is worth paying for every time.
+   */
+  readonly verify?: boolean;
 }
 
 export interface SaveProgress {
@@ -51,7 +77,9 @@ export async function saveSession(
   store: FileStore,
   backend: MetadataBackend,
   onProgress?: (progress: SaveProgress) => void,
+  options: SaveOptions = {},
 ): Promise<{ outcomes: SaveOutcome[]; savedNames: string[] }> {
+  const verify = options.verify !== false;
   const pending = pendingPhotos(session);
   const outcomes: SaveOutcome[] = [];
   const savedNames: string[] = [];
@@ -61,12 +89,30 @@ export async function saveSession(
 
     const started = performance.now();
     try {
-      const warnings = await writeOne(session, entry, store, backend);
+      const { warnings, verification } = await writeOne(session, entry, store, backend, verify);
+      const elapsedMs = performance.now() - started;
+
+      if (verification && !verification.ok) {
+        // The bytes are on disk. Reporting a bare failure would suggest otherwise, so this
+        // says what actually happened, and does not count the photo as saved — leaving it
+        // visibly pending rather than silently accepted.
+        outcomes.push({
+          name: entry.ref.name,
+          ok: false,
+          writtenButUnverified: true,
+          message: 'written, but does not read back as expected: '
+            + verification.problems.join('; '),
+          elapsedMs,
+          warnings: verification.warnings,
+        });
+        continue;
+      }
+
       outcomes.push({
         name: entry.ref.name,
         ok: true,
-        elapsedMs: performance.now() - started,
-        warnings,
+        elapsedMs,
+        warnings: [...warnings, ...(verification?.warnings ?? [])],
       });
       savedNames.push(entry.ref.name);
     } catch (error) {
@@ -89,9 +135,10 @@ async function writeOne(
   entry: PhotoEntry,
   store: FileStore,
   backend: MetadataBackend,
-): Promise<readonly string[]> {
+  verify: boolean,
+): Promise<{ warnings: readonly string[]; verification: WriteVerification | undefined }> {
   const staged = session.edits.get(entry.ref.name);
-  if (staged === undefined) return [];
+  if (staged === undefined) return { warnings: [], verification: undefined };
 
   // One bulk read into bytes. Handing a Blob to the backend is the ~69x mistake.
   const original = await store.read(entry.ref);
@@ -108,5 +155,55 @@ async function writeOne(
   const written = await writeMetadataSpliced(backend, original, entry.ref.name, tags);
 
   await store.writeAtomic(entry.ref, written.bytes);
-  return written.warnings;
+
+  return {
+    warnings: written.warnings,
+    verification: verify ? await verifyOne(entry, store, backend, staged) : undefined,
+  };
+}
+
+/**
+ * Read the file back off disk and check it says what was intended.
+ *
+ * Deliberately re-reads through the `FileStore` rather than inspecting the bytes just
+ * written. Those bytes are what we *believe* we wrote; the file is what the next program to
+ * open it will see, and the gap between the two is exactly what needs checking — a failed
+ * rename, a partial write, or a store that quietly wrote somewhere else.
+ */
+async function verifyOne(
+  entry: PhotoEntry,
+  store: FileStore,
+  backend: MetadataBackend,
+  expected: Coordinates | null,
+): Promise<WriteVerification> {
+  const after = await store.read(entry.ref);
+
+  // Only the metadata is needed, so this reads a ~100KB stub rather than pushing the whole
+  // photograph back through ExifTool.
+  const result = await backend.read({
+    bytes: headerOnly(after),
+    name: entry.ref.name,
+    args: [...VERIFY_ARGS, ...VERIFY_TAGS.map((tag) => '-' + tag)],
+  });
+
+  if (!result.data) {
+    return {
+      ok: false,
+      problems: ['could not read the file back: ' + (result.message ?? 'no output')],
+      warnings: [],
+    };
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(result.data);
+  } catch {
+    return { ok: false, problems: ['the file did not read back as valid metadata'], warnings: [] };
+  }
+
+  if (!Array.isArray(parsed) || typeof parsed[0] !== 'object' || parsed[0] === null) {
+    return { ok: false, problems: ['no metadata could be read back from the file'], warnings: [] };
+  }
+
+  return verifyWrittenLocation(parsed[0] as Record<string, string | number | undefined>, expected);
 }

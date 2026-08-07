@@ -32,6 +32,16 @@ photos in the list, click the map to place them, then Save.
 `localhost` matters: the WASM backend needs a secure context for `crypto.randomUUID`, and
 over a plain LAN address reads work while every write fails.
 
+**Every save is verified.** After writing, each file is read back off disk and checked: the
+coordinates must read back as intended, and ExifTool must raise no structural warning. A file
+that fails is reported as *written but not verified* — deliberately distinct from a plain
+failure, because the bytes did reach the disk — and is left listed as unsaved rather than
+quietly accepted. Proven against real data: it passes a correctly spliced A6400 file and
+catches the piexifjs-corrupted one, using a native ExifTool as the reader.
+
+It costs one extra metadata read per photo, a few hundred milliseconds against a write of one
+to two seconds, and it reads only the ~100KB header stub. On by default.
+
 **Two things to know before pointing it at photographs you care about:**
 
 - It writes in place. `writeAtomic` goes through Chromium's swap-file mechanism, so an
