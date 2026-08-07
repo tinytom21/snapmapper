@@ -212,22 +212,46 @@ override for exactly that case.
 - **Licence: elect the Artistic License** where ExifTool and Perl offer the choice. No copyleft on
   our code, and it avoids the GPL/App Store conflict if iOS is ever added.
 
+### The full-size preview shows the original, not the embedded preview
+
+**A claim that used to be in this file was wrong, and it was the plan for this feature:** that the
+camera's ~400KB `PreviewImage` was "already in the header bytes and unused". Measured on
+`DSC00119.JPG` — it sits at **94% into the file**, after the image data, so the header stub does not
+contain it:
+
+| approach | cost | result |
+|---|---|---|
+| `PreviewImage` from the header stub | 1212 ms | **nothing at all** |
+| `PreviewImage` from the whole 6.5MB file | 1328 ms | 384KB, 1616x1080 |
+| the browser decoding the original bytes | **586 ms** | full 6000x4000 |
+| `createImageBitmap` with `resizeWidth: 1600` | 1244 ms | 1600x1067 |
+
+So `PhotoPreview.tsx` hands the original bytes to the browser: faster, full resolution, and no
+ExifTool invocation. Note the last row — **downscaling during decode is slower than decoding**, so
+resizing to save memory costs more than it saves.
+
+EXIF orientation needs nothing: CSS `image-orientation` defaults to `from-image`, so a portrait
+frame arrives upright.
+
+The blob URL must be revoked when the preview changes, and a read that finishes after the user has
+moved on must be discarded — otherwise flicking through fifty photos leaks 300MB, and a slow read
+replaces the photo now on screen with the one just left.
+
 ## Still open
 
-- **A larger preview before geotagging.** A 76px thumbnail is not enough to confirm the right frame.
-  The camera's embedded ~400KB `PreviewImage` is already in the header bytes and unused; fetch it with
-  `readThumbnail(backend, bytes, name, 'PreviewImage')`. The clearest remaining gap.
-- **GUI questions the user has not answered yet:** do the mobile tabs feel right or would a draggable
-  split be better; is the horizontally scrolling header row discoverable; does a full-height map help.
 - **The ~1.5MB JS bundle**, fine on desktop and worth code-splitting for a phone. Now precached by
   the service worker, so it is paid once per version rather than per visit.
 - **Offline map tiles.** The app opens offline and photos can be placed by coordinates, but the map
   is blank over ground never loaded online. See the PWA section.
-- **App name.** `snapmapper` is a placeholder.
-- **Whether mtime matters enough to want a native desktop build.** The one thing a browser cannot do.
-  Copy mode makes it much less painful, since originals keep their dates.
+- **Is the horizontally scrolling header action row discoverable**, or does it just read as broken?
 
 Settled:
+
+- **File modification dates do not matter.** Asked and answered: the user does not care, so the one
+  thing a browser cannot do costs nothing. **No native desktop build.**
+- **The mobile tabs are right.** Confirmed in use — no draggable split needed.
+- **The name is Snapmapper**, published at https://tinytom21.github.io/snapmapper/ and deployed by
+  `.github/workflows/deploy.yml` on every push to `main`.
 
 - **ExifTool-WASM stays.** Q1 passed on real A6400 files, and Phase 1 works on both platforms.
 - **No native shell.** Android's File System Access API works; verified by geotagging real photos on

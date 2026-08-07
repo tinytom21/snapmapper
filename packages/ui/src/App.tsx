@@ -43,6 +43,7 @@ import { Collapsible } from './Collapsible.tsx';
 import { PlatformReport } from './PlatformReport.tsx';
 import { Sidebar } from './Sidebar.tsx';
 import { PhotoMap, type MapPin } from './PhotoMap.tsx';
+import { PhotoPreview } from './PhotoPreview.tsx';
 import { isMapVisible } from './map-focus.ts';
 import { scanForSyncCode } from './clock-sync-qr.ts';
 import {
@@ -112,6 +113,8 @@ export function App() {
   const [saving, setSaving] = useState<SaveProgress | null>(null);
   const [outcomes, setOutcomes] = useState<SaveOutcome[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** Which photo is open full size, if any. */
+  const [preview, setPreview] = useState<string | null>(null);
   /** Something worth saying that is not a failure — duplicates skipped, files read-only. */
   const [notice, setNotice] = useState<string | null>(null);
   /**
@@ -444,6 +447,11 @@ export function App() {
     setSession((current) => (current ? assignLocation(current, [name], coordinates) : current));
   }, []);
 
+  const readOriginal = useCallback(
+    (entry: PhotoEntry) => store.read(entry.ref),
+    [],
+  );
+
   const selectOnly = useCallback((name: string) => {
     setSession((current) => (current ? select(current, [name]) : current));
   }, []);
@@ -660,6 +668,7 @@ export function App() {
                   onSelectNone={() => setSession(select(session, []))}
                   onClear={() => setSession(clearLocation(session, [...session.selected]))}
                   onRevert={() => setSession(revert(session, [...session.selected]))}
+                  onPreview={setPreview}
                   onTimeZone={(zone) => setSession(setTimeZone(session, zone))}
                   onOffsetSeconds={(seconds) => setSession(setOffsetSeconds(session, seconds))}
                   onSync={(sync: ClockSync) => setSession(applySync(session, sync))}
@@ -728,6 +737,22 @@ export function App() {
           </div>
         )}
       </div>
+
+      {preview !== null && session && (
+        <PhotoPreview
+          session={session}
+          name={preview}
+          read={readOriginal}
+          onShow={setPreview}
+          onClose={() => setPreview(null)}
+          onSelectOnly={(name) => {
+            selectOnly(name);
+            setPreview(null);
+            // On a phone the map is the other tab, so land where the photo can be placed.
+            if (narrow) setPane('map');
+          }}
+        />
+      )}
     </div>
   );
 }

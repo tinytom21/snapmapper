@@ -260,18 +260,19 @@ The user's last words were: *"that has worked really nicely"* — the mobile lay
 they are happy. They then asked to stop and compact, so **nothing is half-finished**; the tree is
 clean and everything is committed.
 
-The next item, agreed but not started:
+**The full-size preview is built** — tap a thumbnail. It shows the *original* bytes rather than the
+embedded `PreviewImage`, because the plan for that feature rested on a false premise; see CLAUDE.md
+for the measurements. Verified at 375px and desktop: fits the viewport, steps with arrows or the
+side buttons, stops at both ends, Escape and the backdrop close it, and a photo that failed to load
+says so instead of spinning.
 
-- **No way to see a photo larger before geotagging it.** Tapping a 76px thumbnail is not enough to
-  confirm you have the right frame. The camera's embedded ~400KB `PreviewImage` is already in the
-  header bytes and currently unused — `readThumbnail(backend, bytes, name, 'PreviewImage')` will
-  fetch it. This is the clearest remaining gap.
+Answered since:
 
-Open GUI questions the user has not yet answered, from the last message:
+- **The mobile tabs are right.** No draggable split wanted.
+- **File modification dates do not matter to the user.** So there is no reason for a native desktop
+  build at all — that was the last argument for one.
 
-- Do the **mobile tabs** (Photos / Map) feel right, or would a draggable split be better?
-- Is the horizontally scrolling header action row discoverable, or does it just feel broken?
-- Does the map having the full height while placing actually help?
+Still unanswered: whether the horizontally scrolling header action row is discoverable.
 
 Further out, and deferred by the plan rather than by us: GPX import with timestamp matching, ARW via
 XMP sidecars, reverse geocoding into IPTC, offline tiles via PMTiles, video.
@@ -358,9 +359,7 @@ whether Android is viable at all.
 
 ## Open questions for the user
 
-- **App name.** `snapmapper` is a placeholder throughout.
-- **Whether mtime matters enough to want a native desktop build.** It is the only thing a browser
-  cannot do, and copy mode makes it much less painful.
+- ~~**App name.**~~ Settled: Snapmapper.
 - **Camera timezone default.** `time.ts` requires an IANA zone. Worth defaulting to the system
   zone and letting the user override per session.
 

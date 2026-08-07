@@ -9,6 +9,7 @@
  * From the browser console:
  *
  *     (await import('/src/dev-preview.tsx')).previewPhotoList()
+ *     (await import('/src/dev-preview.tsx')).previewFullSize()
  *
  * Sample photos only — nothing here touches the filesystem, and no real photograph is involved.
  */
@@ -25,6 +26,7 @@ import {
   type Session,
 } from '@snapmapper/core';
 
+import { PhotoPreview } from './PhotoPreview.tsx';
 import { Sidebar } from './Sidebar.tsx';
 
 const FOLDER = { id: 'preview', displayName: 'Selected photos' };
@@ -104,6 +106,7 @@ export function previewPhotoList(session: Session = sampleSession()): void {
       onSelectNone={() => {}}
       onClear={() => {}}
       onRevert={() => {}}
+      onPreview={() => {}}
       onTimeZone={() => {}}
       onOffsetSeconds={() => {}}
       onSync={() => {}}
@@ -111,4 +114,70 @@ export function previewPhotoList(session: Session = sampleSession()): void {
       onScanReference={async () => null}
     />,
   );
+}
+
+let previewRoot: Root | undefined;
+
+/**
+ * Mount the full-size preview over the page, on a generated photograph.
+ *
+ * The real one is reached through the OS file picker, which cannot be scripted, so without this
+ * the overlay could only be checked by picking real photos on a real phone every time — and the
+ * things worth checking are exactly the ones that go wrong at 375px: whether the image fits the
+ * viewport rather than overflowing it, and whether the step buttons are reachable by a thumb.
+ *
+ * The photograph is drawn here. No file is read and no real photograph is involved.
+ */
+export function previewFullSize(name = 'DSC00121.JPG'): void {
+  const session = sampleSession();
+  const host = document.createElement('div');
+  document.body.append(host);
+
+  previewRoot?.unmount();
+  previewRoot = createRoot(host);
+
+  function show(current: string) {
+    previewRoot?.render(
+      <PhotoPreview
+        session={session}
+        name={current}
+        read={fakePhotograph}
+        onShow={show}
+        onClose={() => {
+          previewRoot?.unmount();
+          previewRoot = undefined;
+          host.remove();
+        }}
+        onSelectOnly={(chosen) => console.log('would select', chosen)}
+      />,
+    );
+  }
+
+  show(name);
+}
+
+/** A 3:2 image with the same proportions as an A6400 frame, so the layout is being told the truth. */
+async function fakePhotograph(): Promise<Uint8Array> {
+  const canvas = document.createElement('canvas');
+  canvas.width = 3000;
+  canvas.height = 2000;
+
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('no 2d canvas context');
+
+  const gradient = context.createLinearGradient(0, 0, canvas.width, canvas.height);
+  gradient.addColorStop(0, '#1d4ed8');
+  gradient.addColorStop(1, '#b45309');
+  context.fillStyle = gradient;
+  context.fillRect(0, 0, canvas.width, canvas.height);
+
+  context.fillStyle = '#fff';
+  context.font = 'bold 220px system-ui, sans-serif';
+  context.textAlign = 'center';
+  context.fillText('sample', canvas.width / 2, canvas.height / 2);
+
+  const blob = await new Promise<Blob | null>((resolve) =>
+    canvas.toBlob(resolve, 'image/jpeg', 0.85));
+  if (!blob) throw new Error('canvas produced no JPEG');
+  return new Uint8Array(await blob.arrayBuffer());
 }

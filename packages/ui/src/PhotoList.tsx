@@ -25,10 +25,12 @@ export function PhotoList({
   onSelectNone,
   onClear,
   onRevert,
+  onPreview,
 }: {
   session: Session;
   thumbnails: Map<string, string>;
   onToggle: (name: string) => void;
+  onPreview: (name: string) => void;
   onSelectOnly: (name: string) => void;
   onSelectRange: (from: string, to: string, add: boolean) => void;
   onSelectAll: () => void;
@@ -60,6 +62,7 @@ export function PhotoList({
         {selectedCount === 0
           ? 'Click a photo, then click the map to place it. Shift-click for a range.'
           : `${selectedCount} selected — click the map to place ${selectedCount === 1 ? 'it' : 'them'}.`}
+        {' '}Tap a thumbnail to see the photo full size.
       </p>
 
       <ul className="photos">
@@ -70,6 +73,7 @@ export function PhotoList({
             session={session}
             thumbnail={thumbnails.get(entry.ref.name)}
             onToggle={onToggle}
+            onPreview={onPreview}
             onClick={(event) => {
               if (event.shiftKey && anchor.current) {
                 onSelectRange(anchor.current, entry.ref.name, event.ctrlKey || event.metaKey);
@@ -91,12 +95,14 @@ function PhotoRow({
   session,
   thumbnail,
   onToggle,
+  onPreview,
   onClick,
 }: {
   entry: PhotoEntry;
   session: Session;
   thumbnail: string | undefined;
   onToggle: (name: string) => void;
+  onPreview: (name: string) => void;
   onClick: (event: React.MouseEvent) => void;
 }) {
   const location = locationOf(session, entry.ref.name);
@@ -119,13 +125,29 @@ function PhotoRow({
       />
 
       {/*
-        draggable={false} matters even though nothing here handles a drag: browsers make
-        images draggable by default, so without it a click-and-drag on a thumbnail starts a
-        native image drag with a ghost image, which looks like the interface misbehaving.
+        The thumbnail is a button, because 76px is not enough to confirm a frame and this is the
+        only affordance that works the same with a mouse and a thumb — a hover-revealed magnifier
+        would be invisible on a phone. `stopPropagation` keeps it from also selecting the row.
+
+        draggable={false} matters even though nothing here handles a drag: browsers make images
+        draggable by default, so without it a click-and-drag on a thumbnail starts a native image
+        drag with a ghost image, which looks like the interface misbehaving.
       */}
-      {thumbnail
-        ? <img className="thumb" src={thumbnail} alt="" draggable={false} loading="lazy" />
-        : <span className="thumb placeholder" aria-hidden="true" />}
+      <button
+        type="button"
+        className="thumb-button"
+        title={`See ${entry.ref.name} full size`}
+        aria-label={`See ${entry.ref.name} full size`}
+        onClick={(event) => {
+          event.stopPropagation();
+          onPreview(entry.ref.name);
+        }}
+      >
+        {thumbnail
+          ? <img className="thumb" src={thumbnail} alt="" draggable={false} loading="lazy" />
+          : <span className="thumb placeholder" aria-hidden="true" />}
+        <span className="thumb-zoom" aria-hidden="true">⤢</span>
+      </button>
 
       <div className="details">
         <span className="name">{entry.ref.name}</span>

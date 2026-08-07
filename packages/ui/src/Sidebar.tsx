@@ -28,6 +28,7 @@ export interface SidebarProps {
   readonly onSelectNone: () => void;
   readonly onClear: () => void;
   readonly onRevert: () => void;
+  readonly onPreview: (name: string) => void;
 
   readonly onTimeZone: (timeZone: string) => void;
   readonly onOffsetSeconds: (offsetSeconds: number) => void;
@@ -51,6 +52,7 @@ export function Sidebar(props: SidebarProps) {
         onSelectNone={props.onSelectNone}
         onClear={props.onClear}
         onRevert={props.onRevert}
+        onPreview={props.onPreview}
       />
 
       <Collapsible title="Camera clock" state={describeClock(session)} defaultOpen={!narrow}>
