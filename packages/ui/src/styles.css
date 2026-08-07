@@ -274,29 +274,104 @@ code { font-family: ui-monospace, monospace; font-size: 0.95em; }
 /* Slightly larger even with a mouse; a 13px checkbox is a small target for anyone. */
 .photo input[type='checkbox'] { width: 18px; height: 18px; flex: none; }
 
+/* --- Layout scaffolding -------------------------------------------------- */
+
+/*
+ * `flex: 1` and `overflow: hidden` are both load-bearing.
+ *
+ * Without `flex: 1` the sidebar sizes to its content and then shrinks below it, because a flex
+ * child defaults to `flex-shrink: 1`. Without `overflow: hidden` its children spill out of the
+ * shrunken box — and the collapsed sections, laid out against the shrunken height, get drawn on
+ * top of the photo rows. That was a real bug on both a phone and a desktop, and it is invisible
+ * until the list is long enough to overflow.
+ */
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.map-slot { display: flex; flex: 1; min-width: 0; min-height: 0; }
+.map-slot.hidden { display: none; }
+
+.actions { display: flex; align-items: center; gap: 0.5rem; flex: 1; min-width: 0; }
+
 /* --- Narrow screens ------------------------------------------------------
-   The sidebar was 42vw, which is about 150px on a phone — the photo list was there but
-   crushed to nothing. Below this width the map and the list stack instead, and every target
-   grows to something a finger can hit. */
+   The sidebar was 42vw — about 150px on a phone — so the photo list was crushed to nothing and
+   "select all" was the only workable gesture. Stacking both panes was not enough either: the map
+   took 40vh and the list got what was left behind a wall of chrome, and the collapsed sections
+   ended up drawn over the list's own buttons.
+
+   So below this width there is one pane at a time, each with the full height, and the sidebar
+   scrolls as a whole rather than nesting a scrolling list inside a scrolling column. Nested
+   scrolling on a touch screen is unpleasant even when it does not overlap. */
 
 @media (max-width: 900px) {
-  .body { flex-direction: column; }
+  header { padding: 0.5rem 0.6rem; gap: 0.5rem; }
+  header h1 { font-size: 0.95rem; margin: 0; flex: none; }
 
-  /* The map takes a fixed slice; the list gets the rest and scrolls. */
-  .map-wrap { order: 1; flex: none; height: 40vh; min-height: 200px; }
+  /* One scrolling line rather than three wrapped ones. Wrapping cost more height than the list
+     was getting. */
+  .actions {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    scrollbar-width: none;
+    padding-bottom: 2px;
+  }
+  .actions::-webkit-scrollbar { display: none; }
+  .actions > * { flex: none; }
+  .spacer { display: none; }
+  header button { padding: 0.5rem 0.8rem; }
+
+  .tabs { display: flex; border-bottom: 1px solid var(--line); flex: none; }
+  .tabs button {
+    flex: 1;
+    border: 0;
+    border-bottom: 3px solid transparent;
+    border-radius: 0;
+    background: none;
+    padding: 0.7rem 0.5rem;
+    font-size: 0.9rem;
+  }
+  .tabs button.active {
+    border-bottom-color: var(--accent);
+    color: var(--accent);
+    font-weight: 650;
+  }
+
   aside {
-    order: 2;
     width: 100%;
     max-width: none;
     flex: 1;
     min-height: 0;
     border-right: 0;
-    border-top: 1px solid var(--line);
+    /* The whole column scrolls; nothing inside it scrolls separately. */
+    overflow-y: auto;
+  }
+  /*
+   * Normal flow, not a flex column. As a flex column its children still had flex-shrink: 1, so
+   * the photo list was compressed to fit instead of making the sidebar scroll — the list looked
+   * clipped and nothing scrolled anywhere.
+   */
+  /*
+   * Normal flow, and free to grow past the sidebar's own box, so the `aside` above scrolls.
+   *
+   * All three declarations matter. As a flex column its children kept `flex-shrink: 1` and the
+   * photo list was squashed instead of scrolling. With the desktop `flex: 1` it was pinned to the
+   * viewport height, and with the desktop `overflow: hidden` the rows past the fold were simply
+   * clipped away — present in the DOM, reachable by nothing.
+   */
+  .sidebar {
+    display: block;
+    flex: none;
+    overflow: visible;
+    min-height: 0;
   }
 
-  header { padding: 0.5rem 0.6rem; gap: 0.4rem; }
-  header h1 { font-size: 0.95rem; width: 100%; margin: 0; }
-  header button { padding: 0.5rem 0.8rem; }
+  /* Undo the desktop arrangement where the list is its own scroll region. */
+  .panel.grow { flex: none; display: block; }
+  .photos { overflow: visible; flex: none; min-height: 0; }
 
   .panel { padding: 0.7rem 0.6rem; }
   .panel-body { padding: 0 0.6rem 0.8rem; }
@@ -309,4 +384,5 @@ code { font-family: ui-monospace, monospace; font-size: 0.95em; }
 
   .row button { padding: 0.5rem 0.75rem; font-size: 0.9rem; }
   .banner { padding: 0.6rem; }
+  .qr canvas { width: 220px; height: auto; }
 }

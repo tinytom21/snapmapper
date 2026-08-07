@@ -72,18 +72,32 @@ Note that `draggable={false}` on the thumbnail `<img>` is load-bearing. Browsers
 draggable by default, so without it a click-and-drag on a thumbnail starts a native image
 drag with a ghost image, which reads as a bug.
 
-### The layout stacks below 900px
+### Below 900px it is one pane at a time, not a squeezed desktop
 
-The sidebar was `max-width: 42vw`, which is about 150px on a phone — the photo list was present
-but crushed to nothing, so photos could only be selected all at once. Below 900px the map and the
-list stack instead: the map takes 40vh and the list gets the rest and scrolls. Touch targets grow
-too — 80px rows and 26px checkboxes against 56px and 18px on a desktop.
+The sidebar was `max-width: 42vw` — about 150px on a phone — so the photo list was crushed to
+nothing and "select all" was the only workable gesture. Stacking both panes was not enough
+either: the map took 40vh, the list got what was left behind a wall of chrome, and the collapsed
+sections were drawn *on top of* the list's buttons.
 
-Measured rather than eyeballed, at 375px and 1280px, using `dev-preview.tsx`. That harness exists
-because the photo list sits behind an OS file picker that cannot be scripted, so checking spacing
-at a phone's width otherwise meant picking real photos on a real phone every time.
+So below 900px there are tabs — Photos and Map — each getting the full height. The map is hidden,
+never unmounted, because rebuilding a MapLibre instance would discard the tiles, the viewport and
+every marker. Chrome is compressed to match: the header actions become one horizontally scrolling
+line rather than three wrapped ones, and the destination bar collapses to a single line.
 
-`PhotoList` lives in its own module so it can be mounted alone.
+**Three CSS declarations on `.sidebar` are load-bearing, and each was a real bug.** Without
+`flex: 1` it sizes to content and then shrinks below it, because a flex child defaults to
+`flex-shrink: 1`. Without `overflow: hidden` its children spill out of the shrunken box and the
+collapsed sections get painted over the rows. And on mobile all of that must be *undone* —
+`display: block; flex: none; overflow: visible` — or the rows past the fold are clipped away and
+reachable by nothing.
+
+Verified by measurement at 375px and 1280px with a 24-photo sample, which matters: a list that
+fits is the case that always worked, and every bug here has been about what happens past the fold.
+Use `dev-preview.tsx`, which mounts the real `Sidebar` — an earlier version rendered only
+`PhotoList`, which is exactly why the overlap survived being "measured".
+
+Note that a naive overlap check gives false positives: rows scrolled out of a container still
+report their real off-screen rects. Clip to the scrolling ancestor first.
 
 ### Camera-clock sync stores the measurement, not the offset
 

@@ -25,7 +25,7 @@ import {
   type Session,
 } from '@geotagger/core';
 
-import { PhotoList } from './PhotoList.tsx';
+import { Sidebar } from './Sidebar.tsx';
 
 const FOLDER = { id: 'preview', displayName: 'Selected photos' };
 
@@ -36,8 +36,13 @@ function samplePhoto(name: string, tags: Record<string, unknown> = {}): PhotoEnt
   );
 }
 
-/** A session covering every state a row can be in, which is what makes it worth looking at. */
-export function sampleSession(): Session {
+/**
+ * A session covering every state a row can be in, and long enough to overflow a phone.
+ *
+ * The length is deliberate: a list that fits is the case that always worked. Every layout bug
+ * here has been about what happens past the fold, so the sample has to go past it.
+ */
+export function sampleSession(count = 24): Session {
   const photos: PhotoEntry[] = [
     samplePhoto('DSC00119.JPG'),
     samplePhoto('DSC00120.JPG', {
@@ -54,6 +59,10 @@ export function sampleSession(): Session {
     samplePhoto('DSC00125.JPG'),
   ];
 
+  while (photos.length < count) {
+    photos.push(samplePhoto(`DSC00${(126 + photos.length).toString().padStart(3, '0')}.JPG`));
+  }
+
   let session = createSession(photos, { timeZone: 'Europe/London', offsetSeconds: 45 });
   // One with a staged edit, so the pending styling is visible too.
   session = assignLocation(session, ['DSC00121.JPG'], { latitude: -33.4489, longitude: -70.6693 });
@@ -63,10 +72,11 @@ export function sampleSession(): Session {
 let root: Root | undefined;
 
 /**
- * Replace the sidebar with a sample photo list.
+ * Replace the sidebar's contents with the real sidebar, on sample data.
  *
- * Mounted into the real `<aside>` on purpose, so it inherits the actual layout and media
- * queries rather than being measured in an artificial container that proves nothing.
+ * Mounts `Sidebar` rather than `PhotoList` alone, and into the real `<aside>`, so it inherits the
+ * actual layout and media queries. The earlier version rendered only the list, which is exactly
+ * why a bug where the collapsed sections drew over the list's buttons survived being "measured".
  */
 export function previewPhotoList(session: Session = sampleSession()): void {
   const aside = document.querySelector('aside');
@@ -81,9 +91,12 @@ export function previewPhotoList(session: Session = sampleSession()): void {
 
   root = createRoot(host);
   root.render(
-    <PhotoList
+    <Sidebar
       session={session}
       thumbnails={new Map()}
+      narrow={window.matchMedia('(max-width: 900px)').matches}
+      busy={false}
+      addPhotosLabel="Add photos…"
       onToggle={() => {}}
       onSelectOnly={() => {}}
       onSelectRange={() => {}}
@@ -91,6 +104,11 @@ export function previewPhotoList(session: Session = sampleSession()): void {
       onSelectNone={() => {}}
       onClear={() => {}}
       onRevert={() => {}}
+      onTimeZone={() => {}}
+      onOffsetSeconds={() => {}}
+      onSync={() => {}}
+      onClearSync={() => {}}
+      onScanReference={async () => null}
     />,
   );
 }

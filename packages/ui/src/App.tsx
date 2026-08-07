@@ -39,9 +39,9 @@ import {
   type Session,
 } from '@geotagger/core';
 
-import { ClockPanel, describeClock } from './ClockPanel.tsx';
-import { PhotoList } from './PhotoList.tsx';
-import { PlatformReport, describePlatformBriefly } from './PlatformReport.tsx';
+import { Collapsible } from './Collapsible.tsx';
+import { PlatformReport } from './PlatformReport.tsx';
+import { Sidebar } from './Sidebar.tsx';
 import { PhotoMap, type MapPin } from './PhotoMap.tsx';
 import { scanForSyncCode } from './clock-sync-qr.ts';
 import {
@@ -93,35 +93,17 @@ function useIsNarrow(): boolean {
 }
 
 /**
- * A section that can be shut, saying enough while shut to be worth leaving shut.
+ * Which pane a narrow screen is showing.
  *
- * On a narrow screen the photo list needs the room, and a clock panel that has to be opened just
- * to check the timezone would be worse than one that never collapsed.
+ * Below the breakpoint there is not enough height for a map and a list at once — squeezing both
+ * gave the map 40vh and the list whatever was left, which on a phone was a few rows behind a wall
+ * of chrome. One at a time, each with the full height, is the honest answer.
  */
-function Collapsible({
-  title,
-  state,
-  defaultOpen,
-  children,
-}: {
-  title: string;
-  state: string;
-  defaultOpen: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <details className="panel-collapse" open={defaultOpen}>
-      <summary>
-        <span>{title}</span>
-        <span className="state">{state}</span>
-      </summary>
-      {children}
-    </details>
-  );
-}
+type NarrowPane = 'photos' | 'map';
 
 export function App() {
   const narrow = useIsNarrow();
+  const [pane, setPane] = useState<NarrowPane>('photos');
   const [session, setSession] = useState<Session | null>(null);
   const [folder, setFolder] = useState<BrowserFolder | null>(null);
   const [thumbnails, setThumbnails] = useState<Map<string, string>>(new Map());
@@ -485,11 +467,17 @@ export function App() {
 
   const busy = loading !== null || saving !== null;
   const pending = session ? pendingPhotos(session).length : 0;
+  const selected = session?.selected.size ?? 0;
 
   return (
     <div className="app">
       <header>
         <h1>photo-geotagger</h1>
+        {/*
+          A horizontally scrolling row rather than a wrapping one. Wrapping put four buttons and a
+          folder name onto three lines on a phone, which cost more height than the photo list got.
+        */}
+        <div className="actions">
         {isFilePickerSupported() && (
           <button type="button" className="primary" onClick={openPhotos} disabled={busy}>
             Select photos…
@@ -543,11 +531,13 @@ export function App() {
             </button>
           </>
         )}
+        </div>
       </header>
 
       {session && (
         <DestinationBar
           destination={destination}
+          narrow={narrow}
           busy={busy}
           onSaveCopies={async () => {
             setError(null);
@@ -593,14 +583,40 @@ export function App() {
         />
       )}
 
+      {narrow && session && (
+        <div className="tabs" role="tablist">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={pane === 'photos'}
+            className={pane === 'photos' ? 'active' : ''}
+            onClick={() => setPane('photos')}
+          >
+            Photos {session.photos.length}
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={pane === 'map'}
+            className={pane === 'map' ? 'active' : ''}
+            onClick={() => setPane('map')}
+          >
+            Map{selected > 0 ? ` — ${selected} to place` : ''}
+          </button>
+        </div>
+      )}
+
       <div className="body">
-        <aside>
-          {session
-            ? (
-              <>
-                <PhotoList
+        {(!narrow || !session || pane === 'photos') && (
+          <aside>
+            {session
+              ? (
+                <Sidebar
                   session={session}
                   thumbnails={thumbnails}
+                  narrow={narrow}
+                  busy={busy}
+                  addPhotosLabel={folder?.directory ? 'Re-scan folder' : 'Add photos…'}
                   onToggle={(name) => setSession(toggleSelected(session, name))}
                   onSelectOnly={selectOnly}
                   onSelectRange={(from, to, add) =>
@@ -610,58 +626,49 @@ export function App() {
                   onSelectNone={() => setSession(select(session, []))}
                   onClear={() => setSession(clearLocation(session, [...session.selected]))}
                   onRevert={() => setSession(revert(session, [...session.selected]))}
+                  onTimeZone={(zone) => setSession(setTimeZone(session, zone))}
+                  onOffsetSeconds={(seconds) => setSession(setOffsetSeconds(session, seconds))}
+                  onSync={(sync: ClockSync) => setSession(applySync(session, sync))}
+                  onClearSync={() => setSession(clearSync(session))}
+                  onScanReference={scanReference}
                 />
-
-                <Collapsible
-                  title="Camera clock"
-                  state={describeClock(session)}
-                  defaultOpen={!narrow}
-                >
-                  <ClockPanel
-                    session={session}
-                    addPhotosLabel={folder?.directory ? 'Re-scan folder' : 'Add photos…'}
-                    busy={busy}
-                    onTimeZone={(zone) => setSession(setTimeZone(session, zone))}
-                    onOffsetSeconds={(seconds) => setSession(setOffsetSeconds(session, seconds))}
-                    onSync={(sync: ClockSync) => setSession(applySync(session, sync))}
-                    onClearSync={() => setSession(clearSync(session))}
-                    onScanReference={scanReference}
-                  />
-                </Collapsible>
-
-                <Collapsible title="This device" state={describePlatformBriefly()} defaultOpen={false}>
+              )
+              : !loading && (
+                <>
+                  <div className="empty">
+                    <p><strong>Select photos…</strong> to choose the ones you want.</p>
+                    <p className="note">
+                      Best for a camera card: a folder there can hold a thousand photos, and
+                      reading metadata for all of them takes minutes on a desktop and far longer
+                      on a phone. Opening a whole folder needs only one permission prompt, so it
+                      is the easier route when the folder is small.
+                    </p>
+                    <p className="note">
+                      Saves go to a <code>{OUTPUT_FOLDER_NAME}</code> folder beside your photos
+                      by default, so the originals are never touched.
+                    </p>
+                  </div>
                   <PlatformReport />
-                </Collapsible>
-              </>
-            )
-            : !loading && (
-              <>
-                <div className="empty">
-                  <p><strong>Select photos…</strong> to choose the ones you want.</p>
-                  <p className="note">
-                    Best for a camera card: a folder there can hold a thousand photos, and
-                    reading metadata for all of them takes minutes on a desktop and far longer
-                    on a phone. Opening a whole folder needs only one permission prompt, so it
-                    is the easier route when the folder is small.
-                  </p>
-                  <p className="note">
-                    Saves go to a <code>{OUTPUT_FOLDER_NAME}</code> folder beside your photos by
-                    default, so the originals are never touched.
-                  </p>
-                </div>
-                <PlatformReport />
-              </>
-            )}
-        </aside>
+                </>
+              )}
+          </aside>
+        )}
 
-        <PhotoMap
-          pins={pins}
-          onPlace={place}
-          onSelectPin={selectOnly}
-          onMovePin={movePin}
-          armed={Boolean(session && session.selected.size > 0)}
-          selectedCount={session?.selected.size ?? 0}
-        />
+        {/*
+          The map is never unmounted, only hidden. Rebuilding a MapLibre instance on every tab
+          switch would throw away the tiles, the viewport and every marker, so switching back
+          would jump to a different place than the one just left.
+        */}
+        <div className={`map-slot${narrow && session && pane !== 'map' ? ' hidden' : ''}`}>
+          <PhotoMap
+            pins={pins}
+            onPlace={place}
+            onSelectPin={selectOnly}
+            onMovePin={movePin}
+            armed={Boolean(session && session.selected.size > 0)}
+            selectedCount={selected}
+          />
+        </div>
       </div>
     </div>
   );
@@ -702,17 +709,45 @@ function describePicked(picked: {
  */
 function DestinationBar({
   destination,
+  narrow,
   busy,
   onSaveCopies,
   onSaveInPlace,
 }: {
   destination: SaveDestination;
+  narrow: boolean;
   busy: boolean;
   onSaveCopies: () => void;
   onSaveInPlace: () => void;
 }) {
   const copying = destination.kind === 'copy';
   const pendingChoice = destination.kind === 'copy-pending';
+
+  /*
+   * On a narrow screen this collapses to one line. It is reference information — "where will
+   * Save put things" — and as five lines with two buttons it was taking more height than the
+   * photo list. Left open when no destination is chosen yet, because then it is a blocker
+   * rather than reference.
+   */
+  if (narrow && !pendingChoice) {
+    return (
+      <Collapsible
+        title={copying ? 'Saving copies' : 'Overwriting originals'}
+        state={copying ? `${destination.label}/` : 'originals change'}
+        defaultOpen={false}
+      >
+        <div className="panel-body">
+          <DestinationChoices
+            copying={copying}
+            pendingChoice={pendingChoice}
+            busy={busy}
+            onSaveCopies={onSaveCopies}
+            onSaveInPlace={onSaveInPlace}
+          />
+        </div>
+      </Collapsible>
+    );
+  }
 
   return (
     <div className={`banner ${copying ? 'ok' : pendingChoice ? 'error' : 'warn'}`}>
@@ -737,19 +772,43 @@ function DestinationBar({
           <div className="note">{MTIME_LIMITATION_IN_PLACE}</div>
         </>
       )}
-      <div className="row">
-        <button
-          type="button"
-          className={pendingChoice ? 'primary' : ''}
-          onClick={onSaveCopies}
-          disabled={busy || copying}
-        >
-          {`Choose the ${OUTPUT_FOLDER_NAME} folder…`}
-        </button>
-        <button type="button" onClick={onSaveInPlace} disabled={busy || !copying}>
-          Write over originals
-        </button>
-      </div>
+      <DestinationChoices
+        copying={copying}
+        pendingChoice={pendingChoice}
+        busy={busy}
+        onSaveCopies={onSaveCopies}
+        onSaveInPlace={onSaveInPlace}
+      />
+    </div>
+  );
+}
+
+function DestinationChoices({
+  copying,
+  pendingChoice,
+  busy,
+  onSaveCopies,
+  onSaveInPlace,
+}: {
+  copying: boolean;
+  pendingChoice: boolean;
+  busy: boolean;
+  onSaveCopies: () => void;
+  onSaveInPlace: () => void;
+}) {
+  return (
+    <div className="row">
+      <button
+        type="button"
+        className={pendingChoice ? 'primary' : ''}
+        onClick={onSaveCopies}
+        disabled={busy || copying}
+      >
+        {`Choose the ${OUTPUT_FOLDER_NAME} folder…`}
+      </button>
+      <button type="button" onClick={onSaveInPlace} disabled={busy || !copying}>
+        Write over originals
+      </button>
     </div>
   );
 }
