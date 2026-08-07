@@ -46,12 +46,14 @@ import { PhotoMap, type MapPin } from './PhotoMap.tsx';
 import { scanForSyncCode } from './clock-sync-qr.ts';
 import {
   LARGE_FOLDER_THRESHOLD,
-  MTIME_LIMITATION,
+  MTIME_LIMITATION_IN_PLACE,
+  OUTPUT_FOLDER_NAME,
   createBrowserFileStore,
   isFilePickerSupported,
   isFileSystemAccessSupported,
   isFolderPickerSupported,
   type BrowserFolder,
+  type SaveDestination,
 } from './browser-file-store.ts';
 import {
   loadPhotos,
@@ -79,6 +81,21 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   /** Something worth saying that is not a failure — duplicates skipped, files read-only. */
   const [notice, setNotice] = useState<string | null>(null);
+  /**
+   * Where saves go. Copies by default.
+   *
+   * Safer in three ways at once: the originals are never opened for writing, ungeotagged photos
+   * stay visibly ungeotagged because the output is a separate folder, and — since nothing writes
+   * to the picked files — the per-file write permission prompt disappears entirely.
+   */
+  const [destination, setDestinationState] = useState<SaveDestination>(
+    () => store.getDestination(),
+  );
+
+  const applyDestination = useCallback((next: SaveDestination) => {
+    store.setDestination(next);
+    setDestinationState(next);
+  }, []);
 
   /**
    * The WASM backend, loaded once and lazily.
@@ -140,12 +157,24 @@ export function App() {
       setSession(null);
       await loadRefs(picked.refs, picked.folder);
       setNotice(describePicked(picked));
+
+      /*
+       * Ask where copies go, now rather than at save time.
+       *
+       * Picked files carry no folder, so there is nowhere to put a `geotagged` subfolder without
+       * asking. Two dialogs in a row — files, then destination — is a far better trade than a
+       * permission prompt per file, and it means Save is ready to use immediately.
+       */
+      if (store.getDestination().kind === 'copy-pending') {
+        const output = await store.pickOutputFolder();
+        if (output) applyDestination(output);
+      }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setLoading(null);
     }
-  }, [loadRefs]);
+  }, [loadRefs, applyDestination]);
 
   /**
    * Add more photos to what is already open.
@@ -229,12 +258,17 @@ export function App() {
 
       setSession(null);
       await loadRefs(await store.listFolder(picked), picked);
+
+      // The folder grant already covers creating things inside it, so a geotagged subfolder
+      // beside the photos costs no further prompt. This is the nicest case.
+      const output = await store.outputFolderWithin(picked);
+      if (output) applyDestination(output);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setLoading(null);
     }
-  }, [loadRefs]);
+  }, [loadRefs, applyDestination]);
 
   /**
    * Re-read the folder, keeping the clock settings.
@@ -453,13 +487,32 @@ export function App() {
               type="button"
               className="primary"
               onClick={save}
-              disabled={pending === 0 || saving !== null}
+              disabled={pending === 0 || saving !== null || destination.kind === 'copy-pending'}
             >
               {saving ? `Saving ${saving.done}/${saving.total}…` : `Save ${pending || ''}`.trim()}
             </button>
           </>
         )}
       </header>
+
+      {session && (
+        <DestinationBar
+          destination={destination}
+          busy={busy}
+          onSaveCopies={async () => {
+            setError(null);
+            try {
+              const output = folder?.directory
+                ? await store.outputFolderWithin(folder)
+                : await store.pickOutputFolder();
+              if (output) applyDestination(output);
+            } catch (cause) {
+              setError(cause instanceof Error ? cause.message : String(cause));
+            }
+          }}
+          onSaveInPlace={() => applyDestination({ kind: 'in-place' })}
+        />
+      )}
 
       {error && <div className="banner error">{error}</div>}
       {notice && (
@@ -482,7 +535,13 @@ export function App() {
         </div>
       )}
 
-      {outcomes && <Outcomes outcomes={outcomes} onDismiss={() => setOutcomes(null)} />}
+      {outcomes && (
+        <Outcomes
+          outcomes={outcomes}
+          destination={destination}
+          onDismiss={() => setOutcomes(null)}
+        />
+      )}
 
       <div className="body">
         <aside>
@@ -524,7 +583,10 @@ export function App() {
                     on a phone. Opening a whole folder needs only one permission prompt, so it
                     is the easier route when the folder is small.
                   </p>
-                  <p className="note">{MTIME_LIMITATION}</p>
+                  <p className="note">
+                    Saves go to a <code>{OUTPUT_FOLDER_NAME}</code> folder beside your photos by
+                    default, so the originals are never touched.
+                  </p>
                 </div>
                 <PlatformReport />
               </>
@@ -717,11 +779,73 @@ function LocationLabel({ location }: { location: ReturnType<typeof locationOf> }
     : <span>{text}</span>;
 }
 
+/**
+ * Where saves are going, and how to change it.
+ *
+ * Shown rather than buried in a settings panel, because "which file am I about to change" is the
+ * single most important thing to know before pressing Save.
+ */
+function DestinationBar({
+  destination,
+  busy,
+  onSaveCopies,
+  onSaveInPlace,
+}: {
+  destination: SaveDestination;
+  busy: boolean;
+  onSaveCopies: () => void;
+  onSaveInPlace: () => void;
+}) {
+  const copying = destination.kind === 'copy';
+  const pendingChoice = destination.kind === 'copy-pending';
+
+  return (
+    <div className={`banner ${copying ? 'ok' : pendingChoice ? 'error' : 'warn'}`}>
+      {copying && (
+        <>
+          <strong>Saving copies to {destination.label}/</strong>
+          <div className="note">Your originals are not modified.</div>
+        </>
+      )}
+      {pendingChoice && (
+        <>
+          <strong>Choose where copies should go before saving</strong>
+          <div className="note">
+            Pick the folder your photos are in and a <code>{OUTPUT_FOLDER_NAME}</code> folder will
+            be created inside it.
+          </div>
+        </>
+      )}
+      {destination.kind === 'in-place' && (
+        <>
+          <strong>Saving over the originals</strong>
+          <div className="note">{MTIME_LIMITATION_IN_PLACE}</div>
+        </>
+      )}
+      <div className="row">
+        <button
+          type="button"
+          className={pendingChoice ? 'primary' : ''}
+          onClick={onSaveCopies}
+          disabled={busy || copying}
+        >
+          {`Choose the ${OUTPUT_FOLDER_NAME} folder…`}
+        </button>
+        <button type="button" onClick={onSaveInPlace} disabled={busy || !copying}>
+          Write over originals
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function Outcomes({
   outcomes,
+  destination,
   onDismiss,
 }: {
   outcomes: readonly SaveOutcome[];
+  destination: SaveDestination;
   onDismiss: () => void;
 }) {
   const failed = outcomes.filter((outcome) => !outcome.ok);
@@ -732,7 +856,11 @@ function Outcomes({
     <div className={`banner ${failed.length > 0 ? 'error' : 'ok'}`}>
       <strong>Saved {outcomes.length - failed.length} of {outcomes.length}</strong>
       {failed.length === 0 && (
-        <div className="note">Each file was read back and confirmed.</div>
+        <div className="note">
+          Each file was read back and confirmed
+          {destination.kind === 'copy' ? ` in ${destination.label}/` : ''}.
+          {destination.kind === 'copy' && ' Your originals are unchanged.'}
+        </div>
       )}
       {failed.length > 0 && (
         <ul>
@@ -756,7 +884,7 @@ function Outcomes({
           {outcome.name}: {outcome.warnings.join('; ')}
         </div>
       ))}
-      <p className="note">{MTIME_LIMITATION}</p>
+      {destination.kind === 'in-place' && <p className="note">{MTIME_LIMITATION_IN_PLACE}</p>}
       <button type="button" onClick={onDismiss}>Dismiss</button>
     </div>
   );

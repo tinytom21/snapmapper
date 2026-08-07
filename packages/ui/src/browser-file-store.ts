@@ -37,7 +37,7 @@
  * native shell — see `MTIME_LIMITATION`, which the UI surfaces rather than hiding.
  */
 
-import type { FileStore, FolderHandle, PhotoRef } from '@geotagger/core';
+import type { FileStore, FolderHandle, PhotoRef, WrittenFile } from '@geotagger/core';
 import { FileWriteError } from '@geotagger/core';
 
 /**
@@ -47,8 +47,51 @@ import { FileWriteError } from '@geotagger/core';
  * mention it would be worse than the limitation itself.
  */
 export const MTIME_LIMITATION =
-  'Running in a browser, the file modification date cannot be preserved — geotagged '
-  + 'photos will show today\'s date. A native desktop build fixes this.';
+  'Running in a browser, the file modification date cannot be preserved — a geotagged '
+  + 'photo will show today\'s date. A native desktop build fixes this.';
+
+/** Only worth saying when the originals are being overwritten. Copies keep theirs. */
+export const MTIME_LIMITATION_IN_PLACE =
+  MTIME_LIMITATION + ' Saving copies avoids it: the originals keep their dates.';
+
+/**
+ * Subfolder that copies are written into.
+ *
+ * Always a subfolder, never the chosen folder itself, so that a copy can never land on top of
+ * an original — which is what would happen if somebody chose the photos' own folder as the
+ * destination. The one exception is a folder already named this, where nesting would be silly;
+ * the interface says when that happens rather than being quietly clever.
+ */
+export const OUTPUT_FOLDER_NAME = 'geotagged';
+
+/**
+ * How a save reaches the disk.
+ *
+ * `copy` is the default, and it is the safer of the two by some distance:
+ *
+ *   - The originals are never opened for writing, so they cannot be damaged by a bug here.
+ *   - It needs **no write permission on the picked files at all**, which removes the
+ *     per-file permission prompt that picking a dozen photos otherwise costs.
+ *   - Ungeotagged photos stay visibly ungeotagged, because the output folder is separate.
+ *
+ * `in-place` is what GeoSetter does and what some workflows expect, so it stays available.
+ */
+export type SaveDestination =
+  /** Overwrite the photos themselves. Needs write permission on each one. */
+  | { readonly kind: 'in-place' }
+  /**
+   * Copies are wanted, but no output folder has been chosen yet.
+   *
+   * The starting state, and it exists to break a chicken-and-egg problem: whether the picker
+   * needs to ask for write permission on each file depends on where saves will go, and that is
+   * decided before a folder can be chosen. Starting here means the per-file prompts are never
+   * asked for, and the folder is settled straight afterwards.
+   *
+   * Saving in this state is refused rather than quietly falling back to overwriting originals,
+   * which would be the opposite of what was asked for.
+   */
+  | { readonly kind: 'copy-pending' }
+  | { readonly kind: 'copy'; readonly directory: FileSystemDirectoryHandle; readonly label: string };
 
 /**
  * Above this many JPEGs, a folder is not opened without asking.
@@ -97,12 +140,34 @@ export interface PickedPhotos {
 }
 
 export interface BrowserFileStore extends FileStore {
-  /** The OS file picker, multi-select. Best for a card holding hundreds of photos. */
+  /**
+   * The OS file picker, multi-select. Best for a card holding hundreds of photos.
+   *
+   * Write permission on the picked files is requested only when saving in place. In copy mode
+   * the originals are never written to, so asking would be a prompt per file for nothing.
+   */
   pickPhotos(options?: { add?: PhotoRef[] }): Promise<PickedPhotos | undefined>;
   /** The OS folder picker. One prompt covers the folder; best when it is small. */
   pickFolder(): Promise<BrowserFolder | undefined>;
   /** How many JPEGs a folder holds, without reading any metadata. */
   countFolder(folder: BrowserFolder): Promise<number>;
+
+  /**
+   * Ask for a folder to write copies into, and prepare the subfolder inside it.
+   *
+   * One prompt, covering every save for the rest of the session.
+   */
+  pickOutputFolder(): Promise<SaveDestination | undefined>;
+  /**
+   * Use a folder already granted — the one opened in folder mode — as the destination.
+   *
+   * Costs no further prompt, because the folder grant already covers creating things inside it.
+   * This is what makes "a geotagged folder beside the photos" automatic.
+   */
+  outputFolderWithin(folder: BrowserFolder): Promise<SaveDestination | undefined>;
+
+  setDestination(destination: SaveDestination): void;
+  getDestination(): SaveDestination;
 }
 
 export function createBrowserFileStore(): BrowserFileStore {
@@ -114,6 +179,8 @@ export function createBrowserFileStore(): BrowserFileStore {
    */
   const handles = new Map<string, FileSystemFileHandle>();
   let pickCounter = 0;
+  // Copies by default: safer, and it removes the per-file write prompt.
+  let destination: SaveDestination = { kind: 'copy-pending' };
 
   async function refFromHandle(
     handle: FileSystemFileHandle,
@@ -171,14 +238,17 @@ export function createBrowserFileStore(): BrowserFileStore {
         taken.add(handle.name);
 
         /*
-         * Ask for write access now, not at save time.
+         * Ask for write access only if the originals are going to be written to.
          *
-         * `showOpenFilePicker` yields read-only handles, so without this the first prompt
-         * would appear partway through writing a batch — the worst moment to interrupt
-         * somebody. A file that is refused stays in the list and readable; it simply cannot
-         * be saved, and the UI says which.
+         * `showOpenFilePicker` yields read-only handles, so saving in place needs a prompt per
+         * file — and asked here rather than at save time, because a permission dialog appearing
+         * partway through writing a batch is the worst moment to interrupt somebody. When
+         * saving copies the originals are never opened for writing, so there is nothing to ask
+         * for and the prompts vanish entirely.
          */
-        if (!(await ensureWritable(handle))) readOnly.push(handle.name);
+        if (destination.kind === 'in-place' && !(await ensureWritable(handle))) {
+          readOnly.push(handle.name);
+        }
 
         refs.push(await refFromHandle(handle, folder, `picked:${pickCounter++}:${handle.name}`));
       }
@@ -234,6 +304,36 @@ export function createBrowserFileStore(): BrowserFileStore {
       return refs;
     },
 
+    setDestination(next: SaveDestination): void {
+      destination = next;
+    },
+
+    getDestination(): SaveDestination {
+      return destination;
+    },
+
+    async pickOutputFolder(): Promise<SaveDestination | undefined> {
+      if (!isFolderPickerSupported()) {
+        throw new Error('This browser has no folder picker, so copies cannot be saved.');
+      }
+
+      try {
+        const chosen = await globalThis.showDirectoryPicker({
+          mode: 'readwrite',
+          id: 'output',
+        });
+        return await prepareOutput(chosen);
+      } catch (error) {
+        if (error instanceof DOMException && error.name === 'AbortError') return undefined;
+        throw error;
+      }
+    },
+
+    async outputFolderWithin(folder: BrowserFolder): Promise<SaveDestination | undefined> {
+      if (!folder.directory) return undefined;
+      return prepareOutput(folder.directory);
+    },
+
     async read(ref: PhotoRef): Promise<Uint8Array> {
       const handle = handles.get(ref.locator);
       if (!handle) throw new Error(`no handle for ${ref.name}; open it again`);
@@ -244,7 +344,35 @@ export function createBrowserFileStore(): BrowserFileStore {
       return new Uint8Array(await file.arrayBuffer());
     },
 
-    async writeAtomic(ref: PhotoRef, bytes: Uint8Array): Promise<void> {
+    async writeAtomic(ref: PhotoRef, bytes: Uint8Array): Promise<WrittenFile> {
+      if (destination.kind === 'copy-pending') {
+        // Never silently fall back to overwriting the originals. That is the one outcome the
+        // person who asked for copies would least want.
+        throw new FileWriteError(
+          ref,
+          `choose a folder for the ${OUTPUT_FOLDER_NAME} copies before saving`,
+        );
+      }
+
+      if (destination.kind === 'copy') {
+        const target = destination;
+
+        let output: FileSystemFileHandle;
+        try {
+          output = await target.directory.getFileHandle(ref.name, { create: true });
+        } catch (error) {
+          throw new FileWriteError(ref, describe(error), { cause: error });
+        }
+
+        await writeBytes(ref, output, bytes);
+
+        return {
+          location: `${target.label}/${ref.name}`,
+          replacedOriginal: false,
+          read: async () => new Uint8Array(await (await output.getFile()).arrayBuffer()),
+        };
+      }
+
       const handle = handles.get(ref.locator);
       if (!handle) throw new FileWriteError(ref, 'no file handle; open it again');
 
@@ -252,35 +380,69 @@ export function createBrowserFileStore(): BrowserFileStore {
         throw new FileWriteError(ref, 'permission to write was refused');
       }
 
-      let writable: FileSystemWritableFileStream;
-      try {
-        // Chromium writes to a swap file and moves it into place on close, so an interrupted
-        // save leaves the original untouched.
-        writable = await handle.createWritable({ keepExistingData: false });
-      } catch (error) {
-        throw new FileWriteError(ref, describe(error), { cause: error });
-      }
-
-      try {
-        // TS 5.7 made Uint8Array generic over its buffer, and lib.dom types this parameter as
-        // ArrayBufferView<ArrayBuffer>. The bytes are always backed by a real ArrayBuffer, so
-        // this is a typing artefact rather than a risk.
-        await writable.write(bytes as unknown as ArrayBufferView<ArrayBuffer>);
-        await writable.close();
-      } catch (error) {
-        // Abort so the swap file is discarded rather than left behind.
-        try {
-          await writable.abort();
-        } catch {
-          // Nothing useful to do; the original is still intact either way.
-        }
-        throw new FileWriteError(ref, describe(error), { cause: error });
-      }
+      await writeBytes(ref, handle, bytes);
 
       // Restoring ref.modifiedAtMs belongs here, and cannot be done: the File System Access
       // API exposes no way to set a modification time. See MTIME_LIMITATION.
+      return {
+        location: ref.name,
+        replacedOriginal: true,
+        read: async () => new Uint8Array(await (await handle.getFile()).arrayBuffer()),
+      };
     },
   };
+}
+
+/**
+ * Create or reuse the output subfolder inside a chosen folder.
+ *
+ * Always a subfolder, so a copy can never overwrite an original — which is exactly what would
+ * happen if somebody chose the photos' own folder. A folder already named `geotagged` is used
+ * directly, because nesting one inside another would be daft; the label says which happened so
+ * the interface can be honest about where files went.
+ */
+async function prepareOutput(chosen: FileSystemDirectoryHandle): Promise<SaveDestination> {
+  if (chosen.name === OUTPUT_FOLDER_NAME) {
+    return { kind: 'copy', directory: chosen, label: chosen.name };
+  }
+
+  const directory = await chosen.getDirectoryHandle(OUTPUT_FOLDER_NAME, { create: true });
+  return { kind: 'copy', directory, label: `${chosen.name}/${OUTPUT_FOLDER_NAME}` };
+}
+
+/**
+ * Write bytes to a handle atomically.
+ *
+ * Chromium's `createWritable` writes to a swap file and moves it into place on `close()`, so an
+ * interrupted save never leaves a truncated image — the guarantee that matters most here.
+ */
+async function writeBytes(
+  ref: PhotoRef,
+  handle: FileSystemFileHandle,
+  bytes: Uint8Array,
+): Promise<void> {
+  let writable: FileSystemWritableFileStream;
+  try {
+    writable = await handle.createWritable({ keepExistingData: false });
+  } catch (error) {
+    throw new FileWriteError(ref, describe(error), { cause: error });
+  }
+
+  try {
+    // TS 5.7 made Uint8Array generic over its buffer, and lib.dom types this parameter as
+    // ArrayBufferView<ArrayBuffer>. The bytes are always backed by a real ArrayBuffer, so this
+    // is a typing artefact rather than a risk.
+    await writable.write(bytes as unknown as ArrayBufferView<ArrayBuffer>);
+    await writable.close();
+  } catch (error) {
+    // Abort so the swap file is discarded rather than left behind.
+    try {
+      await writable.abort();
+    } catch {
+      // Nothing useful to do; the target is no worse off either way.
+    }
+    throw new FileWriteError(ref, describe(error), { cause: error });
+  }
 }
 
 /** True when we may write to this handle, asking the user if we do not already know. */

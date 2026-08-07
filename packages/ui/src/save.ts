@@ -26,6 +26,7 @@ import {
   type PhotoEntry,
   type Session,
   type WriteVerification,
+  type WrittenFile,
 } from '@geotagger/core';
 
 import { headerOnly } from './load-photos.ts';
@@ -44,6 +45,8 @@ export interface SaveOutcome {
    * only "failed" would imply nothing happened, which would be the wrong thing to believe.
    */
   readonly writtenButUnverified?: boolean;
+  /** Where the bytes went. Worth showing, since it is not always the original's path. */
+  readonly location?: string;
 }
 
 export interface SaveOptions {
@@ -89,7 +92,9 @@ export async function saveSession(
 
     const started = performance.now();
     try {
-      const { warnings, verification } = await writeOne(session, entry, store, backend, verify);
+      const { warnings, verification, location } = await writeOne(
+        session, entry, store, backend, verify,
+      );
       const elapsedMs = performance.now() - started;
 
       if (verification && !verification.ok) {
@@ -104,6 +109,7 @@ export async function saveSession(
             + verification.problems.join('; '),
           elapsedMs,
           warnings: verification.warnings,
+          ...(location ? { location } : {}),
         });
         continue;
       }
@@ -113,6 +119,7 @@ export async function saveSession(
         ok: true,
         elapsedMs,
         warnings: [...warnings, ...(verification?.warnings ?? [])],
+        ...(location ? { location } : {}),
       });
       savedNames.push(entry.ref.name);
     } catch (error) {
@@ -136,9 +143,15 @@ async function writeOne(
   store: FileStore,
   backend: MetadataBackend,
   verify: boolean,
-): Promise<{ warnings: readonly string[]; verification: WriteVerification | undefined }> {
+): Promise<{
+  warnings: readonly string[];
+  verification: WriteVerification | undefined;
+  location: string | undefined;
+}> {
   const staged = session.edits.get(entry.ref.name);
-  if (staged === undefined) return { warnings: [], verification: undefined };
+  if (staged === undefined) {
+    return { warnings: [], verification: undefined, location: undefined };
+  }
 
   // One bulk read into bytes. Handing a Blob to the backend is the ~69x mistake.
   const original = await store.read(entry.ref);
@@ -154,29 +167,30 @@ async function writeOne(
 
   const written = await writeMetadataSpliced(backend, original, entry.ref.name, tags);
 
-  await store.writeAtomic(entry.ref, written.bytes);
+  const onDisk = await store.writeAtomic(entry.ref, written.bytes);
 
   return {
     warnings: written.warnings,
-    verification: verify ? await verifyOne(entry, store, backend, staged) : undefined,
+    location: onDisk.location,
+    verification: verify ? await verifyOne(entry, onDisk, backend, staged) : undefined,
   };
 }
 
 /**
- * Read the file back off disk and check it says what was intended.
+ * Read back what was written and check it says what was intended.
  *
- * Deliberately re-reads through the `FileStore` rather than inspecting the bytes just
- * written. Those bytes are what we *believe* we wrote; the file is what the next program to
- * open it will see, and the gap between the two is exactly what needs checking — a failed
- * rename, a partial write, or a store that quietly wrote somewhere else.
+ * Reads through the `WrittenFile` the store handed back, not through `store.read(ref)`. Those
+ * are not the same file when copies are being saved, and verifying the *original* while the
+ * copy was wrong would be a green tick on the wrong file — the worst kind. The store is the
+ * only thing that knows where the bytes went, so it is the only thing that can be asked.
  */
 async function verifyOne(
   entry: PhotoEntry,
-  store: FileStore,
+  onDisk: WrittenFile,
   backend: MetadataBackend,
   expected: Coordinates | null,
 ): Promise<WriteVerification> {
-  const after = await store.read(entry.ref);
+  const after = await onDisk.read();
 
   // Only the metadata is needed, so this reads a ~100KB stub rather than pushing the whole
   // photograph back through ExifTool.

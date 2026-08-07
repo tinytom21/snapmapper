@@ -29,23 +29,44 @@ export interface PhotoRef {
   readonly locator: string;
 }
 
+/**
+ * Where a photo's bytes ended up, and how to read them back.
+ *
+ * Returned by `writeAtomic` so that verification reads *what was written* rather than assuming
+ * it landed on top of the original. A store may write a copy somewhere else entirely, and a
+ * verification step that re-read the source would then be checking the wrong file — and passing
+ * while the output was wrong, which is the worst kind of green tick.
+ */
+export interface WrittenFile {
+  /** Where it went, for display in a result list. */
+  readonly location: string;
+  /** True when the original file was replaced rather than a copy being made. */
+  readonly replacedOriginal: boolean;
+  /** The bytes now on disk at that location. */
+  read(): Promise<Uint8Array>;
+}
+
 export interface FileStore {
   listFolder(folder: FolderHandle): Promise<PhotoRef[]>;
 
   read(ref: PhotoRef): Promise<Uint8Array>;
 
   /**
-   * Replace a file's contents without ever leaving it partially written.
+   * Put a photo's new bytes on disk, without ever leaving a file partially written.
    *
-   * Implementations MUST write to a temporary file in the same directory and
-   * then replace the original, so that losing power or having the app killed
-   * mid-save leaves the original intact. Photos on a camera card are routinely
-   * the only copy in existence.
+   * Implementations MUST be atomic from the reader's point of view: write to a temporary file
+   * and then move it into place, so that losing power or having the application killed
+   * mid-save never leaves a truncated image. Photos on a camera card are routinely the only
+   * copy in existence.
    *
-   * `modifiedAtMs` on the ref is restored after the write: geotagging is not an
-   * edit to the photograph, and tools that sort by file date should not see one.
+   * A store may either replace the original or write a copy elsewhere; the returned
+   * `WrittenFile` says which, and is the only correct way to read the result back.
+   *
+   * When a store does replace the original, `modifiedAtMs` on the ref should be restored:
+   * geotagging is not an edit to the photograph, and tools that sort by file date should not
+   * see one. Not every platform can — see `MTIME_LIMITATION` in the browser store.
    */
-  writeAtomic(ref: PhotoRef, bytes: Uint8Array): Promise<void>;
+  writeAtomic(ref: PhotoRef, bytes: Uint8Array): Promise<WrittenFile>;
 }
 
 /**

@@ -22,6 +22,30 @@ A6400 files. All four questions are answered.
 npm run dev
 ```
 
+### Android works — no shell needed
+
+Confirmed on a phone: five photos picked off an SD card with the Android file picker, written,
+and **every one read back and verified**. Chrome on Android has the File System Access API, so
+the premise in `docs/PLAN.md` that a pure PWA cannot do this is stale. Phase 2 largely
+evaporates. The only remaining argument for a native shell is preserving file modification
+dates, which no browser can do.
+
+### Saves go to a `geotagged` folder by default
+
+Copies, not overwrites. Three benefits at once: a bug here cannot damage an original,
+ungeotagged photos stay visibly ungeotagged, and — because nothing opens the originals for
+writing — **the per-file write permission prompt disappears.** Picking five photos used to cost
+five taps of OK; now it costs none.
+
+In folder mode the `geotagged` subfolder is created inside the folder already granted, so it
+costs no extra prompt at all. In picked mode there is no folder to derive it from, so the
+destination is asked for once, straight after picking — two dialogs rather than a prompt per
+file.
+
+Saving is **refused** until a destination is chosen, rather than falling back to overwriting the
+originals, which is the one outcome somebody asking for copies would least want. Writing in
+place is still available in the bar at the top.
+
 ### Two ways in, and the picker is the right one for a card
 
 **Select photos…** uses the OS file picker, multi-select. This is the way in for a camera card:

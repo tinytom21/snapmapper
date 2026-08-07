@@ -52,6 +52,8 @@ function jpeg(scanBytes = 1000): Uint8Array {
 interface FakeStoreOptions {
   failWritesFor?: readonly string[];
   failReadsFor?: readonly string[];
+  /** Simulates copy mode, where the written file is not the original. */
+  copyTo?: string;
 }
 
 function fakeStore(options: FakeStoreOptions = {}) {
@@ -70,6 +72,14 @@ function fakeStore(options: FakeStoreOptions = {}) {
         throw new Error('the file is locked by another program');
       }
       written.set(target.name, bytes);
+
+      // A real store hands back where the bytes went, so verification can read *that* rather
+      // than assuming it landed on the original.
+      return {
+        location: options.copyTo ? `${options.copyTo}/${target.name}` : target.name,
+        replacedOriginal: !options.copyTo,
+        read: async () => written.get(target.name) ?? new Uint8Array(),
+      };
     },
   };
 

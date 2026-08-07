@@ -144,8 +144,11 @@ override for exactly that case.
 - **Never use exiv2.** It corrupts Sony ARW when writing GPS
   ([KDE #326408](https://bugs.kde.org/show_bug.cgi?id=326408)); digiKam moved to ExifTool over
   exactly this. Relevant to the deferred ARW phase.
-- **Android needs a native shell.** Chrome on Android has no `showDirectoryPicker()`, so a pure
-  PWA cannot rewrite files in a card folder in place.
+- **~~Android needs a native shell.~~ Disproved on a device.** Chrome on Android now has the
+  File System Access API: a phone picked five photos off a card, wrote them, and read every one
+  back verified. The `crbug 40101963` premise the plan rested on is stale. **No Tauri, no
+  Capacitor, no Kotlin plugin** — Phase 2 is mostly gone. The remaining argument for a native
+  shell is file modification dates, which no browser can set.
 - **Licence: elect the Artistic License** where ExifTool and Perl offer the choice. No copyleft on
   our code, and it avoids the GPL/App Store conflict if iOS is ever added.
 
@@ -170,7 +173,11 @@ Settled by the spike:
 
 ## Scope
 
-**v1:** JPEG only, written in place. Manual placement on a map. Camera-clock/timezone offset
+**v1:** JPEG only. **Saved as copies into a `geotagged` subfolder by default**, with writing in
+place available — a change from the original plan, made on the user's request and for three
+reasons at once: the originals cannot be damaged by a bug here, ungeotagged photos stay visibly
+ungeotagged, and since nothing opens the originals for writing the browser's per-file write
+permission prompt disappears entirely. Manual placement on a map. Camera-clock/timezone offset
 correction. Map showing photos. Online tiles, designed so offline drops in later. Photos read from
 the camera's SD card on Android.
 

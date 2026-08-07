@@ -30,6 +30,7 @@ interface FakeHandleOptions {
 
 function fakeFileHandle(name: string, options: FakeHandleOptions = {}) {
   let getFileCalls = 0;
+  let permissionRequests = 0;
 
   const handle = {
     kind: 'file' as const,
@@ -45,17 +46,24 @@ function fakeFileHandle(name: string, options: FakeHandleOptions = {}) {
       };
     },
     async queryPermission() {
+      permissionRequests += 1;
       return options.writable === false ? 'prompt' : 'granted';
     },
     async requestPermission() {
+      permissionRequests += 1;
       return options.writable === false ? 'denied' : 'granted';
     },
     get getFileCalls() {
       return getFileCalls;
     },
+    /** How many times write permission was asked about. Zero is the goal in copy mode. */
+    get permissionRequests() {
+      return permissionRequests;
+    },
   };
 
-  return handle as unknown as FileSystemFileHandle & { getFileCalls: number };
+  return handle as unknown as FileSystemFileHandle
+    & { getFileCalls: number; permissionRequests: number };
 }
 
 function stubFilePicker(handles: readonly unknown[]) {
@@ -114,17 +122,59 @@ describe('pickPhotos', () => {
     assert.deepEqual(picked?.skippedDuplicates, ['DSC00119.JPG']);
   });
 
-  it('reports files it could not get write access to', async () => {
+  it('reports files it could not get write access to, when saving in place', async () => {
     stubFilePicker([
       fakeFileHandle('ok.jpg'),
       fakeFileHandle('locked.jpg', { writable: false }),
     ]);
 
-    const picked = await createBrowserFileStore().pickPhotos();
+    const store = createBrowserFileStore();
+    store.setDestination({ kind: 'in-place' });
+    const picked = await store.pickPhotos();
 
     // Still listed and readable — only saving is impossible, and the UI says so.
     assert.equal(picked?.refs.length, 2);
     assert.deepEqual(picked?.readOnly, ['locked.jpg']);
+  });
+
+  it('asks for no write permission at all when saving copies', async () => {
+    /*
+     * The whole reason copies are the default. Picking five photos previously cost five
+     * permission prompts, because saving in place needs write access to each one. Copies never
+     * open the originals for writing, so there is nothing to ask about.
+     */
+    const handles = [fakeFileHandle('a.jpg'), fakeFileHandle('b.jpg'), fakeFileHandle('c.jpg')];
+    stubFilePicker(handles);
+
+    const store = createBrowserFileStore();
+    // copy-pending is the default, but state it so the test does not rest on that.
+    store.setDestination({ kind: 'copy-pending' });
+    const picked = await store.pickPhotos();
+
+    assert.equal(picked?.refs.length, 3);
+    assert.deepEqual(picked?.readOnly, []);
+    for (const handle of handles) {
+      assert.equal(handle.permissionRequests, 0, `${handle.name} triggered a permission prompt`);
+    }
+  });
+
+  it('defaults to copies, so the safe path is the one nobody has to choose', () => {
+    assert.equal(createBrowserFileStore().getDestination().kind, 'copy-pending');
+  });
+
+  it('refuses to save before an output folder is chosen', async () => {
+    // Falling back to overwriting the originals here would be the opposite of what somebody
+    // asking for copies wants.
+    stubFilePicker([fakeFileHandle('a.jpg')]);
+    const store = createBrowserFileStore();
+    const picked = await store.pickPhotos();
+    const ref = picked?.refs[0];
+    assert.ok(ref);
+
+    await assert.rejects(
+      () => store.writeAtomic(ref, new Uint8Array([1, 2, 3])),
+      /choose a folder/i,
+    );
   });
 
   it('returns undefined when the user cancels, which is not an error', async () => {
