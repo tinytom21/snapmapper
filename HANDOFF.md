@@ -22,6 +22,9 @@ A6400 files. All four questions are answered.
 npm run dev
 ```
 
+Placement is **select photos, then click the map**. Shift-click extends a range, ctrl-click
+toggles one. Dragging a thumbnail onto the map was tried and deliberately removed.
+
 Then open **http://localhost:5173/ in Chrome or Edge** — not the in-app browser, and not
 Firefox or Safari, which have no File System Access API. Open a folder of JPEGs, select
 photos in the list, click the map to place them, then Save.

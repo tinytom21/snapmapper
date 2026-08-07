@@ -93,21 +93,31 @@ input.invalid { border-color: var(--danger); }
 .photos { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; min-height: 0; }
 
 .photo {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
   padding: 0.4rem 0.5rem;
   border-radius: 6px;
   border: 1px solid transparent;
+  cursor: pointer;
+  /* A range selection would otherwise paint the text blue as it extends. */
+  user-select: none;
 }
-.photo.selected { background: color-mix(in srgb, var(--accent) 12%, transparent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+.photo:hover { background: color-mix(in srgb, CanvasText 5%, transparent); }
+.photo.selected {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+}
 .photo.broken { opacity: 0.6; }
-.photo label { display: flex; align-items: center; gap: 0.45rem; margin: 0; }
+
+.photo .details { min-width: 0; flex: 1; }
 .photo .name {
-  border: 0;
-  background: none;
-  padding: 0;
+  display: block;
   font-family: ui-monospace, monospace;
   font-size: 0.85rem;
-  text-align: left;
-  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .photo .meta {
   display: flex;
@@ -115,8 +125,17 @@ input.invalid { border-color: var(--danger); }
   flex-wrap: wrap;
   font-size: 0.78rem;
   opacity: 0.85;
-  padding-left: 1.35rem;
 }
+
+.thumb {
+  width: 56px;
+  height: 42px;
+  object-fit: cover;
+  border-radius: 4px;
+  background: color-mix(in srgb, CanvasText 10%, transparent);
+  flex: none;
+}
+.thumb.placeholder { display: inline-block; }
 
 .banner {
   padding: 0.55rem 0.9rem;
@@ -148,40 +167,6 @@ input.invalid { border-color: var(--danger); }
 }
 .pin-pending { background: var(--pending); }
 .pin-selected { width: 22px; height: 22px; z-index: 2; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 45%, transparent); }
-
-/* --- Thumbnails and rows ------------------------------------------------- */
-
-.photo {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  cursor: pointer;
-  user-select: none;
-}
-.photo:hover { background: color-mix(in srgb, CanvasText 5%, transparent); }
-.photo .details { min-width: 0; flex: 1; }
-.photo .name {
-  font-family: ui-monospace, monospace;
-  font-size: 0.85rem;
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.photo .meta { padding-left: 0; }
-
-.thumb {
-  width: 56px;
-  height: 42px;
-  object-fit: cover;
-  border-radius: 4px;
-  background: color-mix(in srgb, CanvasText 10%, transparent);
-  flex: none;
-}
-.thumb.placeholder { display: inline-block; }
-
-/* The map says so when it will accept a dropped photo. */
-.map.drag-over { outline: 3px solid var(--accent); outline-offset: -3px; }
 
 /* --- Clock sync --------------------------------------------------------- */
 

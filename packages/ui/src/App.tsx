@@ -39,7 +39,7 @@ import {
 } from '@geotagger/core';
 
 import { ClockPanel } from './ClockPanel.tsx';
-import { DRAG_MIME, PhotoMap, type MapPin } from './PhotoMap.tsx';
+import { PhotoMap, type MapPin } from './PhotoMap.tsx';
 import { scanForSyncCode } from './clock-sync-qr.ts';
 import {
   MTIME_LIMITATION,
@@ -262,20 +262,6 @@ export function App() {
     });
   }, []);
 
-  /**
-   * A dropped thumbnail places the photo that was dragged.
-   *
-   * If it was part of the selection, the whole selection moves with it — dragging one of
-   * five selected photos onto a spot obviously means all five.
-   */
-  const dropPhoto = useCallback((name: string, coordinates: Coordinates) => {
-    setSession((current) => {
-      if (!current) return current;
-      const names = current.selected.has(name) ? [...current.selected] : [name];
-      return assignLocation(current, names, coordinates);
-    });
-  }, []);
-
   const movePin = useCallback((name: string, coordinates: Coordinates) => {
     setSession((current) => (current ? assignLocation(current, [name], coordinates) : current));
   }, []);
@@ -404,7 +390,6 @@ export function App() {
           onPlace={place}
           onSelectPin={selectOnly}
           onMovePin={movePin}
-          onDropPhoto={dropPhoto}
           armed={Boolean(session && session.selected.size > 0)}
         />
       </div>
@@ -455,8 +440,8 @@ function PhotoList({
 
       <p className="note">
         {selectedCount === 0
-          ? 'Click a photo, then click the map. Shift-click for a range; drag a thumbnail onto the map.'
-          : `${selectedCount} selected — click the map, or drag one onto it.`}
+          ? 'Click a photo, then click the map to place it. Shift-click for a range.'
+          : `${selectedCount} selected — click the map to place ${selectedCount === 1 ? 'it' : 'them'}.`}
       </p>
 
       <ul className="photos">
@@ -504,13 +489,6 @@ function PhotoRow({
   return (
     <li
       className={`photo${selected ? ' selected' : ''}${broken ? ' broken' : ''}`}
-      // Dragging a whole row rather than just the image: a bigger target, and the row is
-      // what the user thinks of as "the photo".
-      draggable={!broken}
-      onDragStart={(event) => {
-        event.dataTransfer.setData(DRAG_MIME, entry.ref.name);
-        event.dataTransfer.effectAllowed = 'copy';
-      }}
       onClick={onClick}
     >
       <input
@@ -522,6 +500,11 @@ function PhotoRow({
         aria-label={`Select ${entry.ref.name}`}
       />
 
+      {/*
+        draggable={false} matters even though nothing here handles a drag: browsers make
+        images draggable by default, so without it a click-and-drag on a thumbnail starts a
+        native image drag with a ghost image, which looks like the interface misbehaving.
+      */}
       {thumbnail
         ? <img className="thumb" src={thumbnail} alt="" draggable={false} loading="lazy" />
         : <span className="thumb placeholder" aria-hidden="true" />}

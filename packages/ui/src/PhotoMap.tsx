@@ -8,9 +8,14 @@
  *
  * Tiles come from a config seam, per the plan, so the later "ship one .pmtiles file for
  * a region" story drops in without touching this component.
+ *
+ * Placement is select-then-click, and only that. Dragging a thumbnail onto the map was tried
+ * and removed: an HTML5 drag over a canvas MapLibre is already tracking pointer events on
+ * made the interface misbehave, and select-then-click turned out to be the better gesture
+ * anyway — it handles one photo and fifty identically.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import maplibregl, { type Map as MapLibreMap, type Marker, type StyleSpecification } from 'maplibre-gl';
 
 import type { Coordinates } from '@geotagger/core';
@@ -30,13 +35,6 @@ export interface PhotoMapProps {
   readonly onMovePin: (name: string, coordinates: Coordinates) => void;
   /** True when clicking the map would assign a location. Drives the cursor. */
   readonly armed: boolean;
-  /**
-   * A thumbnail was dropped on the map. Carries the dragged photo's name and the point.
-   *
-   * Dropping is a separate gesture from clicking: it places the photo that was dragged,
-   * regardless of what is selected, which is what makes it feel direct.
-   */
-  readonly onDropPhoto: (name: string, coordinates: Coordinates) => void;
 }
 
 /**
@@ -61,17 +59,15 @@ const TILE_STYLE: StyleSpecification = {
   layers: [{ id: 'osm', type: 'raster', source: 'osm' }],
 };
 
-export function PhotoMap({
-  pins, onPlace, onSelectPin, onMovePin, armed, onDropPhoto,
-}: PhotoMapProps) {
+export function PhotoMap({ pins, onPlace, onSelectPin, onMovePin, armed }: PhotoMapProps) {
   const container = useRef<HTMLDivElement>(null);
   const map = useRef<MapLibreMap | null>(null);
   const markers = useRef(new Map<string, Marker>());
 
   // Handlers are read through a ref so the map's listeners never go stale, without
   // tearing the map down and rebuilding it whenever a prop identity changes.
-  const handlers = useRef({ onPlace, onSelectPin, onMovePin, onDropPhoto });
-  handlers.current = { onPlace, onSelectPin, onMovePin, onDropPhoto };
+  const handlers = useRef({ onPlace, onSelectPin, onMovePin });
+  handlers.current = { onPlace, onSelectPin, onMovePin };
 
   useEffect(() => {
     if (!container.current || map.current) return;
@@ -166,49 +162,8 @@ export function PhotoMap({
     instance.fitBounds(bounds, { padding: 80, maxZoom: 14, duration: 0 });
   }, [bounds]);
 
-  /**
-   * Turn a drop into a coordinate.
-   *
-   * MapLibre owns the canvas, so the pixel-to-coordinate conversion has to go through its
-   * `unproject`, relative to the container's own bounding box.
-   */
-  const [dragOver, setDragOver] = useState(false);
-
-  return (
-    <div
-      className={`map${dragOver ? ' drag-over' : ''}`}
-      ref={container}
-      onDragOver={(event) => {
-        if (!event.dataTransfer.types.includes(DRAG_MIME)) return;
-        // Without this the browser refuses the drop and shows a "no entry" cursor.
-        event.preventDefault();
-        event.dataTransfer.dropEffect = 'copy';
-        setDragOver(true);
-      }}
-      onDragLeave={() => setDragOver(false)}
-      onDrop={(event) => {
-        event.preventDefault();
-        setDragOver(false);
-
-        const name = event.dataTransfer.getData(DRAG_MIME);
-        const instance = map.current;
-        if (!name || !instance || !container.current) return;
-
-        const box = container.current.getBoundingClientRect();
-        const point = instance.unproject([event.clientX - box.left, event.clientY - box.top]);
-        handlers.current.onDropPhoto(name, { latitude: point.lat, longitude: point.lng });
-      }}
-    />
-  );
+  return <div className="map" ref={container} />;
 }
-
-/**
- * Custom MIME type for a dragged photo.
- *
- * Deliberately not `text/plain`: a specific type means the map only offers to accept
- * drops that are actually ours, so dragging a file or a selection over it does nothing.
- */
-export const DRAG_MIME = 'application/x-geotagger-photo';
 
 function paint(element: HTMLElement, pin: MapPin): void {
   element.classList.toggle('pin-pending', pin.pending);

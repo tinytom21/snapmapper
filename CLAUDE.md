@@ -42,8 +42,8 @@ http://localhost:5173/ (see HANDOFF.md; `localhost` is required for a secure con
   **122 tests, `tsc` clean.**
 - `packages/ui` is React 19 + MapLibre 5 on Vite 7, with a `FileStore` over the File System
   Access API. **20 tests** covering save orchestration, partial failure and QR scan scaling.
-  Thumbnails come from the camera's own embedded ~6KB JPEG, shift-click selects a range, and
-  a thumbnail can be dragged onto the map.
+  Thumbnails come from the camera's own embedded ~6KB JPEG, and shift-click selects a range.
+  Placement is select-then-click on the map, and only that — see below.
 - `packages/shells` does not exist. Deliberately: the shell decision is still open, and the
   browser gives a faster loop for the desktop MVP. Only `browser-file-store.ts` is throwaway.
 
@@ -57,6 +57,16 @@ http://localhost:5173/ (see HANDOFF.md; `localhost` is required for a secure con
   `EXIF:ExifIFD:DateTimeOriginal`, so no date ever resolves — and it hides behind
   `Composite:*`, which keeps working. Pinned by a regression test.
 - **The browser cannot preserve file mtime.** Surfaced in the UI as `MTIME_LIMITATION`.
+
+### Do not add drag-and-drop onto the map
+
+It was built and removed. An HTML5 drag over a canvas that MapLibre is already tracking
+pointer events on made the interface misbehave, and select-then-click is the better gesture
+regardless: it handles one photo and fifty identically, with no second code path.
+
+Note that `draggable={false}` on the thumbnail `<img>` is load-bearing. Browsers make images
+draggable by default, so without it a click-and-drag on a thumbnail starts a native image
+drag with a ghost image, which reads as a bug.
 
 ### Camera-clock sync stores the measurement, not the offset
 
