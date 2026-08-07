@@ -312,3 +312,66 @@ export function previewMap(): void {
     />,
   );
 }
+
+/**
+ * Find elements that are painted on top of one another.
+ *
+ * Layout bugs in this app have been overlaps three times now — collapsed sections over the photo
+ * rows, grid tiles over each other, and the sidebar's own headings over the section beneath. Each
+ * time the check was written from scratch and each time it produced **phantoms**, because a
+ * `getBoundingClientRect()` is not what you see:
+ *
+ * - an element scrolled out of a container still reports its real, off-screen rect, so it must be
+ *   clipped by *every* scrolling ancestor — not just the outermost one;
+ * - an element inside a closed `<details>` reports a rect too, though nothing is painted;
+ * - a zero-height or clipped-to-nothing element overlaps everything and means nothing.
+ *
+ * From the browser console:
+ *
+ *     (await import('/src/dev-preview.tsx')).findOverlaps('.sidebar')
+ */
+export function findOverlaps(within = '.sidebar'): string[] {
+  const root = document.querySelector(within);
+  if (!root) throw new Error(`nothing matches ${within}`);
+
+  const clipped = (el: Element): DOMRect | null => {
+    // Not painted at all: `display: none`, `visibility: hidden`, or inside a closed <details>,
+    // which Chrome hides with `content-visibility` while still reporting boxes.
+    if (!el.checkVisibility({ contentVisibilityAuto: true, opacityProperty: true, visibilityProperty: true })) {
+      return null;
+    }
+
+    let box = el.getBoundingClientRect();
+    for (let parent = el.parentElement; parent; parent = parent.parentElement) {
+      const style = getComputedStyle(parent);
+      if (!/(auto|scroll|hidden)/.test(style.overflowY + style.overflowX)) continue;
+
+      const bounds = parent.getBoundingClientRect();
+      const top = Math.max(box.top, bounds.top);
+      const bottom = Math.min(box.bottom, bounds.bottom);
+      const left = Math.max(box.left, bounds.left);
+      const right = Math.min(box.right, bounds.right);
+      if (bottom - top <= 0 || right - left <= 0) return null;
+      box = new DOMRect(left, top, right - left, bottom - top);
+    }
+    return box.height > 2 && box.width > 2 ? box : null;
+  };
+
+  const named = [...root.querySelectorAll('h2, .row, .note, .photos, .photo-grid, summary, label, .sync')]
+    .map((el) => ({ name: (el.className || el.tagName).toString().slice(0, 24), box: clipped(el) }))
+    .filter((entry): entry is { name: string; box: DOMRect } => entry.box !== null);
+
+  const overlaps: string[] = [];
+  for (let i = 0; i < named.length; i += 1) {
+    for (let j = i + 1; j < named.length; j += 1) {
+      const a = named[i]!.box;
+      const b = named[j]!.box;
+      const y = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+      const x = Math.min(a.right, b.right) - Math.max(a.left, b.left);
+      if (x > 2 && y > 2) {
+        overlaps.push(`${named[i]!.name} over ${named[j]!.name} by ${Math.round(y)}px`);
+      }
+    }
+  }
+  return overlaps;
+}

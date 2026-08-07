@@ -199,7 +199,35 @@ aside {
 .map { flex: 1; min-width: 0; }
 
 .panel { padding: 0.9rem 1rem; border-bottom: 1px solid var(--line); }
-.panel.grow { flex: 1; min-height: 0; display: flex; flex-direction: column; border-bottom: 0; }
+
+/*
+ * The photo list panel, and the three declarations that stop it collapsing.
+ *
+ * `min-height` is the important one. Without it the panel shrank to whatever was left after an
+ * expanded section had taken its share — measured at 1280x560 with a zoomed root: a grid **10px
+ * tall**, and then the panel forced below its own content so its children painted over the section
+ * beneath. That is the overlapping text that was reported.
+ *
+ * The chrome above the list — heading, button rows, the hint — is `flex: none` so the *list* is
+ * the only thing that gives. Flex children shrink by default, and text whose box has been shrunk
+ * below its content does not clip, it overlaps whatever comes next.
+ */
+.panel.grow {
+  flex: 1;
+  /*
+   * `min-content`, not a length. A length is a guess that is wrong at some browser zoom: 10rem was
+   * measured to leave an 8px list, because the heading, the two button rows and the hint had
+   * already taken 150 of it. `min-content` is chrome plus the list's own minimum, whatever they
+   * happen to measure, and the sidebar scrolls when the total will not fit.
+   */
+  min-height: min-content;
+  display: flex;
+  flex-direction: column;
+  border-bottom: 0;
+}
+.panel.grow > h2,
+.panel.grow > .row,
+.panel.grow > .note { flex: none; }
 .panel h2 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; opacity: 0.6; margin: 0 0 0.5rem; }
 .count { opacity: 0.55; font-weight: 400; }
 
@@ -231,7 +259,16 @@ input.invalid { border-color: var(--danger); }
   padding: 0;
   overflow-y: auto;
   flex: 1;
-  min-height: 0;
+  /*
+   * Never nothing, and never everything.
+   *
+   * The minimum stops the list being squeezed to a few pixels by an expanded section. The maximum
+   * keeps it a scrolling region rather than a column thousands of pixels tall — without it the
+   * panel takes its full content height, the sidebar becomes the scroller, and the Camera clock
+   * ends up below a mile of photographs.
+   */
+  min-height: 6rem;
+  max-height: 55vh;
   /* Rows are cards with air between them, not lines in a table. */
   display: grid;
   gap: 3px;
@@ -334,7 +371,8 @@ input.invalid { border-color: var(--danger); }
   gap: 0.35rem;
   overflow-y: auto;
   flex: 1;
-  min-height: 0;
+  min-height: 6rem;
+  max-height: 55vh;
 }
 
 .tile {
@@ -751,7 +789,30 @@ button.big { padding: 0.7rem 1.2rem; font-size: 1rem; border-radius: 8px; }
   flex-direction: column;
   flex: 1;
   min-height: 0;
-  overflow: hidden;
+  /*
+   * `auto`, not `hidden`.
+   *
+   * It was `hidden`, to stop children spilling out of a shrunken box and painting over the rows —
+   * and that half worked: nothing escaped the sidebar, but the sections inside it still overlapped
+   * each other once an expanded panel left the list less room than it needed.
+   *
+   * With `auto` the overflow has somewhere to go. A short window now scrolls the sidebar instead
+   * of stacking its contents, which is the failure mode you can actually recover from.
+   */
+  overflow-y: auto;
+}
+
+/*
+ * An open section gives way before the photo list does.
+ *
+ * `flex: none` meant an expanded Camera clock — the QR code makes it the tallest thing in the
+ * sidebar — took its full height regardless of what was left. It shrinks and scrolls internally
+ * now, and `min-height` keeps its summary reachable.
+ */
+.panel-collapse[open] {
+  flex: 0 1 auto;
+  min-height: 3rem;
+  overflow-y: auto;
 }
 /*
  * The landing screen, where no photos are open yet and so no map is mounted.
@@ -852,7 +913,8 @@ button.big { padding: 0.7rem 1.2rem; font-size: 1rem; border-radius: 8px; }
 
   /* Undo the desktop arrangement where the list is its own scroll region. */
   .panel.grow { flex: none; display: block; }
-  .photos, .photo-grid { overflow: visible; flex: none; min-height: 0; }
+  /* On a phone the whole column scrolls, so the list is neither a scroll region nor capped. */
+  .photos, .photo-grid { overflow: visible; flex: none; min-height: 0; max-height: none; }
 
   .panel { padding: 0.7rem 0.6rem; }
   .panel-body { padding: 0 0.6rem 0.8rem; }

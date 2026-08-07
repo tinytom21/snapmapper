@@ -117,20 +117,43 @@ never unmounted, because rebuilding a MapLibre instance would discard the tiles,
 every marker. Chrome is compressed to match: the header actions become one horizontally scrolling
 line rather than three wrapped ones, and the destination bar collapses to a single line.
 
-**Three CSS declarations on `.sidebar` are load-bearing, and each was a real bug.** Without
-`flex: 1` it sizes to content and then shrinks below it, because a flex child defaults to
-`flex-shrink: 1`. Without `overflow: hidden` its children spill out of the shrunken box and the
-collapsed sections get painted over the rows. And on mobile all of that must be *undone* —
-`display: block; flex: none; overflow: visible` — or the rows past the fold are clipped away and
-reachable by nothing.
+**Nothing in the sidebar may be allowed to squeeze another thing below its content.** Text whose
+box has been shrunk under its own height does not clip — it paints over whatever comes next, which
+is how "the sections are drawn over the photo list" has now happened twice. Four declarations hold
+that line, and each of them replaced a real bug:
 
-Verified by measurement at 375px and 1280px with a 24-photo sample, which matters: a list that
-fits is the case that always worked, and every bug here has been about what happens past the fold.
-Use `dev-preview.tsx`, which mounts the real `Sidebar` — an earlier version rendered only
-`PhotoList`, which is exactly why the overlap survived being "measured".
+- `.sidebar { overflow-y: auto }`, **not `hidden`** as it was. Hidden only stopped things escaping
+  the sidebar; the sections inside still overlapped each other once an expanded panel left the list
+  less room than it needed. `auto` gives the overflow somewhere to go — a short window scrolls.
+- `.panel.grow { min-height: min-content }`. A *length* here is a guess that is wrong at some
+  browser zoom: `10rem` was measured leaving an **8px list**, because the heading, two button rows
+  and the hint had already taken 150 of it.
+- `.panel.grow > h2, > .row, > .note { flex: none }`. Flex children shrink by default, and this
+  chrome must not — the list is the only thing that should give.
+- `.photos, .photo-grid { min-height: 6rem; max-height: 55vh }`. The minimum stops an expanded
+  section squeezing the list to nothing; the maximum keeps it a scrolling region rather than a
+  column thousands of pixels tall, which would push the Camera clock below a mile of photographs.
 
-Note that a naive overlap check gives false positives: rows scrolled out of a container still
-report their real off-screen rects. Clip to the scrolling ancestor first.
+An expanded section shrinks and scrolls internally rather than taking its full height —
+`.panel-collapse[open] { flex: 0 1 auto; min-height: 3rem; overflow-y: auto }`. The Camera clock is
+the tallest thing in the sidebar because of the QR code, and `flex: none` let it starve everything
+above it.
+
+On mobile all of this is *undone* — `display: block; flex: none; overflow: visible; max-height:
+none` — or the rows past the fold are clipped away and reachable by nothing. The whole column
+scrolls there instead.
+
+Verified by measurement at 375px and at 1280x560 and 1280x900, at root font sizes of 16, 20 and
+24px — browser zoom is what took the reported case over the edge — in both views, with the clock
+section open and shut. That is 30-odd combinations and it needs to be, because a list that fits is
+the case that always worked.
+
+**Use `findOverlaps()` in `dev-preview.tsx`.** This check has been written from scratch three times
+and produced phantoms every time: an element scrolled out of a container still reports its real
+off-screen rect, and an element inside a *closed* `<details>` reports a rect although nothing is
+painted. It now clips to every scrolling ancestor and asks `checkVisibility()` first. Do not write
+a fourth one.
+
 
 ### Camera-clock sync stores the measurement, not the offset
 
