@@ -67,11 +67,7 @@ import {
   type LoadProgress,
 } from './load-photos.ts';
 import { saveSession, type SaveOutcome, type SaveProgress } from './save.ts';
-import {
-  loadThumbSize,
-  saveThumbSize,
-  type ThumbSize,
-} from './thumb-size.ts';
+import { loadViewMode, saveViewMode, type ViewMode } from './view-mode.ts';
 
 const store = createBrowserFileStore();
 
@@ -127,11 +123,11 @@ export function App() {
   const [updateReady, setUpdateReady] = useState(false);
   /** The narrow-screen overflow menu. */
   const [menuOpen, setMenuOpen] = useState(false);
-  const [thumbSize, setThumbSizeState] = useState<ThumbSize['key']>(loadThumbSize);
+  const [view, setViewState] = useState<ViewMode>(loadViewMode);
 
-  const setThumbSize = useCallback((key: ThumbSize['key']) => {
-    saveThumbSize(key);
-    setThumbSizeState(key);
+  const setView = useCallback((next: ViewMode) => {
+    saveViewMode(next);
+    setViewState(next);
   }, []);
   /** Something worth saying that is not a failure — duplicates skipped, files read-only. */
   const [notice, setNotice] = useState<string | null>(null);
@@ -756,8 +752,8 @@ export function App() {
                   onClear={() => setSession(clearLocation(session, [...session.selected]))}
                   onRevert={() => setSession(revert(session, [...session.selected]))}
                   onPreview={setPreview}
-                  thumbSize={thumbSize}
-                  onThumbSize={setThumbSize}
+                  view={view}
+                  onView={setView}
                   onTimeZone={(zone) => setSession(setTimeZone(session, zone))}
                   onOffsetSeconds={(seconds) => setSession(setOffsetSeconds(session, seconds))}
                   onSync={(sync: ClockSync) => setSession(applySync(session, sync))}

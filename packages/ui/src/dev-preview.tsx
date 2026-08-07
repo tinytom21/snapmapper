@@ -19,10 +19,14 @@ import { createRoot, type Root } from 'react-dom/client';
 
 import {
   assignLocation,
+  clearLocation,
   createSession,
   entryFromTags,
   failedEntry,
+  revert,
   select,
+  selectRange,
+  toggleSelected,
   type PhotoEntry,
   type Session,
 } from '@snapmapper/core';
@@ -30,7 +34,7 @@ import {
 import { ActionMenu } from './ActionMenu.tsx';
 import { PhotoPreview } from './PhotoPreview.tsx';
 import { Sidebar } from './Sidebar.tsx';
-import type { ThumbSize } from './thumb-size.ts';
+import type { ViewMode } from './view-mode.ts';
 
 const FOLDER = { id: 'preview', displayName: 'Selected photos' };
 
@@ -82,10 +86,15 @@ let root: Root | undefined;
  * Mounts `Sidebar` rather than `PhotoList` alone, and into the real `<aside>`, so it inherits the
  * actual layout and media queries. The earlier version rendered only the list, which is exactly
  * why a bug where the collapsed sections drew over the list's buttons survived being "measured".
+ *
+ * Selection is wired to the real session functions rather than stubbed. With stubs the rows and
+ * tiles looked right and did nothing, so nothing about *behaviour* could be checked here — and in
+ * the grid the interesting question is precisely whether tapping a tile selects it, tapping its
+ * tick box toggles only that one, and tapping its corner opens the preview instead of doing either.
  */
 export function previewPhotoList(
-  session: Session = sampleSession(),
-  size: ThumbSize['key'] = 'medium',
+  initial: Session = sampleSession(),
+  view: ViewMode = 'list',
 ): void {
   const aside = document.querySelector('aside');
   if (!aside) throw new Error('no sidebar to mount into — open the app first');
@@ -98,30 +107,38 @@ export function previewPhotoList(
   aside.append(host);
 
   root = createRoot(host);
-  root.render(
-    <Sidebar
-      session={session}
-      thumbnails={sampleThumbnails(session)}
-      narrow={window.matchMedia('(max-width: 900px)').matches}
-      busy={false}
-      addPhotosLabel="Add photos…"
-      onToggle={() => {}}
-      onSelectOnly={() => {}}
-      onSelectRange={() => {}}
-      onSelectAll={() => {}}
-      onSelectNone={() => {}}
-      onClear={() => {}}
-      onRevert={() => {}}
-      onPreview={() => {}}
-      thumbSize={size}
-      onThumbSize={(next) => previewPhotoList(session, next)}
-      onTimeZone={() => {}}
-      onOffsetSeconds={() => {}}
-      onSync={() => {}}
-      onClearSync={() => {}}
-      onScanReference={async () => null}
-    />,
-  );
+  const thumbnails = sampleThumbnails(initial);
+  function render(session: Session, current: ViewMode) {
+    const again = (next: Session) => render(next, current);
+
+    root?.render(
+      <Sidebar
+        session={session}
+        thumbnails={thumbnails}
+        narrow={window.matchMedia('(max-width: 900px)').matches}
+        busy={false}
+        addPhotosLabel="Add photos…"
+        onToggle={(name) => again(toggleSelected(session, name))}
+        onSelectOnly={(name) => again(select(session, [name]))}
+        onSelectRange={(from, to, add) => again(selectRange(session, from, to, add))}
+        onSelectAll={() =>
+          again(select(session, session.photos.map((entry) => entry.ref.name)))}
+        onSelectNone={() => again(select(session, []))}
+        onClear={() => again(clearLocation(session, [...session.selected]))}
+        onRevert={() => again(revert(session, [...session.selected]))}
+        onPreview={(name) => previewFullSize(name)}
+        view={current}
+        onView={(next) => render(session, next)}
+        onTimeZone={() => {}}
+        onOffsetSeconds={() => {}}
+        onSync={() => {}}
+        onClearSync={() => {}}
+        onScanReference={async () => null}
+      />,
+    );
+  }
+
+  render(initial, view);
 }
 
 let previewRoot: Root | undefined;

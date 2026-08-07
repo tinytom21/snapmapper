@@ -145,14 +145,102 @@ input.invalid { border-color: var(--danger); }
 }
 .thumb.placeholder { display: block; }
 
-.thumb-sizes { align-items: center; gap: 0.25rem; }
-.thumb-sizes .note { margin: 0 0.2rem 0 0; }
-.thumb-sizes button { min-width: 2rem; padding: 0.2rem 0.4rem; font-size: 0.8rem; }
-.thumb-sizes button.chosen {
+/* --- Choosing a view ----------------------------------------------------- */
+
+.views { align-items: center; gap: 0.25rem; }
+.views button { padding: 0.25rem 0.6rem; font-size: 0.82rem; }
+.views button.chosen {
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 18%, transparent);
   color: var(--accent);
   font-weight: 650;
+}
+.views-divider {
+  width: 1px;
+  align-self: stretch;
+  margin: 0 0.3rem;
+  background: var(--line);
+}
+
+/* --- The grid: photographs and tick boxes, nothing else ------------------
+   `auto-fill` with a minimum rather than fixed tiles, so a row is divided exactly and no strip of
+   dead space is left at the right edge whatever the screen width. */
+
+.photo-grid {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0.5rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(var(--tile-min, 150px), 1fr));
+  gap: 0.35rem;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.tile {
+  position: relative;
+  aspect-ratio: 3 / 2;
+  border-radius: 6px;
+  overflow: hidden;
+  cursor: pointer;
+  /* An always-present transparent border, so selecting a tile does not resize it. */
+  border: 2px solid transparent;
+  background: color-mix(in srgb, CanvasText 10%, transparent);
+  user-select: none;
+}
+/* The letterbox crop again: the camera's 160x120 thumbnail holds a 3:2 frame with black bars. */
+.tile img, .tile-blank { display: block; width: 100%; height: 100%; object-fit: cover; }
+.tile.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.tile.broken { opacity: 0.5; border-color: var(--danger); }
+
+/* Bigger than in a row, and on a dark disc: it sits over a photograph, which may be any colour. */
+.tile input[type='checkbox'] {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  width: 22px;
+  height: 22px;
+  margin: 0;
+  border-radius: 4px;
+  background: rgb(0 0 0 / 0.45);
+}
+
+/* Placed or not is the one fact a picture cannot tell you, and the one you need while placing. */
+.tile-dot {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--ok);
+  box-shadow: 0 0 0 2px rgb(0 0 0 / 0.35);
+}
+.tile-dot.staged { background: var(--pending); }
+
+/*
+ * Small tiles are 85px wide on a phone, so the controls have to give way or they become the tile.
+ * The tick box stays full size — selecting is the whole point of this view — and everything else
+ * shrinks around it.
+ */
+.photo-grid.small .tile-dot { width: 9px; height: 9px; top: 5px; right: 5px; }
+.photo-grid.small .tile-zoom { padding: 1px 4px; font-size: 0.68rem; opacity: 0.8; }
+
+.tile-zoom {
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  padding: 2px 5px;
+  font-size: 0.78rem;
+  line-height: 1.1;
+  border: 0;
+  border-radius: 4px;
+  background: rgb(0 0 0 / 0.55);
+  color: #fff;
 }
 
 .banner {
@@ -599,7 +687,7 @@ button.big { padding: 0.7rem 1.2rem; font-size: 1rem; border-radius: 8px; }
 
   /* Undo the desktop arrangement where the list is its own scroll region. */
   .panel.grow { flex: none; display: block; }
-  .photos { overflow: visible; flex: none; min-height: 0; }
+  .photos, .photo-grid { overflow: visible; flex: none; min-height: 0; }
 
   .panel { padding: 0.7rem 0.6rem; }
   .panel-body { padding: 0 0.6rem 0.8rem; }
@@ -608,9 +696,15 @@ button.big { padding: 0.7rem 1.2rem; font-size: 1rem; border-radius: 8px; }
   .photo input[type='checkbox'] { width: 26px; height: 26px; }
   .photo .name { font-size: 0.9rem; }
   .photo .meta { font-size: 0.8rem; }
-  /* No size here: the width comes from `--thumb-w` and the user chooses it. A fixed value in this
-     block silently overrode the choice on exactly the device where it matters most. */
-  .thumb-sizes button { min-width: 2.4rem; padding: 0.4rem 0.5rem; font-size: 0.85rem; }
+  /*
+   * No `.thumb` size here. The width comes from `--thumb-w`, and a fixed value in this block once
+   * silently overrode it — the control appeared to work and nothing moved, on exactly the device it
+   * was for. The same trap applies to `--tile-min`.
+   */
+  .views button { padding: 0.45rem 0.7rem; font-size: 0.88rem; }
+  /* Thumb-sized targets over the photograph. */
+  .tile input[type='checkbox'] { width: 26px; height: 26px; }
+  .tile-zoom { padding: 4px 7px; font-size: 0.85rem; }
 
   /* Sticky to the bottom of the scrolling pane. It must sit above the photo rows that scroll
      under it, hence the z-index — without it the rows are painted over the button. */

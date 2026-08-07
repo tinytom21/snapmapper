@@ -227,12 +227,32 @@ behind a button labelled *More*.
 Do not go back to `overflow-x: auto` on `.actions`. It fits the buttons on one line by putting most
 of them off-screen.
 
-### Thumbnail sizes, and the ceiling the camera sets
+### Two views, not a size dial
 
-Four sizes: 44, 76, 112 and **160px**, remembered in localStorage. 160 is not an arbitrary maximum —
-it is the width of the JPEG the camera embedded. An ILCE-6400 writes **160x120**, so anything larger
-is upscaling, and on a phone at device-pixel-ratio 3 even the 76px default is already being
-enlarged. Bigger than that is what the full-size preview is for. Pinned by a test.
+`view-mode.ts` holds one of three values, remembered in localStorage: `list`, `grid-small`,
+`grid-large`. Four thumbnail sizes came first and was granularity nobody wanted — the real question
+is whether you are *reading* (filenames, times, coordinates, what is staged) or *looking* (finding
+the frames you mean).
+
+- **list** — every detail, thumbnails fixed at **160px**, with no size choice, because there is
+  nothing to choose between: the camera's embedded JPEG *is* 160x120, so smaller wastes it and
+  larger only upscales. At the desktop sidebar's 25rem that leaves 147px for text — the filename
+  fits, and the date and coordinates wrap onto two lines, which is fine.
+- **grid-small / grid-large** — pictures and tick boxes, no words at all. Tiles are laid out with
+  `repeat(auto-fill, minmax(var(--tile-min), 1fr))`, so a row divides exactly with no dead strip at
+  the right edge: 4 and 2 columns at 375px, 7 and 4 at 693px.
+
+One stored value rather than a view plus a size, so a size that applies to a view which does not use
+it cannot exist. `loadViewMode` falls back on anything unrecognised — including `largest`, which is
+what the previous version wrote and what real browsers are still holding.
+
+**The grid keeps one non-photographic mark**, and it is deliberate: a dot when a photo has a
+location, amber when that location is staged. Whether a frame is already placed is the single fact a
+picture cannot tell you, and the one you are working out while placing things. Everything else went.
+
+Selection is one handler shared by rows and tiles — shift-ranges and ctrl-toggles are the fiddly
+part and two copies would drift. Verified in the grid: tapping a tile selects only it, tapping its
+tick box adds to the selection, and tapping its corner opens the preview while changing nothing.
 
 **That 160x120 is a 3:2 frame letterboxed into 4:3, with black bars top and bottom** — and the row's
 box was 4:3, so the app displayed the bars for months. The box is now `aspect-ratio: 3 / 2` with
@@ -240,10 +260,14 @@ box was 4:3, so the app displayed the bars for months. The box is now `aspect-ra
 picture). `dev-preview.tsx` generates its samples letterboxed the same way, so the crop is tested
 against the real shape rather than a convenient one.
 
-The width comes from a `--thumb-w` custom property set on the list. **A fixed `.thumb` width inside
-the `max-width: 900px` block silently overrode it** — the control appeared to work, the highlight
-moved, and the thumbnails did not budge, on precisely the device the feature was for. Beware
-declarations in that media query that also exist outside it.
+The width comes from a `--thumb-w` custom property set on the list, and tile widths from
+`--tile-min`. **A fixed `.thumb` width inside the `max-width: 900px` block silently overrode it** —
+the control appeared to work, the highlight moved, and the thumbnails did not budge, on precisely
+the device the feature was for. Beware declarations in that media query that also exist outside it.
+
+`dev-preview.tsx` now wires selection to the real session functions instead of stubs. With stubs the
+rows and tiles looked right and did nothing, so no *behaviour* could be checked there at all — which
+is most of what a grid needs checking for.
 
 ### The landing screen is a landing screen, not an empty state
 

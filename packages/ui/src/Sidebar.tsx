@@ -11,7 +11,7 @@ import { ClockPanel, describeClock } from './ClockPanel.tsx';
 import { Collapsible } from './Collapsible.tsx';
 import { PhotoList } from './PhotoList.tsx';
 import { PlatformReport, describePlatformBriefly } from './PlatformReport.tsx';
-import type { ThumbSize } from './thumb-size.ts';
+import type { ViewMode } from './view-mode.ts';
 import type { ClockSync, Session } from '@snapmapper/core';
 
 export interface SidebarProps {
@@ -30,8 +30,8 @@ export interface SidebarProps {
   readonly onClear: () => void;
   readonly onRevert: () => void;
   readonly onPreview: (name: string) => void;
-  readonly thumbSize: ThumbSize['key'];
-  readonly onThumbSize: (key: ThumbSize['key']) => void;
+  readonly view: ViewMode;
+  readonly onView: (view: ViewMode) => void;
 
   readonly onTimeZone: (timeZone: string) => void;
   readonly onOffsetSeconds: (offsetSeconds: number) => void;
@@ -56,8 +56,8 @@ export function Sidebar(props: SidebarProps) {
         onClear={props.onClear}
         onRevert={props.onRevert}
         onPreview={props.onPreview}
-        thumbSize={props.thumbSize}
-        onThumbSize={props.onThumbSize}
+        view={props.view}
+        onView={props.onView}
       />
 
       <Collapsible title="Camera clock" state={describeClock(session)} defaultOpen={!narrow}>
