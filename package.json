@@ -17,6 +17,7 @@
     "spike": "npm run spike --workspace spike"
   },
   "devDependencies": {
+    "@types/node": "^26.1.2",
     "typescript": "^5.9.0"
   }
 }

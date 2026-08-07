@@ -117,7 +117,9 @@ describe('REQUIRED_WRITE_ARGS', () => {
   for (const forbidden of ['-P', '-overwrite_original']) {
     it(`does not pass ${forbidden}, which fails in the WASM sandbox`, () => {
       assert.ok(
-        !REQUIRED_WRITE_ARGS.includes(forbidden),
+        // Cast because the tuple's literal type narrows `includes` to its own members,
+        // and the whole point is to assert a *non*-member is absent.
+        !(REQUIRED_WRITE_ARGS as readonly string[]).includes(forbidden),
         `${forbidden} breaks the write path — see spike/README.md Q2`,
       );
     });

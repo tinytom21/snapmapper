@@ -1,0 +1,220 @@
+import assert from 'node:assert/strict';
+import { describe, it } from 'node:test';
+
+import {
+  MetadataWriteError,
+  classify,
+  readTags,
+  writeMetadataSpliced,
+  type BackendInput,
+  type MetadataBackend,
+} from '../src/exiftool.ts';
+import { findScanStart } from '../src/jpeg.ts';
+
+/** A JPEG whose structure is real enough to splice, built by hand. */
+function buildJpeg(scanBytes = 2000, extraHeader: number[] = []) {
+  const seg = (marker: number, payload: number[]) => {
+    const length = payload.length + 2;
+    return [0xff, marker, (length >> 8) & 0xff, length & 0xff, ...payload];
+  };
+  const header = [
+    0xff, 0xd8,
+    ...seg(0xe1, [...Array.from('Exif\0\0', (c) => c.charCodeAt(0)), 1, 2, 3, 4]),
+    ...extraHeader,
+    ...seg(0xc0, [8, 0, 16, 0, 16, 1, 1, 0x11, 0]),
+    ...seg(0xda, [1, 1, 0, 0, 63, 0]),
+  ];
+  const scan = Array.from({ length: scanBytes }, (_, i) => (i % 251) + 1);
+  return new Uint8Array([...header, ...scan, 0xff, 0xd9]);
+}
+
+/**
+ * A backend that behaves like the real one: it receives a stub and returns a stub with
+ * *grown* headers, because writing GPS to a file without it adds an IFD entry.
+ */
+function fakeBackend(overrides: Partial<{
+  message: string;
+  ok: boolean;
+  data: Uint8Array | undefined;
+  onWrite: (input: BackendInput) => void;
+  readData: string;
+}> = {}): MetadataBackend {
+  return {
+    async write(input) {
+      overrides.onWrite?.(input);
+      if ('data' in overrides) {
+        return {
+          ok: overrides.ok ?? true,
+          data: overrides.data,
+          message: overrides.message,
+        };
+      }
+      // Grow the headers, as a real GPS insertion does.
+      const grown = buildJpeg(32, [0xff, 0xe2, 0x00, 0x0a, 1, 2, 3, 4, 5, 6, 7, 8]);
+      return { ok: overrides.ok ?? true, data: grown, message: overrides.message };
+    },
+    async read() {
+      return {
+        ok: true,
+        data: overrides.readData ?? '[{"SourceFile":"x","EXIF:Orientation":1}]',
+        message: undefined,
+      };
+    },
+  };
+}
+
+describe('writeMetadataSpliced', () => {
+  it('hands ExifTool only the metadata, not the photograph', async () => {
+    const original = buildJpeg(500_000);
+    let seen: BackendInput | undefined;
+
+    const result = await writeMetadataSpliced(
+      fakeBackend({ onWrite: (input) => { seen = input; } }),
+      original,
+      'DSC00119.JPG',
+      { 'EXIF:GPSLatitude': '51.4778' },
+    );
+
+    assert.ok(seen, 'backend was never called');
+    const stub = seen as BackendInput;
+    assert.ok(
+      stub.bytes.byteLength < original.byteLength / 10,
+      `stub was ${stub.bytes.byteLength} of ${original.byteLength} bytes — not a stub`,
+    );
+    assert.equal(result.totalBytes, original.byteLength);
+    assert.equal(result.stubBytes, stub.bytes.byteLength);
+  });
+
+  it('preserves the photograph byte for byte', async () => {
+    const original = buildJpeg(50_000);
+    const scanStart = findScanStart(original);
+
+    const { bytes } = await writeMetadataSpliced(
+      fakeBackend(), original, 'x.jpg', { 'EXIF:GPSLatitude': '1' },
+    );
+
+    assert.deepEqual(bytes.subarray(findScanStart(bytes)), original.subarray(scanStart));
+  });
+
+  it('passes -n and never -P or -overwrite_original', async () => {
+    let seen: BackendInput | undefined;
+    await writeMetadataSpliced(
+      fakeBackend({ onWrite: (input) => { seen = input; } }),
+      buildJpeg(), 'x.jpg', {},
+    );
+
+    assert.ok(seen?.args.includes('-n'));
+    // Both fail in the WASM sandbox; see spike/README.md Q2.
+    assert.ok(!seen?.args.includes('-P'));
+    assert.ok(!seen?.args.includes('-overwrite_original'));
+  });
+
+  it('refuses a Blob rather than being 69x slower on a phone', async () => {
+    const notBytes = new Blob([buildJpeg()]) as unknown as Uint8Array;
+    await assert.rejects(
+      () => writeMetadataSpliced(fakeBackend(), notBytes, 'x.jpg', {}),
+      (error: Error) => error instanceof MetadataWriteError && /Uint8Array/.test(error.message),
+    );
+  });
+
+  it('stops on a maker-note warning, which is how corruption announces itself', async () => {
+    await assert.rejects(
+      () => writeMetadataSpliced(
+        fakeBackend({ message: 'Warning: [minor] Possibly incorrect maker notes offsets (fix by -53?)' }),
+        buildJpeg(), 'x.jpg', {},
+      ),
+      (error: Error) => error instanceof MetadataWriteError && /maker note/i.test(error.message),
+    );
+  });
+
+  it('carries on through a file-time warning, which the sandbox cannot avoid', async () => {
+    const result = await writeMetadataSpliced(
+      fakeBackend({ ok: false, message: 'Warning: Error setting file time - /x.jpg' }),
+      buildJpeg(), 'x.jpg', {},
+    );
+    assert.equal(result.warnings.length, 1);
+    assert.match(result.warnings[0] ?? '', /file time/i);
+  });
+
+  it('throws when the backend returns nothing', async () => {
+    await assert.rejects(
+      () => writeMetadataSpliced(
+        fakeBackend({ ok: false, data: undefined, message: 'Error: something broke' }),
+        buildJpeg(), 'x.jpg', {},
+      ),
+      MetadataWriteError,
+    );
+  });
+
+  it('throws rather than emit a file when the backend returns junk', async () => {
+    await assert.rejects(
+      () => writeMetadataSpliced(
+        fakeBackend({ data: new Uint8Array([1, 2, 3]) }), buildJpeg(), 'x.jpg', {},
+      ),
+      // jpeg.ts refuses to parse it; the point is that nothing is returned.
+      (error: Error) => /JpegStructureError|MetadataWriteError/.test(error.name),
+    );
+  });
+});
+
+describe('classify', () => {
+  it('treats an unrecognised message as fatal, not benign', () => {
+    // The default has to be fatal: silent maker-note corruption is invisible for
+    // months, so anything we do not positively recognise must stop the write.
+    const { benign, fatal } = classify('Warning: something nobody has seen before');
+    assert.equal(benign.length, 0);
+    assert.equal(fatal.length, 1);
+  });
+
+  it('ignores the success line', () => {
+    const { benign, fatal } = classify('    1 image files updated');
+    assert.deepEqual(benign, []);
+    assert.deepEqual(fatal, []);
+  });
+
+  it('classifies nothing as nothing', () => {
+    assert.deepEqual(classify(undefined), { benign: [], fatal: [] });
+    assert.deepEqual(classify(''), { benign: [], fatal: [] });
+  });
+
+  it('catches every shape of structural complaint', () => {
+    for (const message of [
+      'Warning: [minor] Possibly incorrect maker notes offsets',
+      'Warning: Truncated PreviewImage',
+      'Error: Corrupted JPEG image',
+      'Warning: Bad IFD0 offset',
+    ]) {
+      assert.equal(classify(message).fatal.length, 1, message);
+    }
+  });
+
+  it('separates the benign from the fatal in one message', () => {
+    const { benign, fatal } = classify(
+      'Warning: Error setting file time - /x.jpg\nWarning: Possibly incorrect maker notes offsets',
+    );
+    assert.equal(benign.length, 1);
+    assert.equal(fatal.length, 1);
+  });
+});
+
+describe('readTags', () => {
+  it('parses ExifTool JSON and drops SourceFile', async () => {
+    const values = await readTags(fakeBackend(), buildJpeg(), 'x.jpg');
+    assert.equal(values['EXIF:Orientation'], 1);
+    assert.ok(!('SourceFile' in values));
+  });
+
+  it('throws on output that is not JSON, rather than returning nothing', async () => {
+    await assert.rejects(
+      () => readTags(fakeBackend({ readData: 'File not found' }), buildJpeg(), 'x.jpg'),
+      MetadataWriteError,
+    );
+  });
+
+  it('throws when ExifTool reports no metadata at all', async () => {
+    await assert.rejects(
+      () => readTags(fakeBackend({ readData: '[]' }), buildJpeg(), 'x.jpg'),
+      MetadataWriteError,
+    );
+  });
+});

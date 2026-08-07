@@ -42,11 +42,20 @@ import {
   section,
 } from './support.mjs';
 import { patchZeroperl } from './patch-zeroperl.mjs';
-import { findScanStart, spliceWrite } from './splice-core.mjs';
+import { findScanStart } from './splice-core.mjs';
 import { compare, nativeExifToolVersion } from './verify.mjs';
+
+// Phase 1's real write path, verified here rather than in isolation. This script is
+// what licenses the backend, so it has to exercise the code that ships.
+import { createWasmBackend } from '../../packages/core/src/exiftool-wasm.ts';
+import { writeMetadataSpliced } from '../../packages/core/src/exiftool.ts';
+import { buildGeotagTags } from '../../packages/core/src/exif-tags.ts';
 
 const TEST_LOCATION = { latitude: 51.4778, longitude: -0.0015, altitude: 45.7 };
 const SIGNED_LOCATION = { latitude: -33.8688, longitude: -70.6693 };
+
+/** Fixed instant, so GPSDateStamp/GPSTimeStamp are exercised too and stay reproducible. */
+const INSTANT = new Date('2024-05-17T14:32:08.000Z');
 
 export async function spliceChecks() {
   section('Native ExifTool (the independent verifier)');
@@ -66,6 +75,7 @@ export async function spliceChecks() {
 
   await patchZeroperl();
   const pkg = await import('@uswriting/exiftool');
+  const backend = createWasmBackend(pkg);
   const outputDir = await ensureOutputDir();
 
   let allPassed = true;
@@ -105,25 +115,26 @@ export async function spliceChecks() {
 
       const started = performance.now();
 
-      // Stub, write, splice — the shared implementation, so what is verified here is
-      // exactly what the browser measurement times on a phone.
+      // core's shipping write path, driving core's tag builder, over the real WASM.
+      // Nothing in this block is spike code.
       let taggedBytes;
+      let warnings = [];
       try {
-        const spliced = await spliceWrite(originalBytes, async (stub) => {
-          const output = await pkg.writeMetadata({ name, data: stub }, buildTags(location), {
-            args: ['-n'],
-          });
-          if (!output?.success) {
-            throw new Error(output?.error ?? 'write returned no data');
-          }
-          return new Uint8Array(output.data);
-        });
-        taggedBytes = Buffer.from(spliced.bytes);
+        const written = await writeMetadataSpliced(
+          backend,
+          new Uint8Array(originalBytes),
+          name,
+          buildGeotagTags({ coordinates: location, instant: INSTANT }),
+        );
+        taggedBytes = Buffer.from(written.bytes);
+        warnings = written.warnings;
       } catch (error) {
-        result(false, `${label}: ${error.message}`);
+        result(false, `${label}: ${error.message}${error.detail ? ` — ${error.detail}` : ''}`);
         allPassed = false;
         continue;
       }
+
+      for (const warning of warnings) note(`benign warning: ${warning}`);
 
       const elapsed = performance.now() - started;
       timings.push(elapsed);
@@ -173,26 +184,6 @@ export async function spliceChecks() {
   }
 
   return { failed: !allPassed };
-}
-
-function buildTags(location) {
-  const tags = {
-    'EXIF:GPSLatitude': String(Math.abs(location.latitude)),
-    'EXIF:GPSLatitudeRef': location.latitude < 0 ? 'S' : 'N',
-    'EXIF:GPSLongitude': String(Math.abs(location.longitude)),
-    'EXIF:GPSLongitudeRef': location.longitude < 0 ? 'W' : 'E',
-    'EXIF:GPSMapDatum': 'WGS-84',
-    'XMP:GPSLatitude': String(location.latitude),
-    'XMP:GPSLongitude': String(location.longitude),
-    'XMP:GPSMapDatum': 'WGS-84',
-  };
-
-  if (location.altitude !== undefined) {
-    tags['EXIF:GPSAltitude'] = String(Math.abs(location.altitude));
-    tags['EXIF:GPSAltitudeRef'] = location.altitude < 0 ? '1' : '0';
-  }
-
-  return tags;
 }
 
 if (isMain(import.meta.url)) {

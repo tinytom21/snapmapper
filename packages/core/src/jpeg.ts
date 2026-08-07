@@ -56,6 +56,7 @@ export function findScanStart(bytes: Uint8Array): number {
     }
 
     const marker = bytes[offset + 1];
+    if (marker === undefined) throw new JpegStructureError('file ends mid-marker');
 
     // Fill bytes between segments are legal and encoded as repeated 0xFF.
     if (marker === MARKER_PREFIX) {
@@ -142,5 +143,10 @@ export function metadataFraction(bytes: Uint8Array): number {
 }
 
 function readUint16BE(bytes: Uint8Array, offset: number): number {
-  return ((bytes[offset] << 8) | bytes[offset + 1]) >>> 0;
+  const high = bytes[offset];
+  const low = bytes[offset + 1];
+  if (high === undefined || low === undefined) {
+    throw new JpegStructureError(`length field at ${offset} runs past end of file`);
+  }
+  return ((high << 8) | low) >>> 0;
 }
