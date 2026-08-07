@@ -6,8 +6,9 @@
  * torn down and rebuilt each render — rebuilding 200 DOM markers on every selection
  * change is visibly slow on a laptop and worse on a tablet.
  *
- * Tiles come from a config seam, per the plan, so the later "ship one .pmtiles file for
- * a region" story drops in without touching this component.
+ * Tiles come from `tiles.ts`, which is the seam the plan wanted: vector tiles from OpenFreeMap,
+ * with the old raster source kept as a fallback, and the place a PMTiles file would be wired in
+ * for offline.
  *
  * Placement is select-then-click, and only that. Dragging a thumbnail onto the map was tried
  * and removed: an HTML5 drag over a canvas MapLibre is already tracking pointer events on
@@ -16,9 +17,16 @@
  */
 
 import { useEffect, useMemo, useRef } from 'react';
-import maplibregl, { type Map as MapLibreMap, type Marker, type StyleSpecification } from 'maplibre-gl';
+import maplibregl, { type Map as MapLibreMap, type Marker } from 'maplibre-gl';
 
 import { boundsOf, selectionFocus } from './map-focus.ts';
+import {
+  ATTRIBUTION,
+  RASTER_FALLBACK,
+  VECTOR_STYLE_URL,
+  isStyleLoadFailure,
+  tileChoiceFrom,
+} from './tiles.ts';
 import type { Coordinates } from '@snapmapper/core';
 
 export interface MapPin {
@@ -53,28 +61,6 @@ export interface PhotoMapProps {
   readonly visible: boolean;
 }
 
-/**
- * Raster OSM rather than a vector source, deliberately, for the MVP.
- *
- * The plan prefers vector + PMTiles, and that is still right for offline. But vector
- * styles need an API key or a self-hosted style JSON, and this MVP should run for anyone
- * who clones the repository with nothing to sign up for. One `style` constant is the
- * seam; swapping it is a one-line change.
- */
-const TILE_STYLE: StyleSpecification = {
-  version: 8,
-  sources: {
-    osm: {
-      type: 'raster',
-      tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
-      tileSize: 256,
-      maxzoom: 19,
-      attribution: '© OpenStreetMap contributors',
-    },
-  },
-  layers: [{ id: 'osm', type: 'raster', source: 'osm' }],
-};
-
 export function PhotoMap({
   pins, onPlace, onSelectPin, onMovePin, armed, selectedCount, visible,
 }: PhotoMapProps) {
@@ -92,13 +78,45 @@ export function PhotoMap({
 
     const instance = new maplibregl.Map({
       container: container.current,
-      style: TILE_STYLE,
+      style: tileChoiceFrom(window.location.search) === 'raster'
+        ? RASTER_FALLBACK
+        : VECTOR_STYLE_URL,
       center: [-0.0015, 51.4778],
       zoom: 3,
+      /*
+       * Sharpen labels on a high-density screen.
+       *
+       * MapLibre renders at `devicePixelRatio` by default, which is right. This caps it at 2 on
+       * the phones that report 3 or more: past 2 the difference is invisible at arm's length and
+       * the GPU is filling nine times the pixels of a 1x screen, which on a mid-range phone costs
+       * frames while panning. Text stays glyph-sharp either way — that is the whole point of
+       * vector tiles.
+       */
+      pixelRatio: Math.min(window.devicePixelRatio || 1, 2),
     });
 
     instance.addControl(new maplibregl.NavigationControl(), 'top-right');
     instance.addControl(new maplibregl.ScaleControl({ unit: 'metric' }));
+    // Credit that does not depend on the style having loaded. See ATTRIBUTION.
+    instance.addControl(new maplibregl.AttributionControl({
+      compact: true,
+      customAttribution: ATTRIBUTION,
+    }));
+
+    /*
+     * Fall back to raster if the vector style will not load at all.
+     *
+     * OpenFreeMap is donation-funded with no uptime guarantee, and a geotagging tool with no map
+     * is useless in a way that a geotagging tool with an ugly map is not. Guarded so a single
+     * failed tile or font cannot trigger it — see `isStyleLoadFailure`.
+     */
+    let fellBack = false;
+    instance.on('error', (event) => {
+      if (fellBack || !isStyleLoadFailure(event.error)) return;
+      fellBack = true;
+      console.warn('snapmapper: vector tiles unavailable, falling back to raster');
+      instance.setStyle(RASTER_FALLBACK);
+    });
 
     instance.on('click', (event) => {
       handlers.current.onPlace({ latitude: event.lngLat.lat, longitude: event.lngLat.lng });

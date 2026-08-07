@@ -212,6 +212,40 @@ override for exactly that case.
 - **Licence: elect the Artistic License** where ExifTool and Perl offer the choice. No copyleft on
   our code, and it avoids the GPL/App Store conflict if iOS is ever added.
 
+### Vector tiles, because a raster tile has a resolution and a phone has three times it
+
+The MVP used raster OSM tiles, reasoning that a vector style needs an API key. Right about the key,
+wrong about the phone: a raster tile is a **256px bitmap drawn for a 96dpi monitor**, and a modern
+phone reports `devicePixelRatio: 3`. Every label was being upscaled threefold — reported as
+"slightly blurry, as though it were called for a different pixel density", which is exactly what it
+was. The same arithmetic explains "not many placenames": at 3x you see a third of the area a desktop
+shows at that zoom, so a third of the labels.
+
+`tiles.ts` now points at **OpenFreeMap's `positron`** — vector, no key, no registration, no request
+limit. Labels become glyphs the GPU renders at the device's real resolution, and the style carries 19
+label layers where the raster rendering had one flattened image. Positron rather than Liberty or
+Bright because the photographs are the colourful thing here and the pins must stay findable.
+
+Three things worth not undoing:
+
+- **The raster style stays as a fallback**, and `isStyleLoadFailure` is deliberately narrow: it
+  fires for a failed *style document* and not for a tile, a font or a sprite. Falling back because
+  one tile 404'd over the sea would throw away a working vector map. OpenFreeMap is donation-funded
+  with no uptime guarantee, and an ugly map beats no map.
+- **`?tiles=raster` forces the old source.** A diagnostic reachable from a phone, where there is no
+  console: it separates "the tiles are wrong" from "the app is wrong" without a rebuild.
+- **`ATTRIBUTION` is passed to the control directly.** The style's own credit arrives with its
+  TileJSON, so it is missing while loading and missing entirely if the style fails. OpenStreetMap's
+  licence has no loading state.
+
+`pixelRatio` is capped at 2. Past that the difference is invisible at arm's length while the GPU
+fills nine times the pixels of a 1x screen, which costs frames when panning on a mid-range phone.
+
+**This could not be verified in the sandbox, and that is worth knowing.** MapLibre fetches tiles and
+glyphs inside a worker created from a `blob:` URL, and the harness browser records none of it — zero
+tile requests appear even for the raster map that demonstrably works on a device. Style, sprite and
+TileJSON fetches were confirmed, the fallback is unit-tested, and the rest needs a real phone.
+
 ### The look is "Quiet", and the palette is contrast-driven
 
 Chosen from three mocked directions. Cool paper, soft rules, 9px corners, generous spacing, and one

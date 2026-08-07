@@ -11,6 +11,7 @@
  *     (await import('/src/dev-preview.tsx')).previewPhotoList()
  *     (await import('/src/dev-preview.tsx')).previewFullSize()
  *     (await import('/src/dev-preview.tsx')).previewActionMenu()
+ *     (await import('/src/dev-preview.tsx')).previewMap()
  *
  * Sample photos only — nothing here touches the filesystem, and no real photograph is involved.
  */
@@ -32,6 +33,7 @@ import {
 } from '@snapmapper/core';
 
 import { ActionMenu } from './ActionMenu.tsx';
+import { PhotoMap } from './PhotoMap.tsx';
 import { PhotoPreview } from './PhotoPreview.tsx';
 import { Sidebar } from './Sidebar.tsx';
 import type { ViewMode } from './view-mode.ts';
@@ -277,4 +279,36 @@ export function previewActionMenu(): void {
   }
 
   render(false);
+}
+
+let mapRoot: Root | undefined;
+
+/**
+ * Mount the map on its own, with pins.
+ *
+ * The map is only mounted once photos are open, and opening photos needs the OS file picker, so
+ * without this the tile source could not be checked at all — which matters, because the thing worth
+ * checking about it is whether the vector style, its fonts and its tiles actually arrive.
+ */
+export function previewMap(): void {
+  const host = document.createElement('div');
+  host.style.cssText = 'position:fixed;inset:0;z-index:20;display:flex;background:var(--bg)';
+  document.body.append(host);
+
+  mapRoot?.unmount();
+  mapRoot = createRoot(host);
+  mapRoot.render(
+    <PhotoMap
+      pins={[
+        { name: 'a.jpg', coordinates: { latitude: 43.6047, longitude: 1.4442 }, pending: false, selected: false },
+        { name: 'b.jpg', coordinates: { latitude: 43.2965, longitude: 5.3698 }, pending: true, selected: true },
+      ]}
+      onPlace={(c) => console.log('place', c)}
+      onSelectPin={(n) => console.log('select', n)}
+      onMovePin={(n, c) => console.log('move', n, c)}
+      armed
+      selectedCount={1}
+      visible
+    />,
+  );
 }
