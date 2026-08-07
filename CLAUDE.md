@@ -221,10 +221,35 @@ phone reports `devicePixelRatio: 3`. Every label was being upscaled threefold �
 was. The same arithmetic explains "not many placenames": at 3x you see a third of the area a desktop
 shows at that zoom, so a third of the labels.
 
-`tiles.ts` now points at **OpenFreeMap's `positron`** — vector, no key, no registration, no request
-limit. Labels become glyphs the GPU renders at the device's real resolution, and the style carries 19
-label layers where the raster rendering had one flattened image. Positron rather than Liberty or
-Bright because the photographs are the colourful thing here and the pins must stay findable.
+`tiles.ts` points at **OpenFreeMap's `liberty`** — vector, no key, no registration, no request limit.
+Labels become glyphs the GPU renders at the device's real resolution, and the style has 25 symbol
+layers where the raster rendering had one flattened image.
+
+Positron came first, on the reasoning that the photographs should be the only colourful thing on
+screen. **In use that was the wrong trade**: a grey map is harder to *recognise*, and recognising
+where a photograph was taken is the whole task. Liberty separates woodland from farmland from
+built-up area and draws points of interest, which is what you navigate by. The pins stay findable
+because they do not compete on colour — they are the only things on the map with a white outline
+and a drop shadow.
+
+### Label density is turned up, per layer, after the style loads
+
+Liberty's `minzoom` gates are tuned for a desktop viewport. On a phone the same zoom covers a
+fraction of the ground, so the names that would orient you are not drawn yet and the map is legible
+and anonymous. `labelDensity()` brings them forward: **places by two zoom levels, points of interest
+and water by one, roads and country names by none.** Roads are dense by nature; countries are legible
+at any zoom that shows one, and moving them forward would draw them over what you are looking at.
+
+It also drops `text-padding` from MapLibre's default of 2 to 1 — the collision margin around each
+label — so noticeably more survive placement without any of them touching.
+
+Applied to the loaded style through `setLayerZoomRange` and `setLayoutProperty`, not by fetching and
+rewriting the JSON: no extra round trip, no flash, and it re-runs on `style.load` if the style is
+ever swapped. The decision is a pure function over the layer list, tested against a fixture of
+Liberty's **real** layer ids — a made-up fixture would only test the regexes against themselves.
+
+Checked against the live style: 14 of 111 layers adjusted, every road, shield and country label
+untouched. **If it is still too sparse, `DENSITY_SHIFTS` is the dial.**
 
 Three things worth not undoing:
 

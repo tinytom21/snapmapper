@@ -25,6 +25,7 @@ import {
   RASTER_FALLBACK,
   VECTOR_STYLE_URL,
   isStyleLoadFailure,
+  labelDensity,
   tileChoiceFrom,
 } from './tiles.ts';
 import type { Coordinates } from '@snapmapper/core';
@@ -110,6 +111,21 @@ export function PhotoMap({
      * is useless in a way that a geotagging tool with an ugly map is not. Guarded so a single
      * failed tile or font cannot trigger it — see `isStyleLoadFailure`.
      */
+    /*
+     * Bring the labels forward once the style is in.
+     *
+     * Applied to the loaded style rather than by fetching and rewriting the JSON first: no extra
+     * round trip, no flash of an unstyled map, and it re-applies if the style is ever swapped —
+     * `style.load` fires again after `setStyle`, including the raster fallback below, where it
+     * simply finds no symbol layers to adjust.
+     */
+    instance.on('style.load', () => {
+      for (const layer of labelDensity(instance.getStyle().layers ?? [])) {
+        instance.setLayerZoomRange(layer.id, layer.minzoom, layer.maxzoom ?? 24);
+        instance.setLayoutProperty(layer.id, 'text-padding', layer.textPadding);
+      }
+    });
+
     let fellBack = false;
     instance.on('error', (event) => {
       if (fellBack || !isStyleLoadFailure(event.error)) return;

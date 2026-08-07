@@ -12,9 +12,11 @@ import { describe, it } from 'node:test';
 
 import {
   ATTRIBUTION,
+  LABEL_PADDING,
   RASTER_FALLBACK,
   VECTOR_STYLE_URL,
   isStyleLoadFailure,
+  labelDensity,
   tileChoiceFrom,
 } from '../src/tiles.ts';
 
@@ -102,5 +104,99 @@ describe('ATTRIBUTION', () => {
     assert.match(ATTRIBUTION, /OpenStreetMap/);
     assert.match(ATTRIBUTION, /OpenFreeMap/);
     assert.match(ATTRIBUTION, /openstreetmap\.org\/copyright/);
+  });
+});
+
+/**
+ * A slice of Liberty, with the real ids, types and zoom gates.
+ *
+ * Taken from the style as served, because the whole function is about *its* layer names — a made-up
+ * fixture would test the regexes against themselves.
+ */
+const LIBERTY = [
+  { id: 'label_city', type: 'symbol', minzoom: 3 },
+  { id: 'label_town', type: 'symbol', minzoom: 6 },
+  { id: 'label_village', type: 'symbol', minzoom: 9 },
+  { id: 'label_other', type: 'symbol', minzoom: 8 },
+  { id: 'label_state', type: 'symbol', minzoom: 5 },
+  { id: 'label_country_1', type: 'symbol' },
+  // Real Liberty layer, and one of the few label layers with no minzoom at all.
+  { id: 'water_name_point_label', type: 'symbol' },
+  { id: 'poi_r1', type: 'symbol', minzoom: 15 },
+  { id: 'poi_r7', type: 'symbol', minzoom: 16 },
+  { id: 'poi_r20', type: 'symbol', minzoom: 17 },
+  { id: 'airport', type: 'symbol', minzoom: 10 },
+  { id: 'waterway_line_label', type: 'symbol', minzoom: 10 },
+  { id: 'highway-name-major', type: 'symbol', minzoom: 12.2 },
+  { id: 'highway-shield-us-interstate', type: 'symbol', minzoom: 7 },
+  { id: 'road_one_way_arrow', type: 'symbol', minzoom: 16 },
+  { id: 'landuse_park', type: 'fill', minzoom: 4 },
+  { id: 'water', type: 'fill' },
+];
+
+const byId = (adjustments: ReturnType<typeof labelDensity>) =>
+  Object.fromEntries(adjustments.map((a) => [a.id, a]));
+
+describe('labelDensity', () => {
+  it('brings placenames forward by two zoom levels', () => {
+    // The reported problem: on a phone the same zoom covers a fraction of the ground a desktop
+    // shows, so the names that would orient you are simply not drawn yet.
+    const found = byId(labelDensity(LIBERTY));
+    assert.equal(found['label_town']?.minzoom, 4);
+    assert.equal(found['label_village']?.minzoom, 7);
+    assert.equal(found['label_other']?.minzoom, 6);
+    assert.equal(found['label_city']?.minzoom, 1);
+  });
+
+  it('brings points of interest forward by only one', () => {
+    // They arrive with icons, and a screenful of icons is clutter rather than information.
+    const found = byId(labelDensity(LIBERTY));
+    assert.equal(found['poi_r1']?.minzoom, 14);
+    assert.equal(found['poi_r7']?.minzoom, 15);
+    assert.equal(found['airport']?.minzoom, 9);
+  });
+
+  it('leaves roads alone entirely', () => {
+    // Dense by nature, and already drawn at the zoom where a road is worth naming. Arrows are not
+    // labels at all.
+    const found = byId(labelDensity(LIBERTY));
+    for (const id of ['highway-name-major', 'highway-shield-us-interstate', 'road_one_way_arrow']) {
+      assert.equal(found[id], undefined, id);
+    }
+  });
+
+  it('touches no layer that is not a symbol', () => {
+    // Fills and lines have no labels to space out, and moving their zoom range would change the
+    // cartography rather than the labelling.
+    const found = byId(labelDensity(LIBERTY));
+    assert.equal(found['landuse_park'], undefined);
+    assert.equal(found['water'], undefined);
+  });
+
+  it('never asks for a negative zoom', () => {
+    // label_city starts at 3 and is shifted by 2; a layer with no minzoom is already drawn from 0
+    // and has nothing to bring forward, but still takes the tighter padding.
+    for (const adjustment of labelDensity(LIBERTY)) {
+      assert.ok(adjustment.minzoom >= 0, `${adjustment.id} went below zero`);
+    }
+    assert.equal(byId(labelDensity(LIBERTY))['water_name_point_label']?.minzoom, 0);
+  });
+
+  it('leaves country labels where they are', () => {
+    // They are legible at every zoom that shows a country. Bringing them forward would mean
+    // drawing them over places you are actually looking at.
+    assert.equal(byId(labelDensity(LIBERTY))['label_country_1'], undefined);
+  });
+
+  it('tightens collision padding on everything it touches', () => {
+    for (const adjustment of labelDensity(LIBERTY)) {
+      assert.equal(adjustment.textPadding, LABEL_PADDING);
+    }
+    assert.ok(LABEL_PADDING < 2, 'the MapLibre default is 2; tighter is the point');
+  });
+
+  it('preserves each layer maxzoom, so nothing is drawn past where it should stop', () => {
+    const capped = labelDensity([{ id: 'label_town', type: 'symbol', minzoom: 6, maxzoom: 12 }]);
+    assert.equal(capped[0]?.maxzoom, 12);
   });
 });
