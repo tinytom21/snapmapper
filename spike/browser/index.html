@@ -155,26 +155,107 @@
               'EXIF:GPSLongitudeRef': 'W',
             };
 
-            // Three writes: the first pays any lazy setup, the rest are the
-            // steady-state cost that a 200-photo batch actually multiplies.
-            const timings = [];
-            for (let i = 0; i < 3; i++) {
+            /*
+             * A size sweep rather than three writes at full size.
+             *
+             * Repeating the same write only measures variance, and the first run on
+             * a phone already showed the number is ~45x the desktop's while reads
+             * are only ~3x. That gap is the thing worth explaining, and only the
+             * cost *shape* explains it:
+             *
+             *   - large fixed cost  -> the per-invocation overhead exploded, and
+             *     batching many photos through one call is the lever.
+             *   - large per-MB cost -> the WASI filesystem write shim is the wall,
+             *     and no amount of batching helps.
+             *
+             * Truncating a JPEG leaves the header intact, which is all ExifTool needs
+             * in order to write metadata; there is simply less scan data to copy. It
+             * is the same method cost-shape.mjs uses on the desktop, so the two are
+             * directly comparable.
+             */
+            const sizes = [65536, 524288, 2097152, file.size]
+              .filter((size, index, all) => size <= file.size && all.indexOf(size) === index);
+
+            const points = [];
+            for (const size of sizes) {
+              const slice = size === file.size
+                ? file
+                : new File([file.slice(0, size)], file.name, { type: file.type });
+
               const started = performance.now();
-              // -n only. -P and -overwrite_original both fail in the WASM
-              // sandbox, which has no real filesystem to preserve or erase.
-              const result = await pkg.writeMetadata(file, tags, { args: ['-n'] });
-              timings.push(performance.now() - started);
-              if (!result?.success) {
-                write(`   write ${i + 1} failed: ${result?.error ?? 'unknown'}`, 'fail');
-                break;
+              const result = await pkg.writeMetadata(slice, tags, { args: ['-n'] });
+              const elapsed = performance.now() - started;
+
+              const ok = result?.success === true;
+              write(`   write ${fmtBytes(size).padStart(9)}: ${fmtMs(elapsed)}`, ok ? 'pass' : 'fail');
+              if (!ok) {
+                write(`      ^ ${String(result?.error ?? 'unknown').slice(0, 120)}`, 'fail');
+                continue; // excluded from the fit rather than quietly skewing it
+              }
+              points.push({ mb: size / 1048576, ms: elapsed });
+
+              // Yield, so the browser can paint each line as it lands. On a phone
+              // this run takes minutes and a frozen page looks like a crash.
+              await new Promise((resolve) => setTimeout(resolve, 0));
+            }
+
+            /*
+             * Re-measure the smallest size last.
+             *
+             * The sweep runs smallest to largest, so anything that degrades over
+             * time — thermal throttling, memory pressure, GC — lands on the large
+             * writes and inflates the per-MB term, which is exactly the term the
+             * conclusion rests on. Repeating the cheapest write at the end separates
+             * the two: if it comes back near its original time the sweep was stable,
+             * and if it has slowed down markedly then the fit is not trustworthy and
+             * says so rather than quietly misleading.
+             */
+            let driftNote = null;
+            if (points.length >= 2) {
+              const firstSize = sizes[0];
+              const slice = new File([file.slice(0, firstSize)], file.name, { type: file.type });
+              const started = performance.now();
+              const result = await pkg.writeMetadata(slice, tags, { args: ['-n'] });
+              const elapsed = performance.now() - started;
+
+              if (result?.success === true) {
+                const before = points[0].ms;
+                const ratio = elapsed / before;
+                driftNote = {
+                  text: `   recheck ${fmtBytes(firstSize)}: ${fmtMs(before)} -> ${fmtMs(elapsed)}`
+                    + ` (${ratio.toFixed(2)}x)`,
+                  stable: ratio < 1.5,
+                };
               }
             }
 
-            if (timings.length === 3) {
-              write(`   write: ${timings.map(fmtMs).join(', ')}`);
-              const steady = Math.min(timings[1], timings[2]);
-              write(`   200-photo batch projects to ${fmtMs(steady * 200)}`,
-                steady * 200 < 300_000 ? 'pass' : 'fail');
+            if (points.length >= 2) {
+              const n = points.length;
+              const sx = points.reduce((s, p) => s + p.mb, 0);
+              const sy = points.reduce((s, p) => s + p.ms, 0);
+              const sxy = points.reduce((s, p) => s + p.mb * p.ms, 0);
+              const sxx = points.reduce((s, p) => s + p.mb * p.mb, 0);
+              const perMb = (n * sxy - sx * sy) / (n * sxx - sx * sx);
+              const fixed = (sy - perMb * sx) / n;
+
+              const perPhoto = fixed + perMb * (file.size / 1048576);
+              const fixedShare = fixed / perPhoto;
+
+              write('');
+              if (driftNote) write(driftNote.text, driftNote.stable ? 'pass' : 'fail');
+              write(`   fit: ${fmtMs(fixed)} fixed + ${fmtMs(perMb)} per MB`);
+              write(`   a ${fmtBytes(file.size)} photo: ${fmtMs(perPhoto)}`);
+              write(`   20 photos: ${fmtMs(perPhoto * 20)}   50 photos: ${fmtMs(perPhoto * 50)}`);
+              write(
+                fixedShare > 0.5
+                  ? `   startup dominates (${(fixedShare * 100).toFixed(0)}%) — batching is the lever`
+                  : `   the bytes dominate (${((1 - fixedShare) * 100).toFixed(0)}%) — batching cannot help`,
+                fixedShare > 0.5 ? 'pass' : 'fail',
+              );
+              if (driftNote && !driftNote.stable) {
+                write('   the recheck slowed down, so the device was degrading during', 'fail');
+                write('   the sweep — treat the per-MB term as an upper bound.', 'fail');
+              }
             }
           } catch (error) {
             write(`   threw: ${error.message}`, 'fail');

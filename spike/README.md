@@ -7,10 +7,17 @@ stay as the metadata backend, and which native shell gets built on top of it.
 1.0.9 wrapping `@6over3/zeroperl-ts` 1.0.10). **All four questions are answered against 7 real
 ILCE-6400 JPEGs.**
 
-**Recommendation for review: keep ExifTool-WASM as the metadata backend.** It is correct on real
-files, which was the only thing that could have ruled it out. Its write cost is high (~2 s for a 5–7MB
-JPEG, ~4.5 s for a 12MB one) but acceptable at the real session size of 10–50 photos, provided writes
-are backgrounded. The shell decision is still open and needs the tablet.
+**Recommendation for review, split by platform:**
+
+- **Desktop: keep ExifTool-WASM.** It is correct on real A6400 files — the only thing that could have
+  ruled it out — and ~2–4.5 s per photo is acceptable at the real session size of 10–50 photos,
+  provided writes are backgrounded.
+- **Android: not viable as it stands.** A phone wrote a 5.4MB JPEG in **60–75 s**, against ~1.5 s in a
+  desktop webview. Reads were only 3.5× slower, so this is not simply a slower CPU. Provisional on one
+  device; the cost-shape sweep below is what turns it into a decision.
+
+The shell choice is still open, and now has a second question attached to it: not only whether the SAF
+path can write to a removable card, but whether ExifTool-WASM can write on Android at all.
 
 ## Before anything ran: three upstream defects
 
@@ -225,19 +232,57 @@ The numbers below are unchanged; only their interpretation is.
 | Measurement | Node (desktop) | Webview (desktop) | Webview (phone) |
 |---|---|---|---|
 | Module import | 1–3 ms | 46 ms | loaded OK |
-| First call (read) | 595 ms @ 11.7MB | 1089 ms @ 4.8MB | **3.54 s @ 5.4MB** |
-| Warm call (read) | 615 ms | — | _pending_ |
-| Median write, 11.7MB | **4.48 s** | ~1.5 s @ 4.8MB | _pending_ |
-| 200-photo projection | **761 s (12.7 min)** | — | _pending_ |
-| Instance reused? | **No** — 595 ms then 615 ms | — | _pending_ |
+| First call (read) | 595 ms @ 11.7MB | 1089 ms @ 4.8MB | **3.87 s @ 5.4MB** |
+| Warm call (read) | 615 ms | — | — |
+| Write | 4.48 s @ 11.7MB | ~1.5 s @ 4.8MB | **60.5 / 74.8 / 70.4 s @ 5.4MB** |
+| Cost shape | 757 ms + 261 ms/MB | — | _sweep pending_ |
+| Instance reused? | **No** — 595 ms then 615 ms | — | — |
 
-No Android tablet was available, so a phone stands in. A phone is if anything slower than the tablet
-the app would be used on, so a tolerable number here is a safe result rather than an optimistic one.
-The 24MB WASM loaded without trouble, which was the main worry about mobile.
+No Android tablet was available, so a phone stands in.
 
-**Read cost scales as expected:** 3.54 s for 5.4MB on the phone against 1.09 s for 4.8MB in the desktop
-webview is roughly **3× slower**, matching the 3–5× rule of thumb. Write timings are still pending —
-the first attempt died on the secure-context defect above, which is now polyfilled.
+### The phone result changes the Android picture, and possibly the whole rationale
+
+**Reads scale as predicted; writes do not.** The phone read 5.4MB in 3.87 s against the desktop
+webview's 1.09 s for 4.8MB — about **3.5× slower**, exactly the expected CPU multiple. But writes came
+in at **60–75 s** against the desktop's ~1.5 s: roughly **45× slower**, an order of magnitude worse
+than CPU speed alone explains.
+
+At ~70 s per photo:
+
+| Session | Phone |
+|---|---|
+| 20 photos | ~23 min |
+| 50 photos | ~58 min |
+
+That is unusable, and it is not a matter of taste.
+
+**Why this matters more than a missed performance target.** The stated reason for choosing WebAssembly
+at all was that "the same real ExifTool runs on desktop and inside an Android webview" — Android was
+the whole justification, since a desktop can simply run a native ExifTool binary faster and with less
+machinery. If ExifTool-WASM cannot write on mobile, the architecture loses the argument that selected
+it, and the honest options change shape:
+
+- **Desktop** is unaffected. ExifTool-WASM is correct and fast enough (~2–4.5 s), and a native binary
+  would be faster still.
+- **Android** needs either the WASI write shim fixed, or a different writer entirely.
+
+**Treat this as provisional, for two reasons.** It is a single unidentified device, and the three
+timings went 60.5 → 74.8 → 70.4 s, i.e. *slower* after the first — consistent with thermal throttling
+or memory pressure rather than a clean steady state. Both are exactly what the sweep below is for.
+
+### Next: the cost shape on the phone
+
+The desktop analysis found the per-MB cost living in zeroperl's unbuffered WASI write shim. Whether the
+phone's collapse is the *same* term getting worse, or a different one, decides whether anything can be
+done about it. `spike/browser/index.html` now runs a size sweep (64KB → 512KB → 2MB → full) instead of
+three identical writes, fits fixed-vs-per-MB, and re-measures the smallest size at the end so that
+throttling shows up as drift rather than silently inflating the per-MB term.
+
+| Outcome | Reading |
+|---|---|
+| **Fixed cost dominates** | Per-invocation overhead exploded on mobile. Batching many photos through one ExifTool invocation becomes the lever, and Android may be recoverable. |
+| **Per-MB cost dominates** | The WASI write shim is the wall. Batching cannot help; the shim has to be fixed or replaced. |
+| **Recheck shows large drift** | The device was degrading mid-run. The per-MB term is an upper bound and the numbers need repeating on a cooler device. |
 
 Bundle: `.wasm` size **24.2 MB** — this ships inside the APK. (Measured as the largest single asset,
 not a sum: the package ships the same `zeroperl.wasm` under both `dist/esm` and `dist/cjs`, and a
