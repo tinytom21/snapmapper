@@ -48,8 +48,8 @@ http://localhost:5173/ (see HANDOFF.md; `localhost` is required for a secure con
   camera card holds ~1000 photos in one folder and metadata costs ~0.5 s each on a desktop,
   ~3 s on a phone — parsing a card before the user can act would take most of an hour. Folder
   mode counts first, without reading metadata, and asks before reading more than 200.
-- `packages/shells` does not exist. Deliberately: the shell decision is still open, and the
-  browser gives a faster loop for the desktop MVP. Only `browser-file-store.ts` is throwaway.
+- `packages/shells` does not exist and **is not needed**: the app runs in Chrome/Edge on desktop and
+  on Android. `browser-file-store.ts` is the only platform-specific file, behind `FileStore`.
 
 ### Browser-specific gotchas already paid for
 
@@ -181,15 +181,22 @@ override for exactly that case.
 
 ## Still open
 
-- **Shell: Tauri 2 vs Capacitor.** Tauri 2 remains the going-in recommendation. Nothing measured yet
-  distinguishes them; the deciding test (SAF writes to a removable card) needs the tablet. Note the
-  WASM alone is 24.2MB, against the ~10MB whole-app figure the plan assumed.
-- **Whether the write cost is tolerable on a tablet.** The desktop webview matched Node, so the tablet
-  will be a CPU multiple of ~2–4.5 s per photo. Unmeasured — `npm run browser --workspace spike`.
+- **A larger preview before geotagging.** A 76px thumbnail is not enough to confirm the right frame.
+  The camera's embedded ~400KB `PreviewImage` is already in the header bytes and unused; fetch it with
+  `readThumbnail(backend, bytes, name, 'PreviewImage')`. The clearest remaining gap.
+- **GUI questions the user has not answered yet:** do the mobile tabs feel right or would a draggable
+  split be better; is the horizontally scrolling header row discoverable; does a full-height map help.
+- **The ~1.5MB JS bundle**, fine on desktop and worth code-splitting for a phone.
+- **App name.** `photo-geotagger` is a placeholder.
+- **Whether mtime matters enough to want a native desktop build.** The one thing a browser cannot do.
+  Copy mode makes it much less painful, since originals keep their dates.
 
-Settled by the spike:
+Settled:
 
-- **ExifTool-WASM stays.** Q1 passed on real A6400 files.
+- **ExifTool-WASM stays.** Q1 passed on real A6400 files, and Phase 1 works on both platforms.
+- **No native shell.** Android's File System Access API works; verified by geotagging real photos on
+  a phone. Tauri versus Capacitor is not a live question. The 24.2MB WASM is the cost either way.
+- **Copies by default**, into a `geotagged` subfolder, not in-place overwrites.
 
 - **Raw ExifTool arguments do reach the write path** via `{ args: [...] }`, proved by effect. But
   `-P` and `-overwrite_original` correctly fail in the sandbox and must not be passed — there is no

@@ -1,20 +1,35 @@
 # Handoff
 
-Scaffolded on a machine where **Node.js could not be installed**. As of **2026-08-07 it has now
-been run**: prerequisites installed, core tests passing, and the Phase 0 spike executed against real
-A6400 files. All four questions are answered.
+**Phase 0 complete. Phase 1 built and working on both a PC and an Android phone**, against real
+Sony A6400 files, as of 2026-08-07.
+
+The user has geotagged real photos with it on a phone: five files picked off an SD card with the
+Android file picker, written as copies into a `geotagged` folder, every one read back and verified,
+and checked afterwards on the PC. They are happy with the result.
 
 ## Where it stands
 
 | Path | State |
 |---|---|
-| `docs/PLAN.md` | Approved design. Read this second. One premise corrected (`ArrayBuffer`, not `Uint8Array`). |
-| `packages/core/src/gps.ts` | **Tested, passing.** Decimal ↔ EXIF DMS + hemisphere refs. Held up under an independent sweep of 400k values. |
-| `packages/core/src/time.ts` | **Tested, passing.** Camera-clock drift, timezone, GPS timestamps. |
-| `packages/core/src/exif-tags.ts` | **Tested, passing.** Cross-checked against GeoSetter's own output; two gaps found and closed. |
-| `packages/core/test/*.test.ts` | **53 tests, all passing.** |
-| `spike/` | **Run against real A6400 files.** Results in `spike/README.md`. Needed three upstream fixes before it would work at all. |
-| `packages/ui`, `packages/shells` | Still do not exist. Next up, once the shell is chosen. |
+| `docs/PLAN.md` | The original design. **Two of its premises are now disproved** — see below. |
+| `packages/core` | Complete for the MVP. **180 tests, `tsc` clean.** `gps`, `time`, `jpeg` (the splice), `exif-tags`, `exiftool` (write path), `exiftool-wasm`, `session`, `clock-sync`, `verify-write`, `storage`. |
+| `packages/ui` | React 19 + MapLibre 5 on Vite 7. **49 tests.** Runs in Chrome/Edge on desktop *and* Android. |
+| `packages/shells` | Does not exist, and **is no longer needed** — see below. |
+| `spike/` | Phase 0, done. Results in `spike/README.md`. Still the place the write path is verified against a native ExifTool: `npm run splice --workspace spike` → 184 checks. |
+
+**229 tests pass, `tsc` is clean across both packages, and the production build succeeds.** Run
+`npm test` and `npm run typecheck` from the repository root.
+
+## Two premises in PLAN.md that turned out to be wrong
+
+Both were written down confidently and cost real time. A third — that the WASI *write* shim was
+slow — was also wrong; see the correction notice in `spike/README.md`.
+
+1. **"`Sony:MakerNotes` must be byte-identical."** It failed on every Sony file on the first run,
+   which reads as "stop, the backend is wrong". It is not: inserting a GPS IFD pointer shifts the
+   block 12 bytes and a correct writer *must* rewrite its internal offsets. See CLAUDE.md.
+2. **"Android needs a native shell."** Chrome on Android now has the File System Access API. No
+   Tauri, no Capacitor, no Rust, no Kotlin plugin. **Phase 2 is largely gone.**
 
 ## Running the desktop MVP
 
@@ -169,91 +184,49 @@ output and refuses to return a file whose scan data moved or changed length.
 **3. Never re-serialise EXIF yourself.** Q5 measured `piexifjs` doing exactly that: 6 ms, 47 tags lost
 including `OffsetTime`, and ExifTool reporting incorrect maker-note offsets.
 
-## Deciding the shell
+## The shell decision — resolved, by not needing one
 
-The question splits in two, and the second barely matters until the first is answered.
+`docs/PLAN.md` ruled out a pure PWA because Chrome on Android had no `showDirectoryPicker`. That
+was true when written and is no longer. The premise was checked on the device rather than inherited,
+using the **This device** panel in the app (`describePlatform()` in `self-check.ts`), and then
+settled properly by geotagging real photos on the phone.
 
-**A. Can Android write to a card at all?** This is about Android's Storage Access Framework,
-not about Tauri or Capacitor — both call the same `DocumentsContract` APIs. If the platform
-will not do it on real hardware, neither wrapper helps and the Android plan changes.
+So there is no Tauri-versus-Capacitor question. The only remaining argument for a native shell is
+**file modification dates**, which no browser can set — and in copy mode that barely matters, since
+the originals keep theirs and the copies are genuinely new files.
 
-**B. Which wrapper?** Only worth arguing once A is a yes.
+If a native shell is ever wanted, `FileStore` is the only seam: `browser-file-store.ts` is the sole
+platform-specific file, and `packages/core` has no platform dependencies at all.
 
-### Step 1: check the premise, on the device
+**To test on a phone:** `npm run dev:lan`, then open the `https://` address it prints and accept the
+certificate warning. HTTPS is not optional — `showDirectoryPicker` and `crypto.randomUUID` are both
+gated on a secure context, so over plain `http://` on a LAN address they are simply absent, which
+looks exactly like the platform not supporting them. Inbound `5173` needs a firewall rule.
 
-`docs/PLAN.md` rules out a pure PWA on Android because Chrome there has no
-`showDirectoryPicker`. That was true when written and has never been checked on the
-hardware. **If it is stale, there is no Android shell decision at all** — the existing app
-works. Given that two other written-down premises in this project turned out to be wrong at
-real cost, check rather than inherit.
+## What to pick up next
 
-```bash
-npm run dev:lan
-```
+The user's last words were: *"that has worked really nicely"* — the mobile layout rebuild landed and
+they are happy. They then asked to stop and compact, so **nothing is half-finished**; the tree is
+clean and everything is committed.
 
-Open the `https://` address it prints on the phone, accept the certificate warning, and read
-the **This device** panel. No console needed.
+The next item, agreed but not started:
 
-`dev:lan` serves **HTTPS**, and that is not optional. `showDirectoryPicker` and
-`crypto.randomUUID` are both gated on a secure context, so over plain `http://` on a LAN
-address they are absent whatever the platform supports — a false negative that looks like a
-definitive answer. The panel refuses to draw a conclusion from an insecure origin and says so.
+- **No way to see a photo larger before geotagging it.** Tapping a 76px thumbnail is not enough to
+  confirm you have the right frame. The camera's embedded ~400KB `PreviewImage` is already in the
+  header bytes and currently unused — `readThumbnail(backend, bytes, name, 'PreviewImage')` will
+  fetch it. This is the clearest remaining gap.
 
-Inbound `5173` needs a firewall rule; the earlier one was for the spike's port `8080`. In an
-**Administrator** PowerShell:
+Open GUI questions the user has not yet answered, from the last message:
 
-```bash
-New-NetFirewallRule -DisplayName "photo-geotagger dev 5173" -Direction Inbound -Protocol TCP -LocalPort 5173 -Action Allow -Profile Any -RemoteAddress LocalSubnet
-```
+- Do the **mobile tabs** (Photos / Map) feel right, or would a draggable split be better?
+- Is the horizontally scrolling header action row discoverable, or does it just feel broken?
+- Does the map having the full height while placing actually help?
 
-### Step 2: the test that actually decides A
+Further out, and deferred by the plan rather than by us: GPX import with timestamp matching, ARW via
+XMP sidecars, reverse geocoding into IPTC, offline tiles via PMTiles, video.
 
-Against `DCIM/100MSDCF` on the card — **not** the card root, which Android 11+ refuses:
-
-1. Grant a tree with `ACTION_OPEN_DOCUMENT_TREE`.
-2. Read a photo from it.
-3. **Create a new document in the same tree** (the temp file).
-4. Write bytes to it.
-5. **Delete the original and rename the temp into its place.**
-6. Set the modification date.
-
-Steps 3–5 are `writeAtomic`, and they are where this fails if it fails. Many Android file
-plugins can read a tree and overwrite a document but cannot create-and-rename inside it — and
-overwriting in place is precisely what we refuse to do.
-
-Worth doing as a throwaway Android project, so it commits to neither shell. **A tablet is not
-required**: a USB-OTG card reader on a phone presents the card as a removable volume, which
-is the same SAF path.
-
-### Step 3: then, and only then, B
-
-| | Tauri 2 | Capacitor |
-|---|---|---|
-| Toolchain | Rust + MSVC + Android SDK, multi-GB, none installed | Android SDK + JDK, no Rust |
-| Android SAF | community `tauri-plugin-android-fs` | `@capacitor/filesystem` is weak on document trees; likely a small Kotlin plugin |
-| Desktop | real native binaries | Electron, heavier |
-| mtime | yes | yes |
-
-Two notes. **Tauri's size advantage is noise here** — the WASM is 24.2MB, so arguing about
-10MB versus Electron misses the point. And needing a small Kotlin plugin is not the drawback
-it sounds like: it means controlling the exact create-write-rename sequence rather than hoping
-a community plugin exposes it.
-
-There is also a smaller path that skips the question: **Tauri on desktop only**, which fixes
-the mtime regression and needs no Android SDK.
-
-## What is left before Phase 1
-
-Only the shell decision, and it needs hardware:
-
-```bash
-npm run browser --workspace spike
-```
-
-Run that **on the tablet**. The desktop webview matched Node, so the tablet is a straight CPU multiple
-of ~2 s per 5–7MB photo. Then test whether the chosen shell's SAF path can write to a removable card —
-that is the one requirement with no workaround, and it is what picks Tauri over Capacitor or vice
-versa.
+Also still unaddressed: the production JS bundle is ~1.5MB, fine on a desktop and worth
+code-splitting for a phone.
 
 ## How it was run, in order
 
@@ -328,16 +301,15 @@ npm run browser --workspace spike
 The desktop webview column is filled in; the tablet column is not, and it is the number that decides
 whether Android is viable at all.
 
-### 5. Choose the shell, then build Phase 1
+### 5. Phase 1 — built
 
-**Still open, and the last Phase 0 item.** Nothing measured distinguishes Tauri from Capacitor — the
-deciding test is whether the shell's SAF path can write to a removable card, which needs the tablet
-and the card. Desktop MVP before Android regardless: it proves the portable core with a faster
-iteration loop.
+`packages/core` and `packages/ui`, run with `npm run dev`. No shell was needed; see above.
 
 ## Open questions for the user
 
 - **App name.** `photo-geotagger` is a placeholder throughout.
+- **Whether mtime matters enough to want a native desktop build.** It is the only thing a browser
+  cannot do, and copy mode makes it much less painful.
 - **Camera timezone default.** `time.ts` requires an IANA zone. Worth defaulting to the system
   zone and letting the user override per session.
 
@@ -366,3 +338,11 @@ iteration loop.
 - **A `Blob` input is ~69× slower than a `Uint8Array` on mobile**, and identical on desktop. See the write
   path above. Any benchmark that compares a Node run against a browser run must pass the same input type
   in both, or it is comparing two different code paths — which is exactly the mistake made here.
+- **`readTags` must use `-G`, not `-G0:1`.** The latter emits `EXIF:ExifIFD:DateTimeOriginal`, so no
+  date ever resolves — and it hides behind `Composite:*`, which keeps working.
+- **The verification read must *not* pass `-fast2`.** It stops before parsing maker notes, so the
+  warning that catches corruption never appears.
+- **Layout: verify the real composition, with a long list.** Two "measured, not eyeballed" layout
+  claims were wrong — one because the harness mounted `PhotoList` alone rather than `Sidebar`, and one
+  because the overlap detector counted rows scrolled out of a container as overlapping. Use
+  `dev-preview.tsx` (24 sample photos) and clip boxes to the scrolling ancestor.
