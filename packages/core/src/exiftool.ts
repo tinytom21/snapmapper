@@ -229,7 +229,13 @@ export async function readTags(
   const result = await backend.read({
     bytes,
     name,
-    args: ['-json', '-n', '-G0:1', '-fast2', ...tags.map((tag) => `-${tag}`)],
+    // `-G`, family 0 only. `-G0:1` looks more informative and silently breaks every
+    // lookup: it emits `EXIF:ExifIFD:DateTimeOriginal` and `EXIF:GPS:GPSDateStamp`
+    // rather than `EXIF:DateTimeOriginal`, and it duplicates tags that appear in both
+    // IFD0 and IFD1. Measured against ExifTool 13.59. The failure is quiet — dates
+    // simply never resolve — and it hides behind `Composite:*`, which has no family-1
+    // subgroup and so keeps working.
+    args: ['-json', '-n', '-G', '-fast2', ...tags.map((tag) => `-${tag}`)],
   });
 
   if (!result.data) {

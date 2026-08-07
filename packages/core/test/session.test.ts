@@ -338,3 +338,44 @@ describe('entryFromTags', () => {
     assert.equal(built.takenAt?.year, 2024);
   });
 });
+
+describe('key format regression', () => {
+  /**
+   * The exact JSON shape ExifTool 13.59 emits with `-json -n -G`, copied from a real
+   * ILCE-6400 file. Pinned because the first version of readTags passed `-G0:1`, which
+   * emits `EXIF:ExifIFD:DateTimeOriginal` instead, so no date ever resolved and every
+   * photo silently showed "no date" while coordinates kept working.
+   */
+  const REAL_OUTPUT = {
+    SourceFile: 'DSC00119.JPG',
+    'EXIF:DateTimeOriginal': '2020:07:27 20:16:48',
+    'EXIF:Orientation': 1,
+    'EXIF:Make': 'SONY',
+    'EXIF:Model': 'ILCE-6400',
+    'EXIF:GPSDateStamp': '2024:05:17',
+    'Composite:GPSLatitude': 51.4778,
+    'Composite:GPSLongitude': -0.0015,
+    'Composite:GPSAltitude': 45.7,
+  };
+
+  it('reads the keys ExifTool actually emits under -G', () => {
+    const built = entryFromTags(ref('DSC00119.JPG'), REAL_OUTPUT);
+
+    assert.deepEqual(built.takenAt, {
+      year: 2020, month: 7, day: 27, hour: 20, minute: 16, second: 48, millisecond: 0,
+    });
+    assert.deepEqual(built.existing, {
+      latitude: 51.4778, longitude: -0.0015, altitude: 45.7,
+    });
+  });
+
+  it('would fail on the -G0:1 key shape, which is the point of pinning this', () => {
+    // Demonstrates the bug rather than merely asserting the fix: these are the keys the
+    // wrong flag produced, and they resolve to nothing.
+    const built = entryFromTags(ref('DSC00119.JPG'), {
+      'EXIF:ExifIFD:DateTimeOriginal': '2020:07:27 20:16:48',
+      'EXIF:GPS:GPSDateStamp': '2024:05:17',
+    });
+    assert.equal(built.takenAt, undefined);
+  });
+});

@@ -2,7 +2,7 @@
   "name": "photo-geotagger",
   "version": "0.0.0",
   "private": true,
-  "description": "Cross-platform photo geotagger for Sony A6400 files — a GeoSetter replacement for PC and Android",
+  "description": "Cross-platform photo geotagger for Sony A6400 files \u2014 a GeoSetter replacement for PC and Android",
   "type": "module",
   "workspaces": [
     "packages/*",
@@ -14,7 +14,9 @@
   "scripts": {
     "test": "npm run test --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "spike": "npm run spike --workspace spike"
+    "spike": "npm run spike --workspace spike",
+    "dev": "npm run dev --workspace @geotagger/ui",
+    "build": "npm run build --workspace @geotagger/ui"
   },
   "devDependencies": {
     "@types/node": "^26.1.2",

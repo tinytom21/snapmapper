@@ -16,6 +16,40 @@ A6400 files. All four questions are answered.
 | `spike/` | **Run against real A6400 files.** Results in `spike/README.md`. Needed three upstream fixes before it would work at all. |
 | `packages/ui`, `packages/shells` | Still do not exist. Next up, once the shell is chosen. |
 
+## Running the desktop MVP
+
+```bash
+npm run dev
+```
+
+Then open **http://localhost:5173/ in Chrome or Edge** — not the in-app browser, and not
+Firefox or Safari, which have no File System Access API. Open a folder of JPEGs, select
+photos in the list, click the map to place them, then Save.
+
+`localhost` matters: the WASM backend needs a secure context for `crypto.randomUUID`, and
+over a plain LAN address reads work while every write fails.
+
+**Two things to know before pointing it at photographs you care about:**
+
+- It writes in place. `writeAtomic` goes through Chromium's swap-file mechanism, so an
+  interrupted save leaves the original intact — but **use copies for the first run
+  anyway.** Nothing has yet been written by the UI to a file anybody cares about.
+- **The modification date cannot be preserved in a browser.** The File System Access API
+  has no way to set it, so geotagged photos will show today's date in Explorer. That is a
+  real regression against GeoSetter and the reason a native shell still matters. The UI
+  says so rather than hiding it.
+
+There is a runtime smoke check for the parts unit tests cannot reach — that the 24MB WASM
+loads, that the origin is a secure context, and that a real write completes. Run it from
+the browser console:
+
+```js
+(await import('/src/self-check.ts')).runSelfCheck().then(r => console.table(r.checks))
+```
+
+Run that **first** on Android. All three of those failed on a device during Phase 0 after
+passing review.
+
 ## Phase 0 is done — the backend is confirmed
 
 Q1 passed on 7 real ILCE-6400 JPEGs, verified with a separate native ExifTool 13.59: correct GPS in

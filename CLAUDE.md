@@ -34,7 +34,27 @@ reasoning are in `spike/README.md`.
 - **Both platforms are viable on one backend.** The remaining Phase 0 item is the shell choice, which
   needs the SAF-to-removable-card test on real hardware.
 
-`packages/ui` and `packages/shells` do not exist yet.
+**Phase 1 in progress — the desktop MVP runs.** `npm run dev`, then Chrome or Edge at
+http://localhost:5173/ (see HANDOFF.md; `localhost` is required for a secure context).
+
+- `packages/core` is complete for the MVP: `gps`, `time`, `jpeg` (the splice), `exif-tags`,
+  `exiftool` (the write path), `exiftool-wasm`, `session` (staged edits + undo), `storage`.
+  **122 tests, `tsc` clean.**
+- `packages/ui` is React 19 + MapLibre 5 on Vite 7, with a `FileStore` over the File System
+  Access API. **15 tests** covering save orchestration and partial failure.
+- `packages/shells` does not exist. Deliberately: the shell decision is still open, and the
+  browser gives a faster loop for the desktop MVP. Only `browser-file-store.ts` is throwaway.
+
+### Browser-specific gotchas already paid for
+
+- **Serve `zeroperl.wasm` at the site root.** In a browser zeroperl fetches
+  `./zeroperl.wasm` relative to the *document*, not the module. `vite-plugin-zeroperl.ts`
+  does it. Any shell needs the same arrangement.
+- **A secure context is required for writes** (`crypto.randomUUID`). `localhost` counts.
+- **`readTags` must use `-G`, not `-G0:1`.** The latter emits
+  `EXIF:ExifIFD:DateTimeOriginal`, so no date ever resolves — and it hides behind
+  `Composite:*`, which keeps working. Pinned by a regression test.
+- **The browser cannot preserve file mtime.** Surfaced in the UI as `MTIME_LIMITATION`.
 
 ### Do not use byte-identity as the MakerNotes test
 

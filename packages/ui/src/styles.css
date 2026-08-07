@@ -1,0 +1,150 @@
+/* Plain CSS. A component framework would be more machinery than this screen needs. */
+
+:root {
+  color-scheme: light dark;
+  --bg: Canvas;
+  --fg: CanvasText;
+  --line: color-mix(in srgb, CanvasText 18%, transparent);
+  --panel: color-mix(in srgb, CanvasText 4%, transparent);
+  --accent: #2563eb;
+  --pending: #b45309;
+  --danger: #b91c1c;
+  --ok: #15803d;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font: 14px/1.5 system-ui, -apple-system, sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.app { display: flex; flex-direction: column; height: 100vh; }
+
+header {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.6rem 0.9rem;
+  border-bottom: 1px solid var(--line);
+  flex-wrap: wrap;
+}
+
+header h1 { font-size: 1rem; margin: 0 0.5rem 0 0; font-weight: 650; }
+.spacer { flex: 1; }
+.folder { font-family: ui-monospace, monospace; opacity: 0.7; font-size: 0.85rem; }
+
+button {
+  font: inherit;
+  padding: 0.35rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: inherit;
+  cursor: pointer;
+}
+button:hover:not(:disabled) { border-color: color-mix(in srgb, CanvasText 35%, transparent); }
+button:disabled { opacity: 0.45; cursor: default; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+
+.body { display: flex; flex: 1; min-height: 0; }
+
+aside {
+  width: 25rem;
+  max-width: 42vw;
+  border-right: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.map { flex: 1; min-width: 0; }
+
+.panel { padding: 0.8rem 0.9rem; border-bottom: 1px solid var(--line); }
+.panel.grow { flex: 1; min-height: 0; display: flex; flex-direction: column; border-bottom: 0; }
+.panel h2 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; opacity: 0.6; margin: 0 0 0.5rem; }
+.count { opacity: 0.55; font-weight: 400; }
+
+.row { display: flex; gap: 0.35rem; flex-wrap: wrap; margin-bottom: 0.5rem; }
+.row button { padding: 0.25rem 0.5rem; font-size: 0.85rem; }
+
+label { display: block; margin: 0.5rem 0; font-size: 0.85rem; }
+input[type='text'], input:not([type]), input[type='number'] {
+  display: block;
+  width: 100%;
+  margin-top: 0.2rem;
+  padding: 0.35rem 0.45rem;
+  font: inherit;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  color: inherit;
+}
+input.invalid { border-color: var(--danger); }
+
+.note { font-size: 0.8rem; opacity: 0.65; margin: 0.3rem 0; }
+.note.error, .error { color: var(--danger); }
+.dim { opacity: 0.5; }
+.pendingText { color: var(--pending); font-weight: 550; }
+
+.photos { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; min-height: 0; }
+
+.photo {
+  padding: 0.4rem 0.5rem;
+  border-radius: 6px;
+  border: 1px solid transparent;
+}
+.photo.selected { background: color-mix(in srgb, var(--accent) 12%, transparent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+.photo.broken { opacity: 0.6; }
+.photo label { display: flex; align-items: center; gap: 0.45rem; margin: 0; }
+.photo .name {
+  border: 0;
+  background: none;
+  padding: 0;
+  font-family: ui-monospace, monospace;
+  font-size: 0.85rem;
+  text-align: left;
+  cursor: pointer;
+}
+.photo .meta {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  font-size: 0.78rem;
+  opacity: 0.85;
+  padding-left: 1.35rem;
+}
+
+.banner {
+  padding: 0.55rem 0.9rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+  font-size: 0.87rem;
+}
+.banner.warn { background: color-mix(in srgb, var(--pending) 14%, transparent); }
+.banner.error { background: color-mix(in srgb, var(--danger) 12%, transparent); }
+.banner.ok { background: color-mix(in srgb, var(--ok) 12%, transparent); }
+.banner ul { margin: 0.35rem 0; padding-left: 1.2rem; }
+.banner button { margin-top: 0.4rem; }
+
+.empty { padding: 1rem 0.9rem; }
+.gate { max-width: 34rem; margin: 4rem auto; padding: 0 1rem; }
+
+/* Map pins. Saved locations are calm; unsaved ones are not, deliberately — a pending
+   edit must never look like something already written to disk. */
+.pin {
+  width: 16px;
+  height: 16px;
+  border-radius: 50% 50% 50% 0;
+  transform: rotate(-45deg);
+  background: var(--accent);
+  border: 2px solid #fff;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.4);
+  cursor: pointer;
+  padding: 0;
+}
+.pin-pending { background: var(--pending); }
+.pin-selected { width: 22px; height: 22px; z-index: 2; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 45%, transparent); }
