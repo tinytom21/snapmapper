@@ -468,6 +468,11 @@ export function App() {
   const busy = loading !== null || saving !== null;
   const pending = session ? pendingPhotos(session).length : 0;
   const selected = session?.selected.size ?? 0;
+  const mapVisible = !(narrow && session !== null && pane !== 'map');
+  const saveDisabled = pending === 0 || saving !== null || destination.kind === 'copy-pending';
+  const saveLabel = saving
+    ? `Saving ${saving.done}/${saving.total}…`
+    : `Save ${pending || ''}`.trim();
 
   return (
     <div className="app">
@@ -521,14 +526,16 @@ export function App() {
             >
               Redo
             </button>
-            <button
-              type="button"
-              className="primary"
-              onClick={save}
-              disabled={pending === 0 || saving !== null || destination.kind === 'copy-pending'}
-            >
-              {saving ? `Saving ${saving.done}/${saving.total}…` : `Save ${pending || ''}`.trim()}
-            </button>
+            {/*
+              Only on a wide screen. On a phone the header is a single scrolling line, so Save sat
+              off the right edge — the one button that must never be hunted for. It appears in the
+              Photos pane instead, and only once there is something to save.
+            */}
+            {!narrow && (
+              <button type="button" className="primary" onClick={save} disabled={saveDisabled}>
+                {saveLabel}
+              </button>
+            )}
           </>
         )}
         </div>
@@ -568,7 +575,9 @@ export function App() {
         </div>
       )}
 
-      {session && hasPendingChanges(session) && (
+      {/* On a narrow screen the save bar in the Photos pane says this and does something about
+          it, so a banner would only be spending height to repeat itself. */}
+      {!narrow && session && hasPendingChanges(session) && (
         <div className="banner warn">
           {pending} photo{pending === 1 ? '' : 's'} with unsaved changes. Nothing is written
           until you press Save.
@@ -651,6 +660,27 @@ export function App() {
                   <PlatformReport />
                 </>
               )}
+
+            {/*
+              Sticky to the bottom of the scrolling pane, and present only when there is something
+              to save. It sits where the thumb already is, and its absence is the honest signal
+              that nothing is staged.
+            */}
+            {narrow && session && pending > 0 && (
+              <div className="save-bar">
+                <div className="note">
+                  {pending} photo{pending === 1 ? '' : 's'} changed — nothing is written yet.
+                </div>
+                <button type="button" className="primary" onClick={save} disabled={saveDisabled}>
+                  {saveLabel}
+                </button>
+                {destination.kind === 'copy-pending' && (
+                  <div className="note">
+                    Choose where copies should go first, above.
+                  </div>
+                )}
+              </div>
+            )}
           </aside>
         )}
 
@@ -659,7 +689,7 @@ export function App() {
           switch would throw away the tiles, the viewport and every marker, so switching back
           would jump to a different place than the one just left.
         */}
-        <div className={`map-slot${narrow && session && pane !== 'map' ? ' hidden' : ''}`}>
+        <div className={`map-slot${mapVisible ? '' : ' hidden'}`}>
           <PhotoMap
             pins={pins}
             onPlace={place}
@@ -667,6 +697,7 @@ export function App() {
             onMovePin={movePin}
             armed={Boolean(session && session.selected.size > 0)}
             selectedCount={selected}
+            visible={mapVisible}
           />
         </div>
       </div>

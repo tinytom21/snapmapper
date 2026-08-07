@@ -382,6 +382,25 @@ code { font-family: ui-monospace, monospace; font-size: 0.95em; }
   .photo .meta { font-size: 0.8rem; }
   .thumb { width: 76px; height: 57px; }
 
+  /* Sticky to the bottom of the scrolling pane. It must sit above the photo rows that scroll
+     under it, hence the z-index — without it the rows are painted over the button. */
+  .save-bar {
+    position: sticky;
+    bottom: 0;
+    z-index: 3;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    padding: 0.6rem;
+    border-top: 1px solid var(--line);
+    /* `--bg` (Canvas), not `--panel` — panel is translucent, and rows scrolling underneath a
+       translucent bar show through it. */
+    background: var(--bg);
+    box-shadow: 0 -4px 12px rgb(0 0 0 / 0.35);
+  }
+  .save-bar button { width: 100%; padding: 0.8rem; font-size: 1rem; }
+  .save-bar .note { text-align: left; }
+
   .row button { padding: 0.5rem 0.75rem; font-size: 0.9rem; }
   .banner { padding: 0.6rem; }
   .qr canvas { width: 220px; height: auto; }

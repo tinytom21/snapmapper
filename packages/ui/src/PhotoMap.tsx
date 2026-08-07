@@ -18,6 +18,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 import maplibregl, { type Map as MapLibreMap, type Marker, type StyleSpecification } from 'maplibre-gl';
 
+import { boundsOf, selectionFocus } from './map-focus.ts';
 import type { Coordinates } from '@geotagger/core';
 
 export interface MapPin {
@@ -42,6 +43,14 @@ export interface PhotoMapProps {
    * about to move" is the one thing you must know before tapping.
    */
   readonly selectedCount: number;
+  /**
+   * Whether the map is on screen.
+   *
+   * Load-bearing, not cosmetic. Below the breakpoint the map is hidden rather than unmounted, and
+   * `fitBounds` on a `display: none` container measures a zero-sized viewport — it would compute a
+   * nonsense zoom and apply it silently. So framing waits until the map can see itself.
+   */
+  readonly visible: boolean;
 }
 
 /**
@@ -67,7 +76,7 @@ const TILE_STYLE: StyleSpecification = {
 };
 
 export function PhotoMap({
-  pins, onPlace, onSelectPin, onMovePin, armed, selectedCount,
+  pins, onPlace, onSelectPin, onMovePin, armed, selectedCount, visible,
 }: PhotoMapProps) {
   const container = useRef<HTMLDivElement>(null);
   const map = useRef<MapLibreMap | null>(null);
@@ -159,6 +168,12 @@ export function PhotoMap({
     }
   }, [pins]);
 
+  // A hidden map never learns it was resized, so it comes back with the container size it had
+  // when it was hidden. Cheap to ask; wrong-looking if not asked.
+  useEffect(() => {
+    if (visible) map.current?.resize();
+  }, [visible]);
+
   // Frame the photos once there is something to frame, so the user is not left staring
   // at the mid-Atlantic wondering where their pins went.
   const bounds = useMemo(() => boundsOf(pins), [pins]);
@@ -166,10 +181,39 @@ export function PhotoMap({
 
   useEffect(() => {
     const instance = map.current;
-    if (!instance || !bounds || framed.current) return;
+    if (!instance || !bounds || framed.current || !visible) return;
     framed.current = true;
     instance.fitBounds(bounds, { padding: 80, maxZoom: 14, duration: 0 });
-  }, [bounds]);
+  }, [bounds, visible]);
+
+  /*
+   * Move to whatever is selected, when the selection changes.
+   *
+   * Keyed on the selected names rather than on the pins, so dragging a pin does not yank the
+   * viewport back — the selection is the same, only its position moved, and fighting the drag
+   * would be worse than doing nothing.
+   *
+   * Photos with no location contribute nothing: selecting an unplaced photo leaves the map where
+   * it is, which is right, because where it is is where you are about to place them.
+   */
+  const focus = useMemo(() => selectionFocus(pins), [pins]);
+  const focused = useRef<string | null>(null);
+
+  useEffect(() => {
+    const instance = map.current;
+    if (!instance || !focus || !visible || focused.current === focus.key) return;
+    focused.current = focus.key;
+    framed.current = true;
+
+    if (focus.single) {
+      // A degenerate box makes fitBounds jump to maximum zoom. Keep the scale the user chose,
+      // only closer if they were looking at a whole continent.
+      const [[longitude, latitude]] = focus.bounds;
+      instance.easeTo({ center: [longitude, latitude], zoom: Math.max(instance.getZoom(), 13) });
+      return;
+    }
+    instance.fitBounds(focus.bounds, { padding: 80, maxZoom: 15 });
+  }, [focus, visible]);
 
   return (
     <div className="map-wrap">
@@ -186,22 +230,4 @@ export function PhotoMap({
 function paint(element: HTMLElement, pin: MapPin): void {
   element.classList.toggle('pin-pending', pin.pending);
   element.classList.toggle('pin-selected', pin.selected);
-}
-
-function boundsOf(pins: readonly MapPin[]): [[number, number], [number, number]] | null {
-  if (pins.length === 0) return null;
-
-  let west = 180;
-  let east = -180;
-  let south = 90;
-  let north = -90;
-
-  for (const pin of pins) {
-    west = Math.min(west, pin.coordinates.longitude);
-    east = Math.max(east, pin.coordinates.longitude);
-    south = Math.min(south, pin.coordinates.latitude);
-    north = Math.max(north, pin.coordinates.latitude);
-  }
-
-  return [[west, south], [east, north]];
 }
