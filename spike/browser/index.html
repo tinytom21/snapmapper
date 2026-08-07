@@ -29,6 +29,8 @@
         .fail { color: #f87171; }
       }
       input[type='file'] { margin: 1rem 0; display: block; }
+      select { margin: 0.35rem 0 0.5rem; display: block; max-width: 100%; padding: 0.3rem; }
+      label { font-weight: 600; font-size: 0.9rem; }
     </style>
   </head>
   <body>
@@ -41,6 +43,12 @@
     </p>
 
     <p>Pick one or more real A6400 JPEGs. Nothing is uploaded; it all runs locally.</p>
+
+    <label for="mode">What to measure:</label>
+    <select id="mode">
+      <option value="splice" selected>Splice vs whole file (the live question)</option>
+      <option value="sweep">Cost shape — size sweep (already answered; for a new device)</option>
+    </select>
 
     <input type="file" id="picker" accept="image/jpeg" multiple />
 
@@ -117,6 +125,17 @@
         write('');
       }
 
+      // The same splice implementation the Node verification uses, served from
+      // spike/src by serve-browser.mjs. Two copies would make this measurement
+      // evidence about something other than the code that was verified.
+      let spliceWrite;
+      try {
+        ({ spliceWrite } = await import('/src/splice-core.mjs'));
+      } catch (error) {
+        write(`Could not load the splice implementation: ${error.message}`, 'fail');
+        throw error;
+      }
+
       let pkg;
       const importStarted = performance.now();
       try {
@@ -154,6 +173,12 @@
               'EXIF:GPSLongitude': '0.0015',
               'EXIF:GPSLongitudeRef': 'W',
             };
+
+            if (document.getElementById('mode').value === 'splice') {
+              await measureSplice(file, tags);
+              write('');
+              continue;
+            }
 
             /*
              * A size sweep rather than three writes at full size.
@@ -280,6 +305,98 @@
 
         write('Record these numbers in spike/README.md, noting the device.');
       });
+
+      /*
+       * Splice against whole-file, on the same device, in one pass.
+       *
+       * Q6 proved the splice safe in Node against a native ExifTool (184 checks) and
+       * projected ~2 s per photo on a phone from the Q3 fit. A projection is not a
+       * measurement, and this is what turns it into one.
+       *
+       * The splice is timed first, because it is the number that matters and the
+       * whole-file comparison costs over a minute of the tester's life.
+       */
+      async function measureSplice(file, tags) {
+        const original = new Uint8Array(await file.arrayBuffer());
+
+        const doWrite = async (bytes) => {
+          const result = await pkg.writeMetadata(
+            { name: file.name, data: bytes }, tags, { args: ['-n'] },
+          );
+          if (!result?.success) throw new Error(result?.error ?? 'write returned no data');
+          return new Uint8Array(result.data);
+        };
+
+        let spliced;
+        const spliceTimings = [];
+        try {
+          // Three reps: it is cheap enough to get a median rather than one sample.
+          for (let i = 0; i < 3; i++) {
+            const started = performance.now();
+            spliced = await spliceWrite(original, doWrite);
+            spliceTimings.push(performance.now() - started);
+            await new Promise((resolve) => setTimeout(resolve, 0));
+          }
+        } catch (error) {
+          write(`   splice failed: ${error.message}`, 'fail');
+          return;
+        }
+
+        const pct = (100 * spliced.stubBytes) / spliced.totalBytes;
+        write(`   stub handed to ExifTool: ${fmtBytes(spliced.stubBytes)} (${pct.toFixed(1)}% of the file)`);
+        write(`   splice: ${spliceTimings.map(fmtMs).join(', ')}`, 'pass');
+
+        spliceTimings.sort((a, b) => a - b);
+        const spliceMs = spliceTimings[1];
+
+        /*
+         * Verify on the device, not just on the desktop.
+         *
+         * A native ExifTool is not available here, so this is ExifTool-WASM checking
+         * its own output — weaker than the Node verification and no substitute for it.
+         * It does still catch the failure that matters: if the splice left maker-note
+         * offsets pointing at the wrong place, ExifTool says so, which is exactly how
+         * piexifjs was caught in Q5.
+         */
+        const warned = await pkg.parseMetadata(
+          { name: file.name, data: spliced.bytes }, { args: ['-a', '-u', '-warning', '-error'] },
+        );
+        const warnings = String(warned?.data ?? '').trim();
+        write(
+          warnings === ''
+            ? '   verify: no ExifTool warnings on the spliced file'
+            : `   verify: ${warnings.replace(/\s+/g, ' ').slice(0, 140)}`,
+          warnings === '' ? 'pass' : 'fail',
+        );
+
+        const readBack = await pkg.parseMetadata(
+          { name: file.name, data: spliced.bytes }, { args: ['-json', '-n', '-GPSLatitude', '-GPSLongitude'] },
+        );
+        const landed = /51\.4778/.test(String(readBack?.data ?? ''));
+        write(`   verify: coordinates read back${landed ? '' : ' — NOT FOUND'}`, landed ? 'pass' : 'fail');
+
+        // Now the comparison: the same write, whole file, once.
+        write('   measuring the whole-file write for comparison — this is the slow one…');
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        let wholeMs = null;
+        try {
+          const started = performance.now();
+          await doWrite(original);
+          wholeMs = performance.now() - started;
+        } catch (error) {
+          write(`   whole-file write failed: ${error.message}`, 'fail');
+        }
+
+        write('');
+        if (wholeMs !== null) {
+          write(`   whole file: ${fmtMs(wholeMs)}   spliced: ${fmtMs(spliceMs)}`
+            + `   -> ${(wholeMs / spliceMs).toFixed(1)}x faster`, 'pass');
+        }
+        write(`   20 photos spliced: ${fmtMs(spliceMs * 20)}`
+          + (wholeMs !== null ? `, whole file: ${fmtMs(wholeMs * 20)}` : ''));
+        write(`   50 photos spliced: ${fmtMs(spliceMs * 50)}`);
+      }
     </script>
   </body>
 </html>

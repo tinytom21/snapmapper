@@ -42,19 +42,11 @@ import {
   section,
 } from './support.mjs';
 import { patchZeroperl } from './patch-zeroperl.mjs';
+import { findScanStart, spliceWrite } from './splice-core.mjs';
 import { compare, nativeExifToolVersion } from './verify.mjs';
 
 const TEST_LOCATION = { latitude: 51.4778, longitude: -0.0015, altitude: 45.7 };
 const SIGNED_LOCATION = { latitude: -33.8688, longitude: -70.6693 };
-
-/**
- * Scan data kept in the stub after the SOS header.
- *
- * ExifTool needs a plausible image, not a complete one, but a stub truncated to
- * nothing at all is rejected outright as a corrupted JPEG — Q3's phone sweep hit
- * exactly that. A few KB is enough to look like a real scan.
- */
-const SCAN_STUB_BYTES = 4096;
 
 export async function spliceChecks() {
   section('Native ExifTool (the independent verifier)');
@@ -113,41 +105,22 @@ export async function spliceChecks() {
 
       const started = performance.now();
 
-      // 1. A stub carrying every metadata segment and a token amount of scan data.
-      const stub = Buffer.concat([
-        originalBytes.subarray(0, headerEnd + SCAN_STUB_BYTES),
-        Buffer.from([0xff, 0xd9]),
-      ]);
-
-      // 2. Real ExifTool does all the real work, on 1.5% of the bytes.
-      let output;
-      try {
-        output = await pkg.writeMetadata({ name, data: stub }, buildTags(location), {
-          args: ['-n'],
-        });
-      } catch (error) {
-        result(false, `${label}: writeMetadata threw — ${error.message}`);
-        allPassed = false;
-        continue;
-      }
-
-      if (!output?.success) {
-        result(false, `${label}: write failed — ${output?.error ?? 'no data'}`);
-        allPassed = false;
-        continue;
-      }
-
-      // 3. Splice: rewritten headers, then the original scan data untouched.
-      const rewritten = Buffer.from(output.data);
+      // Stub, write, splice — the shared implementation, so what is verified here is
+      // exactly what the browser measurement times on a phone.
       let taggedBytes;
       try {
-        const rewrittenHeaderEnd = findScanStart(rewritten);
-        taggedBytes = Buffer.concat([
-          rewritten.subarray(0, rewrittenHeaderEnd),
-          originalBytes.subarray(headerEnd),
-        ]);
+        const spliced = await spliceWrite(originalBytes, async (stub) => {
+          const output = await pkg.writeMetadata({ name, data: stub }, buildTags(location), {
+            args: ['-n'],
+          });
+          if (!output?.success) {
+            throw new Error(output?.error ?? 'write returned no data');
+          }
+          return new Uint8Array(output.data);
+        });
+        taggedBytes = Buffer.from(spliced.bytes);
       } catch (error) {
-        result(false, `${label}: could not parse ExifTool's output: ${error.message}`);
+        result(false, `${label}: ${error.message}`);
         allPassed = false;
         continue;
       }
@@ -200,49 +173,6 @@ export async function spliceChecks() {
   }
 
   return { failed: !allPassed };
-}
-
-/**
- * Offset of the first byte of entropy-coded scan data, i.e. just past the SOS header.
- *
- * Everything before this point is metadata and image parameters; everything after is
- * the photograph. That boundary is what makes the splice possible.
- */
-function findScanStart(bytes) {
-  if (bytes[0] !== 0xff || bytes[1] !== 0xd8) throw new Error('not a JPEG — no SOI marker');
-
-  let offset = 2;
-  while (offset < bytes.length - 1) {
-    if (bytes[offset] !== 0xff) {
-      offset += 1;
-      continue;
-    }
-
-    const marker = bytes[offset + 1];
-
-    // Padding between segments is legal and encoded as repeated 0xFF.
-    if (marker === 0xff) {
-      offset += 1;
-      continue;
-    }
-
-    // Start Of Scan: its header is followed immediately by the compressed data.
-    if (marker === 0xda) {
-      return offset + 2 + bytes.readUInt16BE(offset + 2);
-    }
-
-    // Standalone markers carry no length field.
-    if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd9)) {
-      offset += 2;
-      continue;
-    }
-
-    const length = bytes.readUInt16BE(offset + 2);
-    if (length < 2) throw new Error(`corrupt segment length ${length} at ${offset}`);
-    offset += 2 + length;
-  }
-
-  throw new Error('no Start Of Scan marker found');
 }
 
 function buildTags(location) {

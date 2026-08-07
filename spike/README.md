@@ -526,10 +526,34 @@ Cost, with the Q3 phone fit (521 ms + 13.87 s/MB) applied to ~107KB instead of 5
 dominates once the bytes are gone, so there is little left to win. On mobile the per-MB term was the
 wall, and this removes 98.5% of it.
 
+### Confirming it on a device
+
+`npm run browser --workspace spike`, then pick **"Splice vs whole file"** in the mode selector. It times
+the splice three times, verifies the result on the device, then does one whole-file write for a
+same-device ratio.
+
+The page imports the splice from `spike/src/splice-core.mjs` — **the same implementation the Node
+verification uses**, served by a `/src/` route. Two copies of the algorithm would make the phone
+measurement evidence about something other than the code that was proven safe.
+
+On-device verification is ExifTool-WASM checking its own output, which is weaker than the Node run
+against a native ExifTool and no substitute for it. It does still catch the failure that matters: if the
+splice left maker-note offsets wrong, ExifTool warns — which is exactly how Q5 caught piexifjs.
+
+Plumbing confirmed in a desktop webview (stub → write → splice → verify → compare, no warnings,
+coordinates reading back, 1.8× faster). The desktop ratio is expected to be unimpressive; the phone is
+where the 38× should show up.
+
+| Result | |
+|---|---|
+| Phone, spliced | _pending_ |
+| Phone, whole file | _pending_ |
+| Ratio | _pending_ |
+
 ### Caveats, honestly
 
 - **The phone figure is a projection, not a measurement.** It applies the Q3 fit to a smaller input. It
-  should be confirmed on the device before anything is built on it.
+  should be confirmed on the device before anything is built on it — see above.
 - **JPEG-only**, and it depends on the JPEG structure — SOI, metadata segments, SOS, scan. ARW is
   deferred and would need its own answer.
 - **It assumes ExifTool changes nothing after the SOS header.** True on all 7 fixtures, and the

@@ -83,6 +83,13 @@ function resolvePath(pathname) {
     );
   }
 
+  // The measurement page imports the splice implementation from spike/src, so the
+  // phone times exactly the code the Node run verified against a native ExifTool.
+  // Two copies of this algorithm would make the measurement meaningless.
+  if (decoded.startsWith('/src/')) {
+    return contain(path.join(REPO_ROOT, 'spike', 'src'), decoded.slice('/src/'.length));
+  }
+
   // The page imports the package straight out of node_modules.
   if (decoded.startsWith('/vendor/exiftool/')) {
     const rest = decoded.slice('/vendor/exiftool/'.length);
