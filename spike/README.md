@@ -12,15 +12,21 @@ ILCE-6400 JPEGs.**
 - **Desktop: keep ExifTool-WASM.** It is correct on real A6400 files — the only thing that could have
   ruled it out — and ~2–4.5 s per photo is acceptable at the real session size of 10–50 photos,
   provided writes are backgrounded.
-- **Android: ruled out for writes.** A phone (Android 10, Chrome 150) wrote a 5.4MB JPEG in **76 s**, at
-  **13.87 s/MB against the desktop's 0.26 s/MB** — 53× worse, while reads were only 3.5× slower. Startup
-  is not the problem (it is *faster* than desktop); the per-byte write path is. 99% of the cost is
-  bytes, so batching cannot help. ~25 min for 20 photos.
+- **Android: ruled out for whole-file writes, but recovered by splicing.** A phone (Android 10, Chrome
+  150) wrote a 5.4MB JPEG in **76 s**, at **13.87 s/MB against the desktop's 0.26 s/MB** — 53× worse,
+  while reads were only 3.5× slower. Startup is not the problem (it is *faster* than desktop); the
+  per-byte write path is, and at 99% bytes batching cannot help.
+- **Q6 removes the bytes instead.** Hand ExifTool only the ~1.5% of the file that is metadata and splice
+  its output back onto the untouched scan data. Passes all 184 checks, projecting **~2 s per photo on the
+  phone instead of 76 s**. Real ExifTool still does every byte of the metadata work, so Q1's correctness
+  carries over intact.
+- **Q5 closes the escape hatch.** `piexifjs` writes in 6 ms and corrupts the file — 47 tags lost and
+  ExifTool reporting incorrect maker-note offsets. Do not use it.
 
-**Consequence for the plan:** the reason for choosing WebAssembly was to run one real ExifTool on both
-desktop and Android. That premise no longer holds, so the two platforms need separate decisions. Desktop
-is in good shape either way. Android needs a different write path, and that is now the open question —
-ahead of, and partly independent of, the shell choice.
+**Consequence for the plan:** WebAssembly was chosen to run one real ExifTool on both desktop and
+Android. That premise survives, but only with the splice — a whole-file write is desktop-only. The
+remaining Android unknown is a measurement, not a design question: confirm the ~2 s projection on a
+device.
 
 ## Before anything ran: three upstream defects
 
@@ -451,6 +457,86 @@ precisely the operation that corrupts offset-relative MakerNotes, and it is why 
 banned in this project (KDE #326408). Being small and fast does not make it safe, and **it must clear
 the same byte-level MakerNotes check before it can be treated as a fallback.** On present evidence
 the fallback is less trustworthy than the thing it would replace, not more.
+
+## Q5 — is `piexifjs` a safe Android write path? **No.**
+
+`npm run piexif --workspace spike`. The plan named piexifjs as the escape hatch. It is spectacularly
+fast and it corrupts the file.
+
+| | piexifjs | ExifTool-WASM |
+|---|---|---|
+| Write time (6.6MB, desktop) | **6–9 ms** | ~2 s |
+| MakerNote tags identical | **116 changed, 40 missing** | all identical |
+| Tags dropped | **47**, incl. `OffsetTime*` and `FocalPlaneAFPoint*` | none |
+| MakerNotes byte drift | **63.47%** | 0.11% |
+| ExifTool's own verdict | **`Possibly incorrect maker notes offsets (fix by -53?)`** | no warnings |
+| XMP written | no | yes |
+
+Coordinates, refs, image data, `DateTimeOriginal` and `Orientation` all survive, and the preview and
+thumbnail still resolve — which is exactly what makes this dangerous. A casual check passes. It is the
+exiv2 failure mode precisely: re-serialising EXIF from a parsed dictionary without knowing which bytes
+are offsets, so the maker-note internals end up pointing 53 bytes wrong. ExifTool says so out loud.
+
+Losing `OffsetTime` is worth calling out on its own: that is the camera's UTC offset, the very thing
+this application exists to reason about.
+
+**Do not use piexifjs.** Being 300× faster than the right answer is not a trade to make with somebody's
+photographs.
+
+(This run also exposed a flaw in the harness: the byte-drift check reported *any* amount of drift as
+"expected, these are the rewritten offsets", which described a 63% rewrite as normal. It is now graded —
+under 2% is consistent with offset fixups, more than that is a re-serialisation and fails.)
+
+## Q6 — write with real ExifTool, but hand it 1.5% of the bytes. **This works.**
+
+`npm run splice --workspace spike`. **184 checks across 7 files × 2 locations, zero failures.**
+
+The cost measured in Q3 is avoidable rather than inherent. Writing GPS rewrites the metadata segments at
+the front of a JPEG; the remaining megabytes of entropy-coded scan data only need copying verbatim. On
+these A6400 files the headers are ~101KB of a ~6.5MB file — **1.5%**. ExifTool was being made to shovel
+the other 98.5% through the WASI shim for nothing.
+
+So: give ExifTool a stub of just the headers plus a few KB of scan data, let it do all the EXIF and
+MakerNote work exactly as it does now, then splice its rewritten headers onto the original scan data
+with a plain byte copy.
+
+**The assumption was tested, not assumed.** Writing the same GPS to a 1.6% stub and to the full file
+produced **byte-identical APP1 segments** — so maker-note offsets are relative to the TIFF header inside
+the segment, not to the file, and the metadata rewrite genuinely does not depend on what follows it.
+
+Results are indistinguishable from Q1's, because it is the same ExifTool doing the same rewrite:
+
+| Check | Result |
+|---|---|
+| Every MakerNote tag decodes to the same value | PASS (all 185 identical) |
+| MakerNotes byte drift | PASS — **41 of 37,664 (0.11%)**, the same +12 offset fixups |
+| `PreviewImage` / `ThumbnailImage` resolve byte-identically | PASS |
+| No new ExifTool warnings | PASS |
+| Coordinates, refs, XMP, image data, `DateTimeOriginal`, `Orientation`, no tags dropped | PASS |
+
+Cost, with the Q3 phone fit (521 ms + 13.87 s/MB) applied to ~107KB instead of 5.4MB:
+
+| | Whole file | Spliced | |
+|---|---|---|---|
+| Phone, per photo | 76.4 s | **~2.0 s** | 38× |
+| Phone, 20 photos | ~25 min | **~40 s** | |
+| Desktop, per photo | ~2 s | ~1.8 s | marginal |
+
+**The desktop gain is negligible; the mobile gain is the whole ballgame.** On desktop the fixed cost
+dominates once the bytes are gone, so there is little left to win. On mobile the per-MB term was the
+wall, and this removes 98.5% of it.
+
+### Caveats, honestly
+
+- **The phone figure is a projection, not a measurement.** It applies the Q3 fit to a smaller input. It
+  should be confirmed on the device before anything is built on it.
+- **JPEG-only**, and it depends on the JPEG structure — SOI, metadata segments, SOS, scan. ARW is
+  deferred and would need its own answer.
+- **It assumes ExifTool changes nothing after the SOS header.** True on all 7 fixtures, and the
+  verification would catch a violation, but production code should assert it rather than trust it —
+  compare the scan data before and after and refuse to write if it moved.
+- Correctness rests entirely on ExifTool still doing the metadata work. The moment anything hand-rolls
+  the EXIF serialisation, Q5's result applies.
 
 ## If ExifTool-WASM does not work out
 

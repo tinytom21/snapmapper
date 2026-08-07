@@ -26,6 +26,23 @@ ExifTool-WASM.**
 Be aware that the plan's stated criterion — "`Sony:MakerNotes` byte-identical" — is **wrong**, and it
 failed on every Sony file on the first run. See the note in CLAUDE.md before you trust a failure there.
 
+## The write path Phase 1 should build
+
+**Do not hand the whole file to ExifTool.** Give it a stub of the metadata headers (SOI up to and
+including the SOS header, plus ~4KB of scan data and an EOI), let it write GPS exactly as it does now,
+then splice its rewritten headers onto the original scan data with a plain byte copy. Reference
+implementation: `spike/src/splice-write.mjs`.
+
+That is 1.5% of the bytes on an A6400 JPEG, and it is the difference between ~2 s and ~76 s per photo on
+a phone. Real ExifTool still performs every byte of the metadata rewrite, so the correctness Q1 proved
+carries over — verified: 184 checks, zero failures, the same 0.11% offset-only MakerNotes drift.
+
+Assert the invariant in production rather than trusting it: compare the scan data before and after and
+refuse the write if it moved.
+
+**And never re-serialise EXIF yourself.** Q5 measured `piexifjs` doing exactly that: 6 ms, 47 tags lost,
+and ExifTool reporting incorrect maker-note offsets.
+
 ## What is left before Phase 1
 
 Only the shell decision, and it needs hardware:

@@ -210,23 +210,35 @@ export async function makerNotesIntegrity(originalPath, taggedPath) {
       : `new: ${truncate(taggedWarnings)}`,
   });
 
-  // Informational: quantify the byte drift so a *large* change still stands out.
+  // Quantify the byte drift. A correct writer touches only the offset fields — Q1
+  // measured 41 bytes of 37,664, or 0.11% — so a small drift is expected and a large
+  // one is a rewrite. Calling any drift "expected" would have described piexifjs
+  // mangling 63% of the block as normal, which is why this is now graded.
   const identical = originalBlock.hash === taggedBlock.hash;
   let drift = 'identical';
+  let driftAcceptable = true;
+
   if (!identical) {
     if (originalBlock.bytes.length !== taggedBlock.bytes.length) {
-      drift = `LENGTH CHANGED: ${originalBlock.bytes.length} -> ${taggedBlock.bytes.length} B`;
+      drift = `LENGTH CHANGED: ${originalBlock.bytes.length} -> ${taggedBlock.bytes.length} B`
+        + ' — the block was rebuilt, not adjusted';
+      driftAcceptable = false;
     } else {
       let differing = 0;
       for (let i = 0; i < originalBlock.bytes.length; i++) {
         if (originalBlock.bytes[i] !== taggedBlock.bytes[i]) differing++;
       }
       const percent = (100 * differing) / originalBlock.bytes.length;
+      // 2% is generous: offset fixups are a handful of 2- and 4-byte fields.
+      driftAcceptable = percent < 2;
       drift = `${differing} of ${originalBlock.bytes.length} bytes (${percent.toFixed(2)}%)`
-        + ' — expected, these are the rewritten offsets';
+        + (driftAcceptable
+          ? ' — consistent with offset fixups only'
+          : ' — far too much for offset fixups; the block was re-serialised');
     }
   }
-  checks.push({ name: 'Raw MakerNotes byte drift (informational)', pass: true, detail: drift });
+
+  checks.push({ name: 'MakerNotes byte drift is offset-sized', pass: driftAcceptable, detail: drift });
 
   return checks;
 }

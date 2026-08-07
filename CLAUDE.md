@@ -21,11 +21,17 @@ reasoning are in `spike/README.md`.
   **76 s**: **13.87 s/MB against the desktop's 0.26 s/MB**, 53× worse, while reads were only 3.5× slower.
   Startup is *faster* than desktop, so the fault is entirely in the per-byte write path — the unbuffered
   WASI filesystem shim. 99% of the cost is bytes, so batching cannot help. ~25 min for 20 photos.
-- **This undercuts the reason WebAssembly was chosen.** Running one real ExifTool on both desktop and
-  Android was the whole justification; a desktop can just use a native binary. Desktop and Android now
-  need separate decisions.
-- **The Android write path is the open question**, ahead of the shell choice. The shell still also needs
-  the SAF-to-removable-card test on real hardware.
+- **Q6 recovers Android by not sending ExifTool the photograph.** Metadata is only ~1.5% of an A6400
+  JPEG. Give ExifTool a stub of the headers, let it do all the EXIF and MakerNote work unchanged, then
+  splice its output onto the original scan data with a byte copy. **184 checks, zero failures** — results
+  identical to Q1, including the same 0.11% offset-only MakerNotes drift. Projects to **~2 s per photo on
+  the phone instead of 76 s**. Verified that the rewritten APP1 is byte-identical whether ExifTool sees
+  1.6% of the file or all of it, so the metadata rewrite does not depend on the body.
+- **Q5: never use `piexifjs`.** It writes in 6 ms and corrupts the file — 116 MakerNote tags changed, 47
+  tags dropped including `OffsetTime`, and ExifTool reporting `Possibly incorrect maker notes offsets`.
+  The exiv2 failure mode exactly. A casual check passes, which is what makes it dangerous.
+- **Remaining Android unknown is a measurement, not a design question:** confirm the ~2 s splice
+  projection on a device. The shell still needs the SAF-to-removable-card test on real hardware.
 
 `packages/ui` and `packages/shells` do not exist yet.
 

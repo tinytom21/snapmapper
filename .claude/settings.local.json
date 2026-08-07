@@ -17,7 +17,12 @@
       "Bash(curl -s -o /dev/null -w \"server: HTTP %{http_code}\\\\n\" http://localhost:8080/)",
       "Bash(netstat -ano)",
       "Bash(powershell -NoProfile -Command 'Get-CimInstance Win32_Process -Filter \"Name='\\\\''node.exe'\\\\''\" | Select-Object ProcessId, @{n='\\\\''Started'\\\\'';e={$_.CreationDate}}, @{n='\\\\''Cmd'\\\\'';e={$_.CommandLine.Substring\\(0,[Math]::Min\\(70,$_.CommandLine.Length\\)\\)}} | Format-Table -AutoSize')",
-      "Bash(taskkill //PID 22060 //F)"
+      "Bash(taskkill //PID 22060 //F)",
+      "Bash(npm install *)",
+      "Bash(node -e \"const p=require\\('./node_modules/piexifjs/package.json'\\); console.log\\(p.version, p.license, p.main\\)\")",
+      "Bash(node -e \"const x=require\\('piexifjs'\\); console.log\\(Object.keys\\(x\\).join\\(', '\\)\\)\")",
+      "Bash(EXIFTOOL=\"C:/Users/tinyt/AppData/Local/Programs/ExifTool/ExifTool.exe\" npm run piexif --workspace spike)",
+      "Bash(node -e ' *)"
     ]
   }
 }

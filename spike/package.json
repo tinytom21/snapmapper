@@ -10,9 +10,12 @@
     "write": "node src/write-gps.mjs",
     "bench": "node src/benchmark.mjs",
     "cost": "node src/cost-shape.mjs",
+    "piexif": "node src/piexif-write.mjs",
+    "splice": "node src/splice-write.mjs",
     "browser": "node src/serve-browser.mjs"
   },
   "dependencies": {
-    "@uswriting/exiftool": "latest"
+    "@uswriting/exiftool": "latest",
+    "piexifjs": "^1.0.6"
   }
 }
