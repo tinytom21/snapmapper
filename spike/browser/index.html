@@ -173,8 +173,18 @@
              * is the same method cost-shape.mjs uses on the desktop, so the two are
              * directly comparable.
              */
-            const sizes = [65536, 524288, 2097152, file.size]
-              .filter((size, index, all) => size <= file.size && all.indexOf(size) === index);
+            /*
+             * Fractions of the file, not absolute sizes.
+             *
+             * A fixed 64KB slice was tried first and ExifTool rejected it outright —
+             * "Corrupted JPEG image". A real 24MP camera file carries enough header,
+             * Huffman tables and embedded preview that cutting it that short leaves
+             * nothing coherent, where the synthetic fixture used on the desktop
+             * tolerated it. Proportional slices stay valid on any real photo.
+             */
+            const sizes = [0.1, 0.3, 0.6, 1]
+              .map((fraction) => Math.round(file.size * fraction))
+              .filter((size, index, all) => size > 0 && all.indexOf(size) === index);
 
             const points = [];
             for (const size of sizes) {
@@ -212,7 +222,11 @@
              */
             let driftNote = null;
             if (points.length >= 2) {
-              const firstSize = sizes[0];
+              // The smallest size that actually *succeeded*, not sizes[0]. On the
+              // first phone run the smallest slice failed as a corrupted JPEG, so a
+              // recheck of sizes[0] failed too and the drift line silently never
+              // appeared — losing the one diagnostic that guards the conclusion.
+              const firstSize = Math.round(points[0].mb * 1048576);
               const slice = new File([file.slice(0, firstSize)], file.name, { type: file.type });
               const started = performance.now();
               const result = await pkg.writeMetadata(slice, tags, { args: ['-n'] });

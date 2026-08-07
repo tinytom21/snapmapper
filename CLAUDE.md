@@ -17,13 +17,15 @@ reasoning are in `spike/README.md`.
 - **Q3 on desktop:** ~2 s per 5–7MB JPEG, ~4.5 s per 12MB one. Acceptable at the real session size
   (10–50 photos) if writes are backgrounded; painful for a whole card. The cost is in the dependency's
   unbuffered WASI filesystem shim, not in ExifTool, and batching cannot recover it.
-- **Q3 on mobile is the open problem.** A phone wrote a 5.4MB JPEG in **60–75 s** (desktop webview:
-  ~1.5 s), while reads were only 3.5× slower — so it is not just a slower CPU. ~23 min for 20 photos is
-  unusable. **This undercuts the reason WebAssembly was chosen**, since running the same ExifTool on
-  Android was the whole justification; a desktop could just use a native binary. Provisional on one
-  device, pending the cost-shape sweep in `spike/browser/index.html`.
-- **The shell is still undecided** and is the remaining Phase 0 work. It needs the tablet and the card
-  — and now also an answer on whether ExifTool-WASM can write on Android at all.
+- **Q3 on mobile rules Android out for writes.** A phone (Android 10, Chrome 150) wrote a 5.4MB JPEG in
+  **76 s**: **13.87 s/MB against the desktop's 0.26 s/MB**, 53× worse, while reads were only 3.5× slower.
+  Startup is *faster* than desktop, so the fault is entirely in the per-byte write path — the unbuffered
+  WASI filesystem shim. 99% of the cost is bytes, so batching cannot help. ~25 min for 20 photos.
+- **This undercuts the reason WebAssembly was chosen.** Running one real ExifTool on both desktop and
+  Android was the whole justification; a desktop can just use a native binary. Desktop and Android now
+  need separate decisions.
+- **The Android write path is the open question**, ahead of the shell choice. The shell still also needs
+  the SAF-to-removable-card test on real hardware.
 
 `packages/ui` and `packages/shells` do not exist yet.
 
