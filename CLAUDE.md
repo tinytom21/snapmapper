@@ -41,7 +41,9 @@ http://localhost:5173/ (see HANDOFF.md; `localhost` is required for a secure con
   `exiftool` (the write path), `exiftool-wasm`, `session` (staged edits + undo), `storage`.
   **122 tests, `tsc` clean.**
 - `packages/ui` is React 19 + MapLibre 5 on Vite 7, with a `FileStore` over the File System
-  Access API. **15 tests** covering save orchestration and partial failure.
+  Access API. **20 tests** covering save orchestration, partial failure and QR scan scaling.
+  Thumbnails come from the camera's own embedded ~6KB JPEG, shift-click selects a range, and
+  a thumbnail can be dragged onto the map.
 - `packages/shells` does not exist. Deliberately: the shell decision is still open, and the
   browser gives a faster loop for the desktop MVP. Only `browser-file-store.ts` is throwaway.
 
@@ -55,6 +57,17 @@ http://localhost:5173/ (see HANDOFF.md; `localhost` is required for a secure con
   `EXIF:ExifIFD:DateTimeOriginal`, so no date ever resolves — and it hides behind
   `Composite:*`, which keeps working. Pinned by a regression test.
 - **The browser cannot preserve file mtime.** Surfaced in the UI as `MTIME_LIMITATION`.
+
+### Camera-clock sync stores the measurement, not the offset
+
+`clock-sync.ts` holds the camera's reading plus the true instant, and `setTimeZone` re-derives
+`offsetSeconds` from it. An offset is only valid for the zone it was derived in, so keeping
+just the number would leave every GPS timestamp wrong by the zone gap *and* by a stale offset
+the moment somebody corrected the zone. `setOffsetSeconds` drops the measurement on purpose.
+
+The true instant comes from a QR code the app displays and the user photographs. QR because
+its error correction means a misread cannot silently yield a plausible wrong time — it either
+decodes exactly or not at all.
 
 ### Do not use byte-identity as the MakerNotes test
 

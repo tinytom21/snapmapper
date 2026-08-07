@@ -15,6 +15,7 @@ import {
   entryFromTags,
   failedEntry,
   readTags,
+  readThumbnail,
   type FileStore,
   type MetadataBackend,
   type PhotoEntry,
@@ -40,13 +41,28 @@ const WANTED = [
   'Composite:GPSAltitude',
 ];
 
+/**
+ * A photo's entry plus the bytes of its embedded thumbnail.
+ *
+ * Bytes rather than object URLs deliberately: creating a URL needs `URL.createObjectURL`,
+ * which does not exist in Node, and a loader that reaches for browser globals cannot be
+ * tested. Turning these into URLs — and revoking them — belongs to the component that
+ * displays them.
+ */
+export interface LoadedPhotos {
+  readonly entries: PhotoEntry[];
+  /** JPEG bytes by photo name. ~6KB each on an A6400. */
+  readonly thumbnails: Map<string, Uint8Array>;
+}
+
 export async function loadPhotos(
   refs: readonly PhotoRef[],
   store: FileStore,
   backend: MetadataBackend,
   onProgress?: (progress: LoadProgress) => void,
-): Promise<PhotoEntry[]> {
+): Promise<LoadedPhotos> {
   const entries: PhotoEntry[] = [];
+  const thumbnails = new Map<string, Uint8Array>();
 
   for (const [index, ref] of refs.entries()) {
     onProgress?.({ done: index, total: refs.length, current: ref.name });
@@ -59,6 +75,12 @@ export async function loadPhotos(
       const stub = headerOnly(bytes);
       const tags = await readTags(backend, stub, ref.name, WANTED);
       entries.push(entryFromTags(ref, tags));
+
+      // The camera already embedded a ~6KB JPEG of itself, so a thumbnail costs a small
+      // extra ExifTool call rather than decoding a 24MP image. A missing thumbnail is
+      // cosmetic, so it never fails the load.
+      const thumbnail = await readThumbnail(backend, stub, ref.name);
+      if (thumbnail && thumbnail.byteLength > 0) thumbnails.set(ref.name, thumbnail);
     } catch (error) {
       // A photo that cannot be read still belongs in the list, marked unusable, so the
       // user can see it rather than wonder why it vanished.
@@ -70,7 +92,28 @@ export async function loadPhotos(
   }
 
   onProgress?.({ done: refs.length, total: refs.length, current: '' });
-  return entries;
+  return { entries, thumbnails };
+}
+
+/**
+ * Turn thumbnail bytes into displayable object URLs.
+ *
+ * Separated from loading so the loader stays free of browser globals. The result must be
+ * passed to `revokeThumbnailUrls` when it is replaced, or the blobs leak for the lifetime
+ * of the page.
+ */
+export function toThumbnailUrls(thumbnails: Map<string, Uint8Array>): Map<string, string> {
+  const urls = new Map<string, string>();
+  for (const [name, bytes] of thumbnails) {
+    urls.set(name, URL.createObjectURL(new Blob([bytes as BlobPart], { type: 'image/jpeg' })));
+  }
+  return urls;
+}
+
+/** Release object URLs. They leak until revoked. */
+export function revokeThumbnailUrls(urls: Map<string, string>): void {
+  for (const url of urls.values()) URL.revokeObjectURL(url);
+  urls.clear();
 }
 
 /**

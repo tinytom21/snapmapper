@@ -39,6 +39,31 @@ over a plain LAN address reads work while every write fails.
   real regression against GeoSetter and the reason a native shell still matters. The UI
   says so rather than hiding it.
 
+### Setting the camera clock from a photograph
+
+**Sync from a photo** shows a QR code carrying the current instant, refreshed every 250 ms.
+Photograph the screen with the camera, copy that frame into the folder, press **Re-scan
+folder**, select it, and press **Read clock from photo**. The instant is decoded out of the
+image and compared against the frame's own `DateTimeOriginal`.
+
+A QR rather than a readable clock face for one reason: it carries its own error correction,
+so it either decodes to exactly what was displayed or fails. **A misread cannot silently
+produce a plausible wrong time** — which matters, because the result shifts the GPS
+timestamp of every photo in the session.
+
+Two things this design gets right that are easy to get wrong:
+
+- **The measurement is stored, not just the resulting seconds.** A derived offset is only
+  valid for the zone it was derived in, so changing the zone afterwards **re-derives** it.
+  Storing only "43 s fast" would leave every timestamp wrong by the zone gap *and* by a
+  stale offset. Typing an offset in by hand deliberately discards the measurement, so the
+  next zone change cannot silently throw the typed value away.
+- **It describes the camera as it is now.** If the camera's clock has been changed since the
+  shoot, the measurement does not apply to those photos. The panel says so.
+
+There is also a **manual** path — type a time you can read from some other clock in a
+photograph — which is the only option for a shoot already finished.
+
 There is a runtime smoke check for the parts unit tests cannot reach — that the 24MB WASM
 loads, that the origin is a secure context, and that a real write completes. Run it from
 the browser console:

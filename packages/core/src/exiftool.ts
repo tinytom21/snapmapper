@@ -257,3 +257,93 @@ export async function readTags(
   delete values.SourceFile;
   return values;
 }
+
+/**
+ * ExifTool's marker for a binary value inside JSON output, under `-b`.
+ *
+ * Binary through a text channel needs an encoding, and this is the one ExifTool picks.
+ * Verified against 13.59: `"EXIF:ThumbnailImage": "base64:/9j/2wCEAAI…"`.
+ */
+const BASE64_PREFIX = 'base64:';
+
+/**
+ * The embedded thumbnail, for a photo list.
+ *
+ * A camera JPEG already contains a small JPEG of itself — about 6KB on an A6400, against
+ * ~400KB for the larger preview — so a list of hundreds of thumbnails costs nothing to
+ * decode. Far cheaper than decoding a 24MP image per row, and it comes out of the header
+ * bytes already in hand.
+ *
+ * Returns `undefined` when there is no thumbnail rather than throwing: a missing
+ * thumbnail is a cosmetic absence, not a failure worth interrupting a folder load.
+ */
+export async function readThumbnail(
+  backend: MetadataBackend,
+  bytes: Uint8Array,
+  name: string,
+  tag = 'ThumbnailImage',
+): Promise<Uint8Array | undefined> {
+  let result: BackendResult<string>;
+  try {
+    result = await backend.read({
+      bytes,
+      name,
+      args: ['-json', '-b', '-G', '-fast2', `-${tag}`],
+    });
+  } catch {
+    return undefined;
+  }
+
+  if (!result.data) return undefined;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(result.data);
+  } catch {
+    return undefined;
+  }
+
+  if (!Array.isArray(parsed) || typeof parsed[0] !== 'object' || parsed[0] === null) {
+    return undefined;
+  }
+
+  for (const [key, value] of Object.entries(parsed[0] as Record<string, unknown>)) {
+    if (key === 'SourceFile' || typeof value !== 'string') continue;
+    if (!value.startsWith(BASE64_PREFIX)) continue;
+    return decodeBase64(value.slice(BASE64_PREFIX.length));
+  }
+
+  return undefined;
+}
+
+/**
+ * Base64 to bytes, without assuming `atob` or `Buffer`.
+ *
+ * `core` runs in Node and in a webview, and neither global is available in both. A table
+ * decode is a few lines and avoids making this file platform-aware.
+ */
+export function decodeBase64(text: string): Uint8Array {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+
+  const clean = text.replace(/[^A-Za-z0-9+/]/g, '');
+  const out = new Uint8Array(Math.floor((clean.length * 3) / 4));
+
+  let outIndex = 0;
+  let accumulator = 0;
+  let bits = 0;
+
+  for (const character of clean) {
+    const value = alphabet.indexOf(character);
+    if (value < 0) continue;
+
+    accumulator = (accumulator << 6) | value;
+    bits += 6;
+
+    if (bits >= 8) {
+      bits -= 8;
+      out[outIndex++] = (accumulator >> bits) & 0xff;
+    }
+  }
+
+  return outIndex === out.length ? out : out.subarray(0, outIndex);
+}

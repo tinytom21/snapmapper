@@ -148,3 +148,75 @@ input.invalid { border-color: var(--danger); }
 }
 .pin-pending { background: var(--pending); }
 .pin-selected { width: 22px; height: 22px; z-index: 2; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 45%, transparent); }
+
+/* --- Thumbnails and rows ------------------------------------------------- */
+
+.photo {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  user-select: none;
+}
+.photo:hover { background: color-mix(in srgb, CanvasText 5%, transparent); }
+.photo .details { min-width: 0; flex: 1; }
+.photo .name {
+  font-family: ui-monospace, monospace;
+  font-size: 0.85rem;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.photo .meta { padding-left: 0; }
+
+.thumb {
+  width: 56px;
+  height: 42px;
+  object-fit: cover;
+  border-radius: 4px;
+  background: color-mix(in srgb, CanvasText 10%, transparent);
+  flex: none;
+}
+.thumb.placeholder { display: inline-block; }
+
+/* The map says so when it will accept a dropped photo. */
+.map.drag-over { outline: 3px solid var(--accent); outline-offset: -3px; }
+
+/* --- Clock sync --------------------------------------------------------- */
+
+.sync {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.6rem;
+  margin: 0.5rem 0;
+  background: var(--panel);
+}
+.steps { margin: 0 0 0.6rem; padding-left: 1.2rem; font-size: 0.82rem; opacity: 0.85; }
+.steps li { margin: 0.15rem 0; }
+
+/* White padding round the code matters: a QR needs a quiet zone to be found at all. */
+.qr {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.3rem;
+}
+.qr canvas {
+  background: #fff;
+  padding: 8px;
+  border-radius: 6px;
+  max-width: 100%;
+  height: auto;
+  image-rendering: pixelated;
+}
+
+.manual { margin-top: 0.6rem; font-size: 0.85rem; }
+.manual summary { cursor: pointer; opacity: 0.8; }
+
+.banner.inline {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  margin: 0.4rem 0;
+  padding: 0.5rem 0.6rem;
+}

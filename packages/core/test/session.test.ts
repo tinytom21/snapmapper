@@ -18,7 +18,9 @@ import {
   redo,
   revert,
   select,
-  setClock,
+  selectRange,
+  setOffsetSeconds,
+  setTimeZone,
   toggleSelected,
   undo,
   type PhotoEntry,
@@ -228,12 +230,15 @@ describe('undo and redo', () => {
   });
 
   it('undoes a clock change, which silently moves every GPS timestamp', () => {
-    const session = setClock(createSession([entry('a.jpg')], CLOCK), {
-      timeZone: 'America/New_York',
-      offsetSeconds: 45,
-    });
+    const session = setTimeZone(createSession([entry('a.jpg')], CLOCK), 'America/New_York');
     assert.equal(session.clock.timeZone, 'America/New_York');
     assert.equal(undo(session).clock.timeZone, 'Europe/London');
+  });
+
+  it('undoes a manual offset change', () => {
+    const session = setOffsetSeconds(createSession([entry('a.jpg')], CLOCK), 45);
+    assert.equal(session.clock.offsetSeconds, 45);
+    assert.equal(undo(session).clock.offsetSeconds, 0);
   });
 });
 
@@ -249,6 +254,36 @@ describe('selection', () => {
     assert.equal(session.selected.has('a.jpg'), true);
     session = toggleSelected(session, 'a.jpg');
     assert.equal(session.selected.has('a.jpg'), false);
+  });
+
+  it('selects an inclusive range in list order', () => {
+    const session = selectRange(
+      createSession([entry('a.jpg'), entry('b.jpg'), entry('c.jpg'), entry('d.jpg')], CLOCK),
+      'b.jpg', 'd.jpg',
+    );
+    assert.deepEqual([...session.selected].sort(), ['b.jpg', 'c.jpg', 'd.jpg']);
+  });
+
+  it('selects a range dragged upwards just the same', () => {
+    const session = selectRange(
+      createSession([entry('a.jpg'), entry('b.jpg'), entry('c.jpg')], CLOCK), 'c.jpg', 'a.jpg',
+    );
+    assert.deepEqual([...session.selected].sort(), ['a.jpg', 'b.jpg', 'c.jpg']);
+  });
+
+  it('replaces the selection by default and extends it on request', () => {
+    let session = select(createSession([entry('a.jpg'), entry('b.jpg'), entry('c.jpg')], CLOCK), ['a.jpg']);
+
+    assert.deepEqual([...selectRange(session, 'b.jpg', 'c.jpg').selected].sort(), ['b.jpg', 'c.jpg']);
+    assert.deepEqual(
+      [...selectRange(session, 'b.jpg', 'c.jpg', true).selected].sort(),
+      ['a.jpg', 'b.jpg', 'c.jpg'],
+    );
+  });
+
+  it('ignores a range naming a photo that is not present', () => {
+    const session = createSession([entry('a.jpg')], CLOCK);
+    assert.equal(selectRange(session, 'a.jpg', 'ghost.jpg'), session);
   });
 
   it('is not undoable — only edits are', () => {

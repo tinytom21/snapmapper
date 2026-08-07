@@ -12,6 +12,7 @@
  * the photo *bytes* never live here.
  */
 
+import { clockFromSync, type ClockSync } from './clock-sync.ts';
 import { assertValidCoordinates, type Coordinates } from './gps.ts';
 import { parseExifDateTime, photoInstant, type CameraClock, type NaiveDateTime } from './time.ts';
 import type { PhotoRef } from './storage.ts';
@@ -39,6 +40,14 @@ export interface Session {
   readonly edits: ReadonlyMap<string, Coordinates | null>;
   readonly selected: ReadonlySet<string>;
   readonly clock: CameraClock;
+  /**
+   * The measurement `clock.offsetSeconds` came from, when there was one.
+   *
+   * Held so that changing the time zone re-derives the offset instead of leaving a
+   * number that was only ever valid for the old zone. `undefined` means the offset was
+   * entered by hand.
+   */
+  readonly sync: ClockSync | undefined;
   /** Past states, most recent last. Bounded — see UNDO_LIMIT. */
   readonly history: readonly SessionSnapshot[];
   readonly future: readonly SessionSnapshot[];
@@ -48,6 +57,7 @@ export interface Session {
 interface SessionSnapshot {
   readonly edits: ReadonlyMap<string, Coordinates | null>;
   readonly clock: CameraClock;
+  readonly sync: ClockSync | undefined;
 }
 
 /**
@@ -62,6 +72,7 @@ export function createSession(photos: readonly PhotoEntry[], clock: CameraClock)
     edits: new Map(),
     selected: new Set(),
     clock,
+    sync: undefined,
     history: [],
     future: [],
   };
@@ -120,6 +131,33 @@ export function toggleSelected(session: Session, name: string): Session {
 }
 
 /**
+ * Select an inclusive range in list order, as shift-click does everywhere else.
+ *
+ * `add` keeps the existing selection, matching the convention that shift extends and
+ * ctrl-shift accumulates. Order of the two names does not matter — dragging a selection
+ * upwards is as normal as downwards.
+ */
+export function selectRange(
+  session: Session,
+  fromName: string,
+  toName: string,
+  add = false,
+): Session {
+  const names = session.photos.map((entry) => entry.ref.name);
+  const from = names.indexOf(fromName);
+  const to = names.indexOf(toName);
+  if (from < 0 || to < 0) return session;
+
+  const selected = new Set(add ? session.selected : []);
+  for (let index = Math.min(from, to); index <= Math.max(from, to); index++) {
+    const name = names[index];
+    if (name !== undefined) selected.add(name);
+  }
+
+  return { ...session, selected };
+}
+
+/**
  * Stage coordinates for the given photos.
  *
  * Validates before staging, so an out-of-range value cannot sit in a session waiting to
@@ -143,7 +181,7 @@ export function assignLocation(
   const edits = new Map(session.edits);
   for (const name of writable) edits.set(name, coordinates);
 
-  return commit(session, { edits, clock: session.clock });
+  return commit(session, { edits, clock: session.clock, sync: session.sync });
 }
 
 /** Stage removal of a photo's location. */
@@ -160,7 +198,7 @@ export function clearLocation(session: Session, names: readonly string[]): Sessi
     changed = true;
   }
 
-  return changed ? commit(session, { edits, clock: session.clock }) : session;
+  return changed ? commit(session, { edits, clock: session.clock, sync: session.sync }) : session;
 }
 
 /** Drop staged changes for the given photos, reverting them to what is on disk. */
@@ -170,17 +208,55 @@ export function revert(session: Session, names: readonly string[]): Session {
   for (const name of names) {
     if (edits.delete(name)) changed = true;
   }
-  return changed ? commit(session, { edits, clock: session.clock }) : session;
+  return changed ? commit(session, { edits, clock: session.clock, sync: session.sync }) : session;
 }
 
 /**
- * Change the camera-clock correction.
+ * Change the time zone, re-deriving the offset from the sync reference if there is one.
  *
- * Undoable, because it silently changes the GPS timestamp of every photo in the
- * session and is easy to get wrong by an hour.
+ * This is the whole reason the reference is kept. An offset is only valid for the zone it
+ * was measured in, so a zone change without re-derivation would leave every GPS timestamp
+ * quietly wrong — by the zone difference *and* by the stale offset.
  */
-export function setClock(session: Session, clock: CameraClock): Session {
-  return commit(session, { edits: session.edits, clock });
+export function setTimeZone(session: Session, timeZone: string): Session {
+  const clock = session.sync
+    ? clockFromSync(session.sync, timeZone)
+    : { ...session.clock, timeZone };
+
+  return commit(session, { edits: session.edits, clock, sync: session.sync });
+}
+
+/**
+ * Set the drift by hand, discarding any measurement.
+ *
+ * The reference is dropped deliberately: keeping it would mean the next zone change threw
+ * the typed-in value away without saying so.
+ */
+export function setOffsetSeconds(session: Session, offsetSeconds: number): Session {
+  return commit(session, {
+    edits: session.edits,
+    clock: { ...session.clock, offsetSeconds },
+    sync: undefined,
+  });
+}
+
+/**
+ * Adopt a measured clock sync.
+ *
+ * Undoable, because it silently moves the GPS timestamp of every photo in the session.
+ */
+export function applySync(session: Session, sync: ClockSync): Session {
+  return commit(session, {
+    edits: session.edits,
+    clock: clockFromSync(sync, session.clock.timeZone),
+    sync,
+  });
+}
+
+/** Discard a measurement, leaving the offset where it was but no longer derived. */
+export function clearSync(session: Session): Session {
+  if (!session.sync) return session;
+  return commit(session, { edits: session.edits, clock: session.clock, sync: undefined });
 }
 
 /**
@@ -223,8 +299,9 @@ export function undo(session: Session): Session {
     ...session,
     edits: previous.edits,
     clock: previous.clock,
+    sync: previous.sync,
     history: session.history.slice(0, -1),
-    future: [...session.future, { edits: session.edits, clock: session.clock }],
+    future: [...session.future, { edits: session.edits, clock: session.clock, sync: session.sync }],
   };
 }
 
@@ -236,7 +313,8 @@ export function redo(session: Session): Session {
     ...session,
     edits: next.edits,
     clock: next.clock,
-    history: [...session.history, { edits: session.edits, clock: session.clock }],
+    sync: next.sync,
+    history: [...session.history, { edits: session.edits, clock: session.clock, sync: session.sync }],
     future: session.future.slice(0, -1),
   };
 }
@@ -248,12 +326,16 @@ export function redo(session: Session): Session {
  * reachable any more.
  */
 function commit(session: Session, next: SessionSnapshot): Session {
-  const history = [...session.history, { edits: session.edits, clock: session.clock }];
+  const history = [
+    ...session.history,
+    { edits: session.edits, clock: session.clock, sync: session.sync },
+  ];
 
   return {
     ...session,
     edits: next.edits,
     clock: next.clock,
+    sync: next.sync,
     history: history.length > UNDO_LIMIT ? history.slice(-UNDO_LIMIT) : history,
     future: [],
   };

@@ -1,17 +1,19 @@
 /**
  * The desktop MVP.
  *
- * Open a folder, see the photos, click the map to place the selected ones, save.
- * Everything of substance is in `@geotagger/core`; this wires it to a screen.
+ * Open a folder, see the photos, place them on the map, save. Everything of substance is
+ * in `@geotagger/core`; this wires it to a screen.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
+  applySync,
   assignLocation,
   canRedo,
   canUndo,
   clearLocation,
+  clearSync,
   createSession,
   createWasmBackend,
   hasPendingChanges,
@@ -23,17 +25,22 @@ import {
   redo,
   revert,
   select,
-  setClock,
+  selectRange,
+  setOffsetSeconds,
+  setTimeZone,
   toggleSelected,
   undo,
   type CameraClock,
+  type ClockSync,
   type Coordinates,
   type MetadataBackend,
   type PhotoEntry,
   type Session,
 } from '@geotagger/core';
 
-import { PhotoMap, type MapPin } from './PhotoMap.tsx';
+import { ClockPanel } from './ClockPanel.tsx';
+import { DRAG_MIME, PhotoMap, type MapPin } from './PhotoMap.tsx';
+import { scanForSyncCode } from './clock-sync-qr.ts';
 import {
   MTIME_LIMITATION,
   createBrowserFileStore,
@@ -41,7 +48,12 @@ import {
   pickFolder,
   type BrowserFolder,
 } from './browser-file-store.ts';
-import { loadPhotos, type LoadProgress } from './load-photos.ts';
+import {
+  loadPhotos,
+  revokeThumbnailUrls,
+  toThumbnailUrls,
+  type LoadProgress,
+} from './load-photos.ts';
 import { saveSession, type SaveOutcome, type SaveProgress } from './save.ts';
 
 const store = createBrowserFileStore();
@@ -55,6 +67,7 @@ function defaultClock(): CameraClock {
 export function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [folder, setFolder] = useState<BrowserFolder | null>(null);
+  const [thumbnails, setThumbnails] = useState<Map<string, string>>(new Map());
   const [loading, setLoading] = useState<LoadProgress | null>(null);
   const [saving, setSaving] = useState<SaveProgress | null>(null);
   const [outcomes, setOutcomes] = useState<SaveOutcome[] | null>(null);
@@ -63,8 +76,8 @@ export function App() {
   /**
    * The WASM backend, loaded once and lazily.
    *
-   * 24MB of WebAssembly, so it is not fetched until a folder is opened — there is no
-   * point paying for it on a screen that only has a button.
+   * 24MB of WebAssembly, so it is not fetched until a folder is opened — no point paying
+   * for it on a screen that only has a button.
    */
   const backend = useRef<MetadataBackend | null>(null);
   const getBackend = useCallback(async (): Promise<MetadataBackend> => {
@@ -77,6 +90,24 @@ export function App() {
     return created;
   }, []);
 
+  /** Read a folder, replacing whatever was loaded. Shared by open and re-scan. */
+  const scanFolder = useCallback(async (target: BrowserFolder, keepClock?: CameraClock) => {
+    const refs = await store.listFolder(target);
+    if (refs.length === 0) {
+      setError(`No JPEGs in “${target.displayName}”.`);
+      return;
+    }
+
+    setLoading({ done: 0, total: refs.length, current: '' });
+    const loaded = await loadPhotos(refs, store, await getBackend(), setLoading);
+
+    setThumbnails((previous) => {
+      revokeThumbnailUrls(previous);
+      return toThumbnailUrls(loaded.thumbnails);
+    });
+    setSession(createSession(loaded.entries, keepClock ?? defaultClock()));
+  }, [getBackend]);
+
   const openFolder = useCallback(async () => {
     setError(null);
     setOutcomes(null);
@@ -87,22 +118,43 @@ export function App() {
 
       setFolder(picked);
       setSession(null);
-
-      const refs = await store.listFolder(picked);
-      if (refs.length === 0) {
-        setError(`No JPEGs in “${picked.displayName}”.`);
-        return;
-      }
-
-      setLoading({ done: 0, total: refs.length, current: '' });
-      const entries = await loadPhotos(refs, store, await getBackend(), setLoading);
-      setSession(createSession(entries, defaultClock()));
+      await scanFolder(picked);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setLoading(null);
     }
-  }, [getBackend]);
+  }, [scanFolder]);
+
+  /**
+   * Re-read the folder, keeping the clock settings.
+   *
+   * Needed by the sync flow: the reference photo is shot *after* the folder was opened, so
+   * it has to be picked up without losing the zone or a measurement already made. Staged
+   * edits are lost, so this warns first when there are any.
+   */
+  const rescanFolder = useCallback(async () => {
+    if (!folder) return;
+
+    if (session && hasPendingChanges(session)) {
+      const count = pendingPhotos(session).length;
+      const proceed = window.confirm(
+        `Re-scanning reloads the folder and discards ${count} unsaved change`
+        + `${count === 1 ? '' : 's'}. Continue?`,
+      );
+      if (!proceed) return;
+    }
+
+    setError(null);
+    setOutcomes(null);
+    try {
+      await scanFolder(folder, session?.clock);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setLoading(null);
+    }
+  }, [folder, session, scanFolder]);
 
   const save = useCallback(async () => {
     if (!session) return;
@@ -123,10 +175,49 @@ export function App() {
     }
   }, [session, getBackend]);
 
+  /**
+   * Read the clock code out of a reference photograph.
+   *
+   * Returns a message on failure rather than throwing, so the panel can explain what to
+   * try differently. A failure here changes nothing: better no measurement than a wrong one.
+   */
+  const scanReference = useCallback(async (name: string): Promise<string | null> => {
+    const current = session;
+    if (!current) return 'No folder is open.';
+
+    const entry = current.photos.find((photo) => photo.ref.name === name);
+    if (!entry) return 'That photo is no longer in the list.';
+    if (!entry.takenAt) {
+      return `${name} has no readable date, so it cannot anchor a measurement.`;
+    }
+
+    try {
+      const bytes = await store.read(entry.ref);
+      const found = await scanForSyncCode(bytes);
+      if (found.kind !== 'found') return found.message;
+
+      setSession((latest) => (latest
+        ? applySync(latest, {
+          cameraReading: entry.takenAt as NonNullable<PhotoEntry['takenAt']>,
+          trueInstant: found.trueInstant,
+          sourcePhoto: name,
+          method: 'qr',
+        })
+        : latest));
+      return null;
+    } catch (cause) {
+      return cause instanceof Error ? cause.message : String(cause);
+    }
+  }, [session]);
+
   // Undo/redo on the keyboard, because this is a desktop app and people expect it.
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
+      const target = event.target;
+      // Never steal Ctrl+Z from a text field.
+      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return;
       if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'z') return;
+
       event.preventDefault();
       setSession((current) => {
         if (!current) return current;
@@ -147,6 +238,9 @@ export function App() {
     return () => window.removeEventListener('beforeunload', onBeforeUnload);
   }, [session]);
 
+  // Object URLs outlive the component unless revoked.
+  useEffect(() => () => revokeThumbnailUrls(thumbnails), [thumbnails]);
+
   const pins = useMemo<MapPin[]>(() => {
     if (!session) return [];
     return session.photos.flatMap((entry) => {
@@ -165,6 +259,20 @@ export function App() {
     setSession((current) => {
       if (!current || current.selected.size === 0) return current;
       return assignLocation(current, [...current.selected], coordinates);
+    });
+  }, []);
+
+  /**
+   * A dropped thumbnail places the photo that was dragged.
+   *
+   * If it was part of the selection, the whole selection moves with it — dragging one of
+   * five selected photos onto a spot obviously means all five.
+   */
+  const dropPhoto = useCallback((name: string, coordinates: Coordinates) => {
+    setSession((current) => {
+      if (!current) return current;
+      const names = current.selected.has(name) ? [...current.selected] : [name];
+      return assignLocation(current, names, coordinates);
     });
   }, []);
 
@@ -188,16 +296,22 @@ export function App() {
     );
   }
 
+  const busy = loading !== null || saving !== null;
   const pending = session ? pendingPhotos(session).length : 0;
 
   return (
     <div className="app">
       <header>
         <h1>photo-geotagger</h1>
-        <button type="button" onClick={openFolder} disabled={loading !== null || saving !== null}>
+        <button type="button" onClick={openFolder} disabled={busy}>
           {folder ? 'Open another folder…' : 'Open folder…'}
         </button>
-        {folder && <span className="folder">{folder.displayName}</span>}
+        {folder && (
+          <>
+            <span className="folder">{folder.displayName}</span>
+            <button type="button" onClick={rescanFolder} disabled={busy}>Re-scan folder</button>
+          </>
+        )}
 
         <div className="spacer" />
 
@@ -206,7 +320,7 @@ export function App() {
             <button
               type="button"
               onClick={() => setSession(undo(session))}
-              disabled={!canUndo(session) || saving !== null}
+              disabled={!canUndo(session) || busy}
               title="Ctrl+Z"
             >
               Undo
@@ -214,7 +328,7 @@ export function App() {
             <button
               type="button"
               onClick={() => setSession(redo(session))}
-              disabled={!canRedo(session) || saving !== null}
+              disabled={!canRedo(session) || busy}
               title="Ctrl+Shift+Z"
             >
               Redo
@@ -254,13 +368,21 @@ export function App() {
             ? (
               <>
                 <ClockPanel
-                  clock={session.clock}
-                  onChange={(clock) => setSession(setClock(session, clock))}
+                  session={session}
+                  busy={busy}
+                  onTimeZone={(zone) => setSession(setTimeZone(session, zone))}
+                  onOffsetSeconds={(seconds) => setSession(setOffsetSeconds(session, seconds))}
+                  onSync={(sync: ClockSync) => setSession(applySync(session, sync))}
+                  onClearSync={() => setSession(clearSync(session))}
+                  onScanReference={scanReference}
                 />
                 <PhotoList
                   session={session}
+                  thumbnails={thumbnails}
                   onToggle={(name) => setSession(toggleSelected(session, name))}
                   onSelectOnly={selectOnly}
+                  onSelectRange={(from, to, add) =>
+                    setSession(selectRange(session, from, to, add))}
                   onSelectAll={() =>
                     setSession(select(session, session.photos.map((entry) => entry.ref.name)))}
                   onSelectNone={() => setSession(select(session, []))}
@@ -282,6 +404,7 @@ export function App() {
           onPlace={place}
           onSelectPin={selectOnly}
           onMovePin={movePin}
+          onDropPhoto={dropPhoto}
           armed={Boolean(session && session.selected.size > 0)}
         />
       </div>
@@ -289,71 +412,31 @@ export function App() {
   );
 }
 
-function ClockPanel({
-  clock,
-  onChange,
-}: {
-  clock: CameraClock;
-  onChange: (clock: CameraClock) => void;
-}) {
-  const [zoneText, setZoneText] = useState(clock.timeZone);
-  const zoneValid = isValidTimeZone(zoneText);
-
-  return (
-    <section className="panel">
-      <h2>Camera clock</h2>
-      <p className="note">
-        Used for GPS timestamps, which are written in UTC. Getting the zone wrong shifts
-        them by hours.
-      </p>
-
-      <label>
-        Time zone
-        <input
-          value={zoneText}
-          onChange={(event) => {
-            setZoneText(event.target.value);
-            if (isValidTimeZone(event.target.value)) {
-              onChange({ ...clock, timeZone: event.target.value });
-            }
-          }}
-          className={zoneValid ? '' : 'invalid'}
-          spellCheck={false}
-        />
-      </label>
-      {!zoneValid && <p className="note error">Not an IANA zone, e.g. Europe/London.</p>}
-
-      <label>
-        Clock runs fast by (seconds)
-        <input
-          type="number"
-          value={clock.offsetSeconds}
-          onChange={(event) =>
-            onChange({ ...clock, offsetSeconds: Number(event.target.value) || 0 })}
-        />
-      </label>
-    </section>
-  );
-}
-
 function PhotoList({
   session,
+  thumbnails,
   onToggle,
   onSelectOnly,
+  onSelectRange,
   onSelectAll,
   onSelectNone,
   onClear,
   onRevert,
 }: {
   session: Session;
+  thumbnails: Map<string, string>;
   onToggle: (name: string) => void;
   onSelectOnly: (name: string) => void;
+  onSelectRange: (from: string, to: string, add: boolean) => void;
   onSelectAll: () => void;
   onSelectNone: () => void;
   onClear: () => void;
   onRevert: () => void;
 }) {
   const selectedCount = session.selected.size;
+
+  /** Where the last plain click landed, so shift-click has something to extend from. */
+  const anchor = useRef<string | null>(null);
 
   return (
     <section className="panel grow">
@@ -372,8 +455,8 @@ function PhotoList({
 
       <p className="note">
         {selectedCount === 0
-          ? 'Select photos, then click the map to place them.'
-          : `${selectedCount} selected — click the map to place ${selectedCount === 1 ? 'it' : 'them'}.`}
+          ? 'Click a photo, then click the map. Shift-click for a range; drag a thumbnail onto the map.'
+          : `${selectedCount} selected — click the map, or drag one onto it.`}
       </p>
 
       <ul className="photos">
@@ -382,8 +465,17 @@ function PhotoList({
             key={entry.ref.name}
             entry={entry}
             session={session}
+            thumbnail={thumbnails.get(entry.ref.name)}
             onToggle={onToggle}
-            onSelectOnly={onSelectOnly}
+            onClick={(event) => {
+              if (event.shiftKey && anchor.current) {
+                onSelectRange(anchor.current, entry.ref.name, event.ctrlKey || event.metaKey);
+                return;
+              }
+              anchor.current = entry.ref.name;
+              if (event.ctrlKey || event.metaKey) onToggle(entry.ref.name);
+              else onSelectOnly(entry.ref.name);
+            }}
           />
         ))}
       </ul>
@@ -394,41 +486,62 @@ function PhotoList({
 function PhotoRow({
   entry,
   session,
+  thumbnail,
   onToggle,
-  onSelectOnly,
+  onClick,
 }: {
   entry: PhotoEntry;
   session: Session;
+  thumbnail: string | undefined;
   onToggle: (name: string) => void;
-  onSelectOnly: (name: string) => void;
+  onClick: (event: React.MouseEvent) => void;
 }) {
   const location = locationOf(session, entry.ref.name);
   const selected = session.selected.has(entry.ref.name);
   const instant = instantOf(session, entry);
+  const broken = entry.error !== undefined;
 
   return (
-    <li className={`photo${selected ? ' selected' : ''}${entry.error ? ' broken' : ''}`}>
-      <label>
-        <input
-          type="checkbox"
-          checked={selected}
-          onChange={() => onToggle(entry.ref.name)}
-          disabled={entry.error !== undefined}
-        />
-        <button type="button" className="name" onClick={() => onSelectOnly(entry.ref.name)}>
-          {entry.ref.name}
-        </button>
-      </label>
+    <li
+      className={`photo${selected ? ' selected' : ''}${broken ? ' broken' : ''}`}
+      // Dragging a whole row rather than just the image: a bigger target, and the row is
+      // what the user thinks of as "the photo".
+      draggable={!broken}
+      onDragStart={(event) => {
+        event.dataTransfer.setData(DRAG_MIME, entry.ref.name);
+        event.dataTransfer.effectAllowed = 'copy';
+      }}
+      onClick={onClick}
+    >
+      <input
+        type="checkbox"
+        checked={selected}
+        onChange={() => onToggle(entry.ref.name)}
+        onClick={(event) => event.stopPropagation()}
+        disabled={broken}
+        aria-label={`Select ${entry.ref.name}`}
+      />
 
-      <div className="meta">
-        {entry.error
-          ? <span className="error">unreadable — {entry.error}</span>
-          : (
-            <>
-              <span>{instant ? instant.toISOString().replace('T', ' ').slice(0, 19) + 'Z' : 'no date'}</span>
-              <LocationLabel location={location} />
-            </>
-          )}
+      {thumbnail
+        ? <img className="thumb" src={thumbnail} alt="" draggable={false} loading="lazy" />
+        : <span className="thumb placeholder" aria-hidden="true" />}
+
+      <div className="details">
+        <span className="name">{entry.ref.name}</span>
+        <div className="meta">
+          {broken
+            ? <span className="error">unreadable — {entry.error}</span>
+            : (
+              <>
+                <span>
+                  {instant
+                    ? `${instant.toISOString().replace('T', ' ').slice(0, 19)}Z`
+                    : 'no date'}
+                </span>
+                <LocationLabel location={location} />
+              </>
+            )}
+        </div>
       </div>
     </li>
   );
@@ -436,7 +549,9 @@ function PhotoRow({
 
 function LocationLabel({ location }: { location: ReturnType<typeof locationOf> }) {
   if (location.kind === 'none') return <span className="dim">no location</span>;
-  if (location.kind === 'pending-clear') return <span className="pendingText">location will be removed</span>;
+  if (location.kind === 'pending-clear') {
+    return <span className="pendingText">location will be removed</span>;
+  }
 
   const { latitude, longitude } = location.coordinates;
   const text = `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
@@ -458,9 +573,7 @@ function Outcomes({
 
   return (
     <div className={`banner ${failed.length > 0 ? 'error' : 'ok'}`}>
-      <strong>
-        Saved {outcomes.length - failed.length} of {outcomes.length}
-      </strong>
+      <strong>Saved {outcomes.length - failed.length} of {outcomes.length}</strong>
       {failed.length > 0 && (
         <ul>
           {failed.map((outcome) => (

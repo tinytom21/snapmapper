@@ -4,7 +4,9 @@ import { describe, it } from 'node:test';
 import {
   MetadataWriteError,
   classify,
+  decodeBase64,
   readTags,
+  readThumbnail,
   writeMetadataSpliced,
   type BackendInput,
   type MetadataBackend,
@@ -216,5 +218,73 @@ describe('readTags', () => {
       () => readTags(fakeBackend({ readData: '[]' }), buildJpeg(), 'x.jpg'),
       MetadataWriteError,
     );
+  });
+});
+
+describe('decodeBase64', () => {
+  it('decodes the standard test vectors', () => {
+    const text = (bytes: Uint8Array) => String.fromCharCode(...bytes);
+    assert.equal(text(decodeBase64('')), '');
+    assert.equal(text(decodeBase64('Zg==')), 'f');
+    assert.equal(text(decodeBase64('Zm8=')), 'fo');
+    assert.equal(text(decodeBase64('Zm9v')), 'foo');
+    assert.equal(text(decodeBase64('Zm9vYg==')), 'foob');
+    assert.equal(text(decodeBase64('Zm9vYmE=')), 'fooba');
+    assert.equal(text(decodeBase64('Zm9vYmFy')), 'foobar');
+  });
+
+  it('round-trips every byte value', () => {
+    // A JPEG thumbnail is arbitrary binary, so no byte may be mangled.
+    const original = Uint8Array.from({ length: 256 }, (_, i) => i);
+    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+    let encoded = '';
+    for (let i = 0; i < original.length; i += 3) {
+      const a = original[i] ?? 0;
+      const b = original[i + 1] ?? 0;
+      const c = original[i + 2] ?? 0;
+      encoded += alphabet[a >> 2];
+      encoded += alphabet[((a & 3) << 4) | (b >> 4)];
+      encoded += i + 1 < original.length ? alphabet[((b & 15) << 2) | (c >> 6)] : '=';
+      encoded += i + 2 < original.length ? alphabet[c & 63] : '=';
+    }
+    assert.deepEqual(decodeBase64(encoded), original);
+  });
+
+  it('ignores whitespace and newlines a decoder may introduce', () => {
+    assert.deepEqual(decodeBase64('Zm9v\n YmFy'), decodeBase64('Zm9vYmFy'));
+  });
+
+  it('recovers a real JPEG SOI marker from ExifTool-shaped output', () => {
+    // The first bytes of every embedded thumbnail. If the decode is off by a bit, this is
+    // where it shows.
+    const decoded = decodeBase64('/9j/2wCEAAI');
+    assert.equal(decoded[0], 0xff);
+    assert.equal(decoded[1], 0xd8);
+    assert.equal(decoded[2], 0xff);
+  });
+});
+
+describe('readThumbnail', () => {
+  it('decodes a base64 thumbnail out of ExifTool JSON', async () => {
+    const backend = fakeBackend({
+      readData: '[{"SourceFile":"x","EXIF:ThumbnailImage":"base64:Zm9vYmFy"}]',
+    });
+    const thumbnail = await readThumbnail(backend, buildJpeg(), 'x.jpg');
+    assert.equal(String.fromCharCode(...(thumbnail ?? [])), 'foobar');
+  });
+
+  it('returns undefined when there is no thumbnail, rather than failing a folder load', async () => {
+    const backend = fakeBackend({ readData: '[{"SourceFile":"x"}]' });
+    assert.equal(await readThumbnail(backend, buildJpeg(), 'x.jpg'), undefined);
+  });
+
+  it('ignores a non-binary value that happens to be present', async () => {
+    const backend = fakeBackend({ readData: '[{"SourceFile":"x","EXIF:Make":"SONY"}]' });
+    assert.equal(await readThumbnail(backend, buildJpeg(), 'x.jpg'), undefined);
+  });
+
+  it('survives output that is not JSON at all', async () => {
+    const backend = fakeBackend({ readData: 'File not found' });
+    assert.equal(await readThumbnail(backend, buildJpeg(), 'x.jpg'), undefined);
   });
 });

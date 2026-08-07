@@ -25,10 +25,14 @@
 import {
   buildGeotagTags,
   createWasmBackend,
+  encodeSyncPayload,
   metadataFraction,
   readTags,
   writeMetadataSpliced,
 } from '@geotagger/core';
+import QRCode from 'qrcode';
+
+import { scanForSyncCode } from './clock-sync-qr.ts';
 
 export interface SelfCheckResult {
   readonly ok: boolean;
@@ -109,11 +113,99 @@ export async function runSelfCheck(): Promise<SelfCheckResult> {
     add('GPS written via splice', false, message(error));
   }
 
+  /*
+   * The clock-sync round trip, without a camera.
+   *
+   * Renders the code, composites it into a scene the way a photograph of a monitor would
+   * look — small, off-centre, on a dim background, then JPEG-compressed — and reads it
+   * back. It cannot prove a real camera will manage it, but it does prove the encoder,
+   * the decoder and the payload format agree on this device, which is what breaks
+   * silently when a dependency's module format shifts under a bundler.
+   */
+  for (const scene of [
+    { name: 'code fills the frame', width: 420, height: 320, scale: 0.9, quality: 0.92 },
+    { name: 'code small in frame', width: 1600, height: 1200, scale: 0.25, quality: 0.9 },
+    { name: 'code heavily compressed', width: 800, height: 600, scale: 0.7, quality: 0.4 },
+  ]) {
+    try {
+      const instant = new Date('2026-08-07T02:34:56.000Z');
+      const photo = await fakePhotoOfCode(instant, scene);
+      const found = await scanForSyncCode(photo);
+
+      const exact = found.kind === 'found' && found.trueInstant.getTime() === instant.getTime();
+      add(
+        `Clock code survives: ${scene.name}`,
+        exact,
+        found.kind === 'found'
+          ? `read back ${found.trueInstant.toISOString()}`
+          : found.message,
+      );
+    } catch (error) {
+      add(`Clock code survives: ${scene.name}`, false, message(error));
+    }
+  }
+
+  // And a photograph with no code must say so rather than invent a time.
+  try {
+    const blank = await jpegFromCanvas(paintCanvas(400, 300, '#456789'), 0.9);
+    const found = await scanForSyncCode(blank);
+    add(
+      'A photo with no code reports no code',
+      found.kind === 'no-code',
+      found.kind === 'found' ? 'INVENTED A TIME — that must never happen' : found.kind,
+    );
+  } catch (error) {
+    add('A photo with no code reports no code', false, message(error));
+  }
+
   return {
     ok: checks.every((check) => check.ok),
     secureContext: window.isSecureContext,
     checks,
   };
+}
+
+/** A rendered clock code, composited to resemble a photograph of a screen. */
+async function fakePhotoOfCode(
+  instant: Date,
+  scene: { width: number; height: number; scale: number; quality: number },
+): Promise<Uint8Array> {
+  const code = document.createElement('canvas');
+  await QRCode.toCanvas(code, encodeSyncPayload(instant), {
+    width: 260,
+    margin: 2,
+    errorCorrectionLevel: 'H',
+  });
+
+  // A dim room, so the bright screen is the only high-contrast thing in frame.
+  const canvas = paintCanvas(scene.width, scene.height, '#2a2a30');
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('no 2d canvas context');
+
+  const size = Math.min(scene.width, scene.height) * scene.scale;
+  context.drawImage(code, (scene.width - size) / 2, (scene.height - size) / 2, size, size);
+
+  return jpegFromCanvas(canvas, scene.quality);
+}
+
+function paintCanvas(width: number, height: number, fill: string): HTMLCanvasElement {
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+
+  const context = canvas.getContext('2d');
+  if (context) {
+    context.fillStyle = fill;
+    context.fillRect(0, 0, width, height);
+  }
+  return canvas;
+}
+
+async function jpegFromCanvas(canvas: HTMLCanvasElement, quality: number): Promise<Uint8Array> {
+  const blob = await new Promise<Blob | null>((resolve) =>
+    canvas.toBlob(resolve, 'image/jpeg', quality));
+  if (!blob) throw new Error('canvas produced no JPEG');
+  return new Uint8Array(await blob.arrayBuffer());
 }
 
 /** A JPEG with photographic entropy, so it compresses like a real one. */

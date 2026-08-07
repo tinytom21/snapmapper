@@ -18,6 +18,7 @@ import {
 
 import { saveSession } from '../src/save.ts';
 import { loadPhotos } from '../src/load-photos.ts';
+import { scanWidthsFor } from '../src/clock-sync-qr.ts';
 
 /**
  * These modules are deliberately DOM-free so they can be tested here rather than only
@@ -227,7 +228,7 @@ describe('saveSession', () => {
 describe('loadPhotos', () => {
   it('reads every photo into an entry', async () => {
     const { store } = fakeStore();
-    const entries = await loadPhotos([ref('a.jpg'), ref('b.jpg')], store, fakeBackend());
+    const { entries } = await loadPhotos([ref('a.jpg'), ref('b.jpg')], store, fakeBackend());
 
     assert.equal(entries.length, 2);
     assert.equal(entries[0]?.takenAt?.year, 2024);
@@ -237,7 +238,7 @@ describe('loadPhotos', () => {
   it('keeps an unreadable photo in the list rather than dropping it', async () => {
     // Silently losing a file the user can see in Explorer is worse than showing it broken.
     const { store } = fakeStore({ failReadsFor: ['b.jpg'] });
-    const entries = await loadPhotos([ref('a.jpg'), ref('b.jpg')], store, fakeBackend());
+    const { entries } = await loadPhotos([ref('a.jpg'), ref('b.jpg')], store, fakeBackend());
 
     assert.equal(entries.length, 2);
     assert.equal(entries[1]?.error !== undefined, true);
@@ -256,12 +257,12 @@ describe('loadPhotos', () => {
 
   it('handles an empty folder without complaint', async () => {
     const { store } = fakeStore();
-    assert.deepEqual(await loadPhotos([], store, fakeBackend()), []);
+    assert.deepEqual((await loadPhotos([], store, fakeBackend())).entries, []);
   });
 
   it('does not stage a write for a photo that failed to load', async () => {
     const { store } = fakeStore({ failReadsFor: ['a.jpg'] });
-    const entries = await loadPhotos([ref('a.jpg')], store, fakeBackend());
+    const { entries } = await loadPhotos([ref('a.jpg')], store, fakeBackend());
     const session = assignLocation(createSession(entries, CLOCK), ['a.jpg'], GREENWICH);
 
     const { outcomes } = await saveSession(session, store, fakeBackend());
@@ -274,5 +275,41 @@ describe('failedEntry', () => {
     const built = failedEntry(ref('a.jpg'), 'unreadable');
     assert.equal(built.error, 'unreadable');
     assert.equal(built.existing, undefined);
+  });
+});
+
+describe('scanWidthsFor', () => {
+  it('always attempts something, however small the image', () => {
+    // Regression guard. An earlier version filtered out every preferred width larger than
+    // the image, so a small photo got zero attempts and reported "no code found" for an
+    // image containing a perfectly readable code.
+    for (const width of [64, 200, 420, 640, 1000, 1600, 4000, 6000]) {
+      assert.ok(scanWidthsFor(width).length > 0, `no attempts for a ${width}px image`);
+    }
+  });
+
+  it('never upscales past the original', () => {
+    for (const width of [100, 420, 900, 6000]) {
+      for (const attempt of scanWidthsFor(width)) {
+        assert.ok(attempt <= width, `${attempt} exceeds the ${width}px image`);
+      }
+    }
+  });
+
+  it('tries a small image at its native size', () => {
+    assert.deepEqual(scanWidthsFor(420), [420]);
+  });
+
+  it('does not pay for a full-resolution pass on a 24MP photo', () => {
+    const widths = scanWidthsFor(6000);
+    assert.ok(!widths.includes(6000));
+    assert.deepEqual(widths, [1600, 1000, 640]);
+  });
+
+  it('returns no duplicates, so no width is decoded twice', () => {
+    for (const width of [640, 1000, 1600, 1999]) {
+      const widths = scanWidthsFor(width);
+      assert.equal(new Set(widths).size, widths.length, `duplicates for ${width}`);
+    }
   });
 });
