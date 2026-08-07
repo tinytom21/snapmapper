@@ -10,6 +10,7 @@
  *
  *     (await import('/src/dev-preview.tsx')).previewPhotoList()
  *     (await import('/src/dev-preview.tsx')).previewFullSize()
+ *     (await import('/src/dev-preview.tsx')).previewActionMenu()
  *
  * Sample photos only — nothing here touches the filesystem, and no real photograph is involved.
  */
@@ -26,8 +27,10 @@ import {
   type Session,
 } from '@snapmapper/core';
 
+import { ActionMenu } from './ActionMenu.tsx';
 import { PhotoPreview } from './PhotoPreview.tsx';
 import { Sidebar } from './Sidebar.tsx';
+import type { ThumbSize } from './thumb-size.ts';
 
 const FOLDER = { id: 'preview', displayName: 'Selected photos' };
 
@@ -80,7 +83,10 @@ let root: Root | undefined;
  * actual layout and media queries. The earlier version rendered only the list, which is exactly
  * why a bug where the collapsed sections drew over the list's buttons survived being "measured".
  */
-export function previewPhotoList(session: Session = sampleSession()): void {
+export function previewPhotoList(
+  session: Session = sampleSession(),
+  size: ThumbSize['key'] = 'medium',
+): void {
   const aside = document.querySelector('aside');
   if (!aside) throw new Error('no sidebar to mount into — open the app first');
 
@@ -95,7 +101,7 @@ export function previewPhotoList(session: Session = sampleSession()): void {
   root.render(
     <Sidebar
       session={session}
-      thumbnails={new Map()}
+      thumbnails={sampleThumbnails(session)}
       narrow={window.matchMedia('(max-width: 900px)').matches}
       busy={false}
       addPhotosLabel="Add photos…"
@@ -107,6 +113,8 @@ export function previewPhotoList(session: Session = sampleSession()): void {
       onClear={() => {}}
       onRevert={() => {}}
       onPreview={() => {}}
+      thumbSize={size}
+      onThumbSize={(next) => previewPhotoList(session, next)}
       onTimeZone={() => {}}
       onOffsetSeconds={() => {}}
       onSync={() => {}}
@@ -180,4 +188,76 @@ async function fakePhotograph(): Promise<Uint8Array> {
     canvas.toBlob(resolve, 'image/jpeg', 0.85));
   if (!blob) throw new Error('canvas produced no JPEG');
   return new Uint8Array(await blob.arrayBuffer());
+}
+
+/**
+ * Thumbnails shaped like the camera's own.
+ *
+ * The A6400 embeds a **160x120** JPEG: a 3:2 frame letterboxed into 4:3, with black bars above and
+ * below. Those bars were being displayed for months, because the row's box was 4:3 too. The
+ * samples are built the same way so the crop that hides them is being tested against the real
+ * shape rather than a convenient one.
+ */
+function sampleThumbnails(session: Session): Map<string, string> {
+  const urls = new Map<string, string>();
+
+  for (const [index, entry] of session.photos.entries()) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 160;
+    canvas.height = 120;
+
+    const context = canvas.getContext('2d');
+    if (!context) break;
+
+    // The letterbox.
+    context.fillStyle = '#000';
+    context.fillRect(0, 0, 160, 120);
+
+    // The picture: 160x107, centred, so 6.5px of bar top and bottom.
+    const hue = (index * 47) % 360;
+    context.fillStyle = `hsl(${hue} 55% 45%)`;
+    context.fillRect(0, 7, 160, 106);
+    context.fillStyle = '#fff';
+    context.font = 'bold 34px system-ui, sans-serif';
+    context.textAlign = 'center';
+    context.fillText(String(index + 1), 80, 72);
+
+    urls.set(entry.ref.name, canvas.toDataURL('image/jpeg', 0.8));
+  }
+
+  return urls;
+}
+
+let menuRoot: Root | undefined;
+
+/**
+ * Mount the header's overflow menu, which is otherwise only reachable with photos open.
+ *
+ * The header's actions appear only once a session exists, and a session needs the OS file picker,
+ * so without this the menu could not be looked at on a phone-width screen at all — which is the
+ * only width it exists for.
+ */
+export function previewActionMenu(): void {
+  const actions = document.querySelector('header .actions') ?? document.querySelector('header');
+  if (!actions) throw new Error('no header to mount into — open the app first');
+
+  const host = document.createElement('div');
+  host.style.cssText = 'margin-left:auto';
+  actions.append(host);
+
+  menuRoot?.unmount();
+  menuRoot = createRoot(host);
+
+  function render(open: boolean) {
+    menuRoot?.render(
+      <ActionMenu open={open} onOpen={() => render(true)} onClose={() => render(false)}>
+        <div className="menu-label">DCIM/100MSDCF</div>
+        <button type="button">Add photos…</button>
+        <button type="button">Select different photos…</button>
+        <button type="button">Open a whole folder…</button>
+      </ActionMenu>,
+    );
+  }
+
+  render(false);
 }

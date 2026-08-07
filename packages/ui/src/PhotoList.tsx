@@ -8,6 +8,7 @@
 
 import { useRef } from 'react';
 
+import { THUMB_SIZES, thumbWidth, type ThumbSize } from './thumb-size.ts';
 import {
   instantOf,
   locationOf,
@@ -26,11 +27,15 @@ export function PhotoList({
   onClear,
   onRevert,
   onPreview,
+  thumbSize,
+  onThumbSize,
 }: {
   session: Session;
   thumbnails: Map<string, string>;
   onToggle: (name: string) => void;
   onPreview: (name: string) => void;
+  thumbSize: ThumbSize['key'];
+  onThumbSize: (key: ThumbSize['key']) => void;
   onSelectOnly: (name: string) => void;
   onSelectRange: (from: string, to: string, add: boolean) => void;
   onSelectAll: () => void;
@@ -49,6 +54,29 @@ export function PhotoList({
         Photos <span className="count">{session.photos.length}</span>
       </h2>
 
+      {/*
+        Thumbnail size, as a segmented control rather than a menu item: it is a thing you fiddle
+        with until the list looks right, so the options need to be visible while you look.
+
+        XL is 160px because that is the width of the JPEG the camera embedded — beyond it there is
+        no more detail to show, only upscaling. Bigger than that is what tapping a thumbnail is for.
+      */}
+      <div className="row thumb-sizes">
+        <span className="note">Thumbnails</span>
+        {THUMB_SIZES.map((size) => (
+          <button
+            key={size.key}
+            type="button"
+            className={size.key === thumbSize ? 'chosen' : ''}
+            aria-pressed={size.key === thumbSize}
+            title={`${size.width}px`}
+            onClick={() => onThumbSize(size.key)}
+          >
+            {size.label}
+          </button>
+        ))}
+      </div>
+
       <div className="row">
         <button type="button" onClick={onSelectAll}>All</button>
         <button type="button" onClick={onSelectNone} disabled={selectedCount === 0}>None</button>
@@ -65,7 +93,9 @@ export function PhotoList({
         {' '}Tap a thumbnail to see the photo full size.
       </p>
 
-      <ul className="photos">
+      {/* A custom property rather than a class per size: one declaration in the stylesheet reads
+          the width, and adding a size means touching only THUMB_SIZES. */}
+      <ul className="photos" style={{ '--thumb-w': `${thumbWidth(thumbSize)}px` } as React.CSSProperties}>
         {session.photos.map((entry) => (
           <PhotoRow
             key={entry.ref.name}

@@ -44,6 +44,7 @@ import { PlatformReport } from './PlatformReport.tsx';
 import { Sidebar } from './Sidebar.tsx';
 import { PhotoMap, type MapPin } from './PhotoMap.tsx';
 import { PhotoPreview } from './PhotoPreview.tsx';
+import { ActionMenu } from './ActionMenu.tsx';
 import { Landing } from './Landing.tsx';
 import { UPDATE_READY_EVENT, activateUpdate } from './register-sw.ts';
 import { isMapVisible } from './map-focus.ts';
@@ -66,6 +67,11 @@ import {
   type LoadProgress,
 } from './load-photos.ts';
 import { saveSession, type SaveOutcome, type SaveProgress } from './save.ts';
+import {
+  loadThumbSize,
+  saveThumbSize,
+  type ThumbSize,
+} from './thumb-size.ts';
 
 const store = createBrowserFileStore();
 
@@ -119,6 +125,14 @@ export function App() {
   const [preview, setPreview] = useState<string | null>(null);
   /** A new version is installed and will take over on reload. */
   const [updateReady, setUpdateReady] = useState(false);
+  /** The narrow-screen overflow menu. */
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [thumbSize, setThumbSizeState] = useState<ThumbSize['key']>(loadThumbSize);
+
+  const setThumbSize = useCallback((key: ThumbSize['key']) => {
+    saveThumbSize(key);
+    setThumbSizeState(key);
+  }, []);
   /** Something worth saying that is not a failure — duplicates skipped, files read-only. */
   const [notice, setNotice] = useState<string | null>(null);
   /**
@@ -524,42 +538,18 @@ export function App() {
           folder name onto three lines on a phone, which cost more height than the photo list got.
         */}
         <div className="actions">
-        {/*
-          Only once something is open. On the landing screen the hero carries these, and having
-          them in both places made a first impression of a toolbar with no subject.
-        */}
-        {session && isFilePickerSupported() && (
-          <button type="button" className="primary" onClick={openPhotos} disabled={busy}>
-            Select photos…
-          </button>
-        )}
-        {session && isFolderPickerSupported() && (
-          <button type="button" onClick={openFolder} disabled={busy}>Open whole folder…</button>
-        )}
-        {folder && (
-          <>
-            <span className="folder">{folder.displayName}</span>
-            {folder.directory
-              ? (
-                <button type="button" onClick={rescanFolder} disabled={busy}>
-                  Re-scan folder
-                </button>
-              )
-              : session && (
-                <button type="button" onClick={addPhotos} disabled={busy}>Add photos…</button>
-              )}
-          </>
-        )}
-
-        <div className="spacer" />
-
         {session && (
           <>
+            {/*
+              Undo and Redo stay on screen at every width. A mis-tap on the map is the single most
+              likely mistake here, and it should cost one touch to put right — not a touch to open
+              a menu and another to find the item.
+            */}
             <button
               type="button"
               onClick={() => setSession(undo(session))}
               disabled={!canUndo(session) || busy}
-              title="Ctrl+Z"
+              title="Undo (Ctrl+Z)"
             >
               Undo
             </button>
@@ -567,15 +557,11 @@ export function App() {
               type="button"
               onClick={() => setSession(redo(session))}
               disabled={!canRedo(session) || busy}
-              title="Ctrl+Shift+Z"
+              title="Redo (Ctrl+Shift+Z)"
             >
               Redo
             </button>
-            {/*
-              Only on a wide screen. On a phone the header is a single scrolling line, so Save sat
-              off the right edge — the one button that must never be hunted for. It appears in the
-              Photos pane instead, and only once there is something to save.
-            */}
+
             {!narrow && (
               <button type="button" className="primary" onClick={save} disabled={saveDisabled}>
                 {saveLabel}
@@ -583,6 +569,65 @@ export function App() {
             )}
           </>
         )}
+
+        <div className="spacer" />
+
+        {/*
+          On a wide screen these sit in the header. On a phone they are behind one labelled button,
+          because the alternative — a horizontally scrolling row — hides whatever is past the right
+          edge behind a gesture nobody knows to make.
+        */}
+        {session && (narrow
+          ? (
+            <ActionMenu
+              open={menuOpen}
+              onOpen={() => setMenuOpen(true)}
+              onClose={() => setMenuOpen(false)}
+            >
+              {folder && <div className="menu-label">{folder.displayName}</div>}
+              {folder?.directory
+                ? (
+                  <button type="button" onClick={rescanFolder} disabled={busy}>
+                    Re-scan folder
+                  </button>
+                )
+                : (
+                  <button type="button" onClick={addPhotos} disabled={busy}>Add photos…</button>
+                )}
+              {isFilePickerSupported() && (
+                <button type="button" onClick={openPhotos} disabled={busy}>
+                  Select different photos…
+                </button>
+              )}
+              {isFolderPickerSupported() && (
+                <button type="button" onClick={openFolder} disabled={busy}>
+                  Open a whole folder…
+                </button>
+              )}
+            </ActionMenu>
+          )
+          : (
+            <>
+              {folder && <span className="folder">{folder.displayName}</span>}
+              {folder?.directory
+                ? (
+                  <button type="button" onClick={rescanFolder} disabled={busy}>
+                    Re-scan folder
+                  </button>
+                )
+                : (
+                  <button type="button" onClick={addPhotos} disabled={busy}>Add photos…</button>
+                )}
+              {isFilePickerSupported() && (
+                <button type="button" onClick={openPhotos} disabled={busy}>Select photos…</button>
+              )}
+              {isFolderPickerSupported() && (
+                <button type="button" onClick={openFolder} disabled={busy}>
+                  Open whole folder…
+                </button>
+              )}
+            </>
+          ))}
         </div>
       </header>
 
@@ -711,6 +756,8 @@ export function App() {
                   onClear={() => setSession(clearLocation(session, [...session.selected]))}
                   onRevert={() => setSession(revert(session, [...session.selected]))}
                   onPreview={setPreview}
+                  thumbSize={thumbSize}
+                  onThumbSize={setThumbSize}
                   onTimeZone={(zone) => setSession(setTimeZone(session, zone))}
                   onOffsetSeconds={(seconds) => setSession(setOffsetSeconds(session, seconds))}
                   onSync={(sync: ClockSync) => setSession(applySync(session, sync))}

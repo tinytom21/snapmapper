@@ -212,6 +212,39 @@ override for exactly that case.
 - **Licence: elect the Artistic License** where ExifTool and Perl offer the choice. No copyleft on
   our code, and it avoids the GPL/App Store conflict if iOS is ever added.
 
+### Overflow by scrolling is not overflow
+
+The narrow header was one horizontally scrolling row. The user's verdict: *"you wouldn't know to
+scroll it if you hadn't told me."* Exactly right, and the reason is structural — the affordance for
+horizontal scrolling is a scrollbar, and phones do not draw one until you are already dragging. Half
+the buttons may as well not have existed.
+
+`ActionMenu.tsx` replaces it. **Undo and Redo stay visible at every width**, because a mis-tap on
+the map is the likeliest mistake here and should cost one touch to undo, not one to open a menu and
+another to find the item. Everything else — the folder name, Re-scan, Add photos, the pickers — is
+behind a button labelled *More*.
+
+Do not go back to `overflow-x: auto` on `.actions`. It fits the buttons on one line by putting most
+of them off-screen.
+
+### Thumbnail sizes, and the ceiling the camera sets
+
+Four sizes: 44, 76, 112 and **160px**, remembered in localStorage. 160 is not an arbitrary maximum —
+it is the width of the JPEG the camera embedded. An ILCE-6400 writes **160x120**, so anything larger
+is upscaling, and on a phone at device-pixel-ratio 3 even the 76px default is already being
+enlarged. Bigger than that is what the full-size preview is for. Pinned by a test.
+
+**That 160x120 is a 3:2 frame letterboxed into 4:3, with black bars top and bottom** — and the row's
+box was 4:3, so the app displayed the bars for months. The box is now `aspect-ratio: 3 / 2` with
+`object-fit: cover`, which crops off exactly the padding (160/1.5 = 106.67, the height of the actual
+picture). `dev-preview.tsx` generates its samples letterboxed the same way, so the crop is tested
+against the real shape rather than a convenient one.
+
+The width comes from a `--thumb-w` custom property set on the list. **A fixed `.thumb` width inside
+the `max-width: 900px` block silently overrode it** — the control appeared to work, the highlight
+moved, and the thumbnails did not budge, on precisely the device the feature was for. Beware
+declarations in that media query that also exist outside it.
+
 ### The landing screen is a landing screen, not an empty state
 
 What greeted a stranger was the empty state of a working screen: a paragraph of caveats about

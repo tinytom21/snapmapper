@@ -127,15 +127,33 @@ input.invalid { border-color: var(--danger); }
   opacity: 0.85;
 }
 
+/*
+ * Sized from `--thumb-w`, set on the list from THUMB_SIZES. 3:2 with `cover`, which is doing real
+ * work: the camera embeds a **160x120** thumbnail holding a 3:2 frame letterboxed into 4:3, so a
+ * 4:3 box — which this was — displayed the black bars. Cropping to the photograph's own aspect
+ * removes almost exactly that padding.
+ */
 .thumb {
-  width: 56px;
-  height: 42px;
+  width: var(--thumb-w, 76px);
+  aspect-ratio: 3 / 2;
+  height: auto;
   object-fit: cover;
   border-radius: 4px;
   background: color-mix(in srgb, CanvasText 10%, transparent);
   flex: none;
+  display: block;
 }
-.thumb.placeholder { display: inline-block; }
+.thumb.placeholder { display: block; }
+
+.thumb-sizes { align-items: center; gap: 0.25rem; }
+.thumb-sizes .note { margin: 0 0.2rem 0 0; }
+.thumb-sizes button { min-width: 2rem; padding: 0.2rem 0.4rem; font-size: 0.8rem; }
+.thumb-sizes button.chosen {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+  font-weight: 650;
+}
 
 .banner {
   padding: 0.55rem 0.9rem;
@@ -245,6 +263,40 @@ code { font-family: ui-monospace, monospace; font-size: 0.95em; }
   text-align: right;
 }
 .panel-body { padding: 0 0.9rem 0.9rem; }
+
+/* --- The overflow menu --------------------------------------------------
+   Replaces a horizontally scrolling header row, whose overflow was invisible: phones draw no
+   scrollbar until you are already dragging, so anything past the right edge did not exist. */
+
+.action-menu { position: relative; flex: none; }
+.action-menu-toggle { white-space: nowrap; }
+
+.action-menu-panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 8;
+  min-width: 14rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 0.45rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  /* Opaque: this floats over the photo list. */
+  background: var(--bg);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 0.28);
+}
+.action-menu-panel button { text-align: left; width: 100%; padding: 0.6rem 0.7rem; }
+.menu-label {
+  font-family: ui-monospace, monospace;
+  font-size: 0.78rem;
+  opacity: 0.7;
+  padding: 0.1rem 0.7rem 0.3rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 /* --- The landing screen -------------------------------------------------
    The first thing a stranger sees, so it explains itself rather than presenting the empty state of
@@ -489,16 +541,14 @@ button.big { padding: 0.7rem 1.2rem; font-size: 1rem; border-radius: 8px; }
   header { padding: 0.5rem 0.6rem; gap: 0.5rem; }
   header h1 { font-size: 0.95rem; margin: 0; flex: none; }
 
-  /* One scrolling line rather than three wrapped ones. Wrapping cost more height than the list
-     was getting. */
-  .actions {
-    overflow-x: auto;
-    flex-wrap: nowrap;
-    scrollbar-width: none;
-    padding-bottom: 2px;
-  }
-  .actions::-webkit-scrollbar { display: none; }
+  /*
+   * One line, and everything on it is reachable. It used to scroll horizontally, which fitted the
+   * buttons on one line by putting most of them off-screen behind a gesture with no affordance.
+   * Now only Undo, Redo and the More menu are here; the rest is inside the menu.
+   */
+  .actions { flex-wrap: nowrap; overflow: visible; }
   .actions > * { flex: none; }
+  .folder { display: none; }
   .spacer { display: none; }
   header button { padding: 0.5rem 0.8rem; }
 
@@ -558,7 +608,9 @@ button.big { padding: 0.7rem 1.2rem; font-size: 1rem; border-radius: 8px; }
   .photo input[type='checkbox'] { width: 26px; height: 26px; }
   .photo .name { font-size: 0.9rem; }
   .photo .meta { font-size: 0.8rem; }
-  .thumb { width: 76px; height: 57px; }
+  /* No size here: the width comes from `--thumb-w` and the user chooses it. A fixed value in this
+     block silently overrode the choice on exactly the device where it matters most. */
+  .thumb-sizes button { min-width: 2.4rem; padding: 0.4rem 0.5rem; font-size: 0.85rem; }
 
   /* Sticky to the bottom of the scrolling pane. It must sit above the photo rows that scroll
      under it, hence the z-index — without it the rows are painted over the button. */
