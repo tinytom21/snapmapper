@@ -28,7 +28,7 @@ works with the network switched off entirely.
 
 ## Try it
 
-The hosted build is at **https://<your-account>.github.io/snapmapper/** — open it in Chrome or
+The hosted build is at **https://tinytom21.github.io/snapmapper/** — open it in Chrome or
 Edge (the File System Access API is required to write files, which Firefox and Safari do not have).
 
 To run it yourself:
