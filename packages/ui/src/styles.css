@@ -205,3 +205,19 @@ input.invalid { border-color: var(--danger); }
   margin: 0.4rem 0;
   padding: 0.5rem 0.6rem;
 }
+
+/* The capability report. Readable on a phone, which is the device it exists for. */
+.report { margin: 0.5rem 0 0; font-size: 0.8rem; }
+.report > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.2rem 0;
+  border-bottom: 1px solid var(--line);
+}
+.report dt { font-family: ui-monospace, monospace; opacity: 0.8; }
+.report dd { margin: 0; text-align: right; word-break: break-word; max-width: 60%; }
+.report > div.yes dd { color: var(--ok); font-weight: 600; }
+.report > div.no dd { color: var(--danger); font-weight: 600; }
+.gate .panel { border: 1px solid var(--line); border-radius: 8px; margin-top: 1.5rem; }
+code { font-family: ui-monospace, monospace; font-size: 0.95em; }

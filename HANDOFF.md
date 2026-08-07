@@ -111,6 +111,79 @@ output and refuses to return a file whose scan data moved or changed length.
 **3. Never re-serialise EXIF yourself.** Q5 measured `piexifjs` doing exactly that: 6 ms, 47 tags lost
 including `OffsetTime`, and ExifTool reporting incorrect maker-note offsets.
 
+## Deciding the shell
+
+The question splits in two, and the second barely matters until the first is answered.
+
+**A. Can Android write to a card at all?** This is about Android's Storage Access Framework,
+not about Tauri or Capacitor — both call the same `DocumentsContract` APIs. If the platform
+will not do it on real hardware, neither wrapper helps and the Android plan changes.
+
+**B. Which wrapper?** Only worth arguing once A is a yes.
+
+### Step 1: check the premise, on the device
+
+`docs/PLAN.md` rules out a pure PWA on Android because Chrome there has no
+`showDirectoryPicker`. That was true when written and has never been checked on the
+hardware. **If it is stale, there is no Android shell decision at all** — the existing app
+works. Given that two other written-down premises in this project turned out to be wrong at
+real cost, check rather than inherit.
+
+```bash
+npm run dev:lan
+```
+
+Open the `https://` address it prints on the phone, accept the certificate warning, and read
+the **This device** panel. No console needed.
+
+`dev:lan` serves **HTTPS**, and that is not optional. `showDirectoryPicker` and
+`crypto.randomUUID` are both gated on a secure context, so over plain `http://` on a LAN
+address they are absent whatever the platform supports — a false negative that looks like a
+definitive answer. The panel refuses to draw a conclusion from an insecure origin and says so.
+
+Inbound `5173` needs a firewall rule; the earlier one was for the spike's port `8080`. In an
+**Administrator** PowerShell:
+
+```bash
+New-NetFirewallRule -DisplayName "photo-geotagger dev 5173" -Direction Inbound -Protocol TCP -LocalPort 5173 -Action Allow -Profile Any -RemoteAddress LocalSubnet
+```
+
+### Step 2: the test that actually decides A
+
+Against `DCIM/100MSDCF` on the card — **not** the card root, which Android 11+ refuses:
+
+1. Grant a tree with `ACTION_OPEN_DOCUMENT_TREE`.
+2. Read a photo from it.
+3. **Create a new document in the same tree** (the temp file).
+4. Write bytes to it.
+5. **Delete the original and rename the temp into its place.**
+6. Set the modification date.
+
+Steps 3–5 are `writeAtomic`, and they are where this fails if it fails. Many Android file
+plugins can read a tree and overwrite a document but cannot create-and-rename inside it — and
+overwriting in place is precisely what we refuse to do.
+
+Worth doing as a throwaway Android project, so it commits to neither shell. **A tablet is not
+required**: a USB-OTG card reader on a phone presents the card as a removable volume, which
+is the same SAF path.
+
+### Step 3: then, and only then, B
+
+| | Tauri 2 | Capacitor |
+|---|---|---|
+| Toolchain | Rust + MSVC + Android SDK, multi-GB, none installed | Android SDK + JDK, no Rust |
+| Android SAF | community `tauri-plugin-android-fs` | `@capacitor/filesystem` is weak on document trees; likely a small Kotlin plugin |
+| Desktop | real native binaries | Electron, heavier |
+| mtime | yes | yes |
+
+Two notes. **Tauri's size advantage is noise here** — the WASM is 24.2MB, so arguing about
+10MB versus Electron misses the point. And needing a small Kotlin plugin is not the drawback
+it sounds like: it means controlling the exact create-write-rename sequence rather than hoping
+a community plugin exposes it.
+
+There is also a smaller path that skips the question: **Tauri on desktop only**, which fixes
+the mtime regression and needs no Android SDK.
+
 ## What is left before Phase 1
 
 Only the shell decision, and it needs hardware:

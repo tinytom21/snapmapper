@@ -39,6 +39,7 @@ import {
 } from '@geotagger/core';
 
 import { ClockPanel } from './ClockPanel.tsx';
+import { PlatformReport } from './PlatformReport.tsx';
 import { PhotoMap, type MapPin } from './PhotoMap.tsx';
 import { scanForSyncCode } from './clock-sync-qr.ts';
 import {
@@ -275,9 +276,15 @@ export function App() {
       <main className="gate">
         <h1>photo-geotagger</h1>
         <p>
-          This browser has no File System Access API, so it cannot write to your photos in
-          place. Use <strong>Chrome or Edge on the desktop</strong>.
+          This browser cannot open a folder and write to your photos in place. Use{' '}
+          <strong>Chrome or Edge on the desktop</strong>.
         </p>
+        {/*
+          The report matters most here. This is the screen a phone lands on, and whether the
+          picker is genuinely missing or merely hidden by an insecure origin is exactly the
+          question the shell decision rests on.
+        */}
+        <PlatformReport />
       </main>
     );
   }
@@ -378,10 +385,13 @@ export function App() {
               </>
             )
             : !loading && (
-              <div className="empty">
-                <p>Open a folder of JPEGs to begin.</p>
-                <p className="note">{MTIME_LIMITATION}</p>
-              </div>
+              <>
+                <div className="empty">
+                  <p>Open a folder of JPEGs to begin.</p>
+                  <p className="note">{MTIME_LIMITATION}</p>
+                </div>
+                <PlatformReport />
+              </>
             )}
         </aside>
 
