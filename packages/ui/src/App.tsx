@@ -23,6 +23,7 @@ import {
   markSaved,
   pendingPhotos,
   redo,
+  redoAction,
   revert,
   select,
   selectRange,
@@ -30,6 +31,7 @@ import {
   setTimeZone,
   toggleSelected,
   undo,
+  undoAction,
   type CameraClock,
   type ClockSync,
   type Coordinates,
@@ -45,6 +47,7 @@ import { Sidebar } from './Sidebar.tsx';
 import { PhotoMap, type MapPin } from './PhotoMap.tsx';
 import { PhotoPreview } from './PhotoPreview.tsx';
 import { ActionMenu } from './ActionMenu.tsx';
+import { describeAction, explainAction } from './describe-action.ts';
 import { Landing } from './Landing.tsx';
 import { UPDATE_READY_EVENT, activateUpdate } from './register-sw.ts';
 import { isMapVisible } from './map-focus.ts';
@@ -527,7 +530,13 @@ export function App() {
 
   return (
     <div className="app">
-      <header>
+      {/*
+        `working` drops the wordmark on a phone once photos are open. Measured: with it, Undo and
+        Redo carrying their labels plus the More button needed up to 436px of a 375px screen. The
+        name of the app is the least useful thing on that row while you are placing photographs —
+        and it is still on the landing screen, the browser tab and the home-screen icon.
+      */}
+      <header className={narrow && session ? 'working' : ''}>
         <h1>Snapmapper</h1>
         {/*
           A horizontally scrolling row rather than a wrapping one. Wrapping put four buttons and a
@@ -543,19 +552,21 @@ export function App() {
             */}
             <button
               type="button"
+              className="undo"
               onClick={() => setSession(undo(session))}
               disabled={!canUndo(session) || busy}
-              title="Undo (Ctrl+Z)"
+              title={explainAction('Undo', undoAction(session))}
             >
-              Undo
+              Undo <span className="what">{describeAction(undoAction(session))}</span>
             </button>
             <button
               type="button"
+              className="redo"
               onClick={() => setSession(redo(session))}
               disabled={!canRedo(session) || busy}
-              title="Redo (Ctrl+Shift+Z)"
+              title={explainAction('Redo', redoAction(session))}
             >
-              Redo
+              Redo <span className="what">{describeAction(redoAction(session))}</span>
             </button>
 
             {!narrow && (

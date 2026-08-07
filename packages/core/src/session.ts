@@ -49,8 +49,8 @@ export interface Session {
    */
   readonly sync: ClockSync | undefined;
   /** Past states, most recent last. Bounded — see UNDO_LIMIT. */
-  readonly history: readonly SessionSnapshot[];
-  readonly future: readonly SessionSnapshot[];
+  readonly history: readonly HistoryEntry[];
+  readonly future: readonly HistoryEntry[];
 }
 
 /** The part of a session undo restores. Selection is not worth undoing. */
@@ -58,6 +58,34 @@ interface SessionSnapshot {
   readonly edits: ReadonlyMap<string, Coordinates | null>;
   readonly clock: CameraClock;
   readonly sync: ClockSync | undefined;
+}
+
+/**
+ * What a step in the history *was*, so the interface can say rather than just offer "Undo".
+ *
+ * Structured, not a sentence: `packages/core` has no business choosing the words, and a caller
+ * that wants "place 5 photos" and one that wants "5 Fotos platzieren" should both be possible.
+ * `describe-action.ts` in the UI does the phrasing.
+ */
+export type SessionAction =
+  | { readonly kind: 'place'; readonly count: number }
+  | { readonly kind: 'clear'; readonly count: number }
+  | { readonly kind: 'revert'; readonly count: number }
+  | { readonly kind: 'time-zone'; readonly timeZone: string }
+  | { readonly kind: 'offset'; readonly offsetSeconds: number }
+  | { readonly kind: 'sync' }
+  | { readonly kind: 'clear-sync' };
+
+/**
+ * A snapshot plus the action that led *away* from it.
+ *
+ * The pairing is the fiddly part. A history entry holds a past state, and what the user wants named
+ * is not that state but the change that replaced it — "Undo place 5 photos". So the action recorded
+ * with a past state is the one applied to leave it, and moving an entry between the two stacks
+ * carries that action across unchanged.
+ */
+interface HistoryEntry extends SessionSnapshot {
+  readonly action: SessionAction;
 }
 
 /**
@@ -181,7 +209,11 @@ export function assignLocation(
   const edits = new Map(session.edits);
   for (const name of writable) edits.set(name, coordinates);
 
-  return commit(session, { edits, clock: session.clock, sync: session.sync });
+  return commit(
+    session,
+    { edits, clock: session.clock, sync: session.sync },
+    { kind: 'place', count: writable.length },
+  );
 }
 
 /** Stage removal of a photo's location. */
@@ -198,17 +230,29 @@ export function clearLocation(session: Session, names: readonly string[]): Sessi
     changed = true;
   }
 
-  return changed ? commit(session, { edits, clock: session.clock, sync: session.sync }) : session;
+  return changed
+    ? commit(
+      session,
+      { edits, clock: session.clock, sync: session.sync },
+      { kind: 'clear', count: countChanged(session.edits, edits) },
+    )
+    : session;
 }
 
 /** Drop staged changes for the given photos, reverting them to what is on disk. */
 export function revert(session: Session, names: readonly string[]): Session {
   const edits = new Map(session.edits);
-  let changed = false;
+  let reverted = 0;
   for (const name of names) {
-    if (edits.delete(name)) changed = true;
+    if (edits.delete(name)) reverted += 1;
   }
-  return changed ? commit(session, { edits, clock: session.clock, sync: session.sync }) : session;
+  return reverted > 0
+    ? commit(
+      session,
+      { edits, clock: session.clock, sync: session.sync },
+      { kind: 'revert', count: reverted },
+    )
+    : session;
 }
 
 /**
@@ -223,7 +267,11 @@ export function setTimeZone(session: Session, timeZone: string): Session {
     ? clockFromSync(session.sync, timeZone)
     : { ...session.clock, timeZone };
 
-  return commit(session, { edits: session.edits, clock, sync: session.sync });
+  return commit(
+    session,
+    { edits: session.edits, clock, sync: session.sync },
+    { kind: 'time-zone', timeZone },
+  );
 }
 
 /**
@@ -233,11 +281,11 @@ export function setTimeZone(session: Session, timeZone: string): Session {
  * the typed-in value away without saying so.
  */
 export function setOffsetSeconds(session: Session, offsetSeconds: number): Session {
-  return commit(session, {
-    edits: session.edits,
-    clock: { ...session.clock, offsetSeconds },
-    sync: undefined,
-  });
+  return commit(
+    session,
+    { edits: session.edits, clock: { ...session.clock, offsetSeconds }, sync: undefined },
+    { kind: 'offset', offsetSeconds },
+  );
 }
 
 /**
@@ -246,17 +294,21 @@ export function setOffsetSeconds(session: Session, offsetSeconds: number): Sessi
  * Undoable, because it silently moves the GPS timestamp of every photo in the session.
  */
 export function applySync(session: Session, sync: ClockSync): Session {
-  return commit(session, {
-    edits: session.edits,
-    clock: clockFromSync(sync, session.clock.timeZone),
-    sync,
-  });
+  return commit(
+    session,
+    { edits: session.edits, clock: clockFromSync(sync, session.clock.timeZone), sync },
+    { kind: 'sync' },
+  );
 }
 
 /** Discard a measurement, leaving the offset where it was but no longer derived. */
 export function clearSync(session: Session): Session {
   if (!session.sync) return session;
-  return commit(session, { edits: session.edits, clock: session.clock, sync: undefined });
+  return commit(
+    session,
+    { edits: session.edits, clock: session.clock, sync: undefined },
+    { kind: 'clear-sync' },
+  );
 }
 
 /**
@@ -326,7 +378,17 @@ export function undo(session: Session): Session {
     clock: previous.clock,
     sync: previous.sync,
     history: session.history.slice(0, -1),
-    future: [...session.future, { edits: session.edits, clock: session.clock, sync: session.sync }],
+    // The action travels with the state it produced, so redoing offers the same name that undoing
+    // just used. Attaching the *current* top of history here instead would drift by one step.
+    future: [
+      ...session.future,
+      {
+        edits: session.edits,
+        clock: session.clock,
+        sync: session.sync,
+        action: previous.action,
+      },
+    ],
   };
 }
 
@@ -339,9 +401,34 @@ export function redo(session: Session): Session {
     edits: next.edits,
     clock: next.clock,
     sync: next.sync,
-    history: [...session.history, { edits: session.edits, clock: session.clock, sync: session.sync }],
+    history: [
+      ...session.history,
+      { edits: session.edits, clock: session.clock, sync: session.sync, action: next.action },
+    ],
     future: session.future.slice(0, -1),
   };
+}
+
+/** What Undo would take back, for labelling the button. `undefined` when there is nothing. */
+export function undoAction(session: Session): SessionAction | undefined {
+  return session.history.at(-1)?.action;
+}
+
+/** What Redo would put back. */
+export function redoAction(session: Session): SessionAction | undefined {
+  return session.future.at(-1)?.action;
+}
+
+/** How many entries differ between two edit maps — the size of a clear, in practice. */
+function countChanged(
+  before: ReadonlyMap<string, Coordinates | null>,
+  after: ReadonlyMap<string, Coordinates | null>,
+): number {
+  let changed = 0;
+  for (const [name, value] of after) {
+    if (before.get(name) !== value) changed += 1;
+  }
+  return changed;
 }
 
 /**
@@ -350,10 +437,10 @@ export function redo(session: Session): Session {
  * Redo is discarded, as it must be: once a new edit is made, the old future is not
  * reachable any more.
  */
-function commit(session: Session, next: SessionSnapshot): Session {
+function commit(session: Session, next: SessionSnapshot, action: SessionAction): Session {
   const history = [
     ...session.history,
-    { edits: session.edits, clock: session.clock, sync: session.sync },
+    { edits: session.edits, clock: session.clock, sync: session.sync, action },
   ];
 
   return {

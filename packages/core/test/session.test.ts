@@ -17,6 +17,7 @@ import {
   markSaved,
   pendingPhotos,
   redo,
+  redoAction,
   revert,
   select,
   selectRange,
@@ -24,6 +25,7 @@ import {
   setTimeZone,
   toggleSelected,
   undo,
+  undoAction,
   type PhotoEntry,
 } from '../src/session.ts';
 import type { CameraClock } from '../src/time.ts';
@@ -480,5 +482,100 @@ describe('key format regression', () => {
       'EXIF:GPS:GPSDateStamp': '2024:05:17',
     });
     assert.equal(built.takenAt, undefined);
+  });
+});
+
+describe('naming what undo would take back', () => {
+  const three = () =>
+    createSession([entry('a.jpg'), entry('b.jpg'), entry('c.jpg')], CLOCK);
+
+  it('records the action, not just the state', () => {
+    const placed = assignLocation(three(), ['a.jpg', 'b.jpg'], GREENWICH);
+    assert.deepEqual(undoAction(placed), { kind: 'place', count: 2 });
+  });
+
+  it('counts only the photos an action actually changed', () => {
+    // 'c.jpg' has nothing to clear, so a clear of all three is a clear of two.
+    const placed = assignLocation(three(), ['a.jpg', 'b.jpg'], GREENWICH);
+    const cleared = clearLocation(placed, ['a.jpg', 'b.jpg', 'c.jpg']);
+    assert.deepEqual(undoAction(cleared), { kind: 'clear', count: 2 });
+  });
+
+  it('names every kind of change', () => {
+    const placed = assignLocation(three(), ['a.jpg'], GREENWICH);
+    assert.deepEqual(undoAction(revert(placed, ['a.jpg'])), { kind: 'revert', count: 1 });
+    assert.deepEqual(
+      undoAction(setTimeZone(three(), 'Pacific/Auckland')),
+      { kind: 'time-zone', timeZone: 'Pacific/Auckland' },
+    );
+    assert.deepEqual(
+      undoAction(setOffsetSeconds(three(), -42)),
+      { kind: 'offset', offsetSeconds: -42 },
+    );
+  });
+
+  it('has nothing to name on a fresh session', () => {
+    assert.equal(undoAction(three()), undefined);
+    assert.equal(redoAction(three()), undefined);
+  });
+
+  /*
+   * The pairing is the part that would drift silently.
+   *
+   * A history entry holds a *past* state, but the name the user wants is the change that replaced
+   * it. So undoing must move that name onto the redo stack unchanged — otherwise Redo offers the
+   * name of a different step, and the labels are worse than none.
+   */
+  it('offers the same name to redo that undo just used', () => {
+    const placed = assignLocation(three(), ['a.jpg', 'b.jpg'], GREENWICH);
+    const cleared = clearLocation(placed, ['a.jpg']);
+
+    assert.deepEqual(undoAction(cleared), { kind: 'clear', count: 1 });
+
+    const undone = undo(cleared);
+    assert.deepEqual(redoAction(undone), { kind: 'clear', count: 1 });
+    assert.deepEqual(undoAction(undone), { kind: 'place', count: 2 });
+
+    const redone = redo(undone);
+    assert.deepEqual(undoAction(redone), { kind: 'clear', count: 1 });
+    assert.equal(redoAction(redone), undefined);
+  });
+
+  it('keeps the names in step across a longer walk', () => {
+    let session = assignLocation(three(), ['a.jpg'], GREENWICH);
+    session = setTimeZone(session, 'Pacific/Auckland');
+    session = assignLocation(session, ['b.jpg', 'c.jpg'], SANTIAGO);
+
+    const names: unknown[] = [];
+    while (canUndo(session)) {
+      names.push(undoAction(session));
+      session = undo(session);
+    }
+    assert.deepEqual(names, [
+      { kind: 'place', count: 2 },
+      { kind: 'time-zone', timeZone: 'Pacific/Auckland' },
+      { kind: 'place', count: 1 },
+    ]);
+
+    // And back up, in the mirror order.
+    const redone: unknown[] = [];
+    while (canRedo(session)) {
+      redone.push(redoAction(session));
+      session = redo(session);
+    }
+    assert.deepEqual(redone, [
+      { kind: 'place', count: 1 },
+      { kind: 'time-zone', timeZone: 'Pacific/Auckland' },
+      { kind: 'place', count: 2 },
+    ]);
+  });
+
+  it('forgets the names a save has settled', () => {
+    // markSaved clears the history, so there is nothing left to name — and Undo must never
+    // suggest it can take back something already on disk.
+    const placed = assignLocation(three(), ['a.jpg'], GREENWICH);
+    const saved = markSaved(placed, ['a.jpg']);
+    assert.equal(undoAction(saved), undefined);
+    assert.equal(canUndo(saved), false);
   });
 });

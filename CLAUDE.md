@@ -212,6 +212,27 @@ override for exactly that case.
 - **Licence: elect the Artistic License** where ExifTool and Perl offer the choice. No copyleft on
   our code, and it avoids the GPL/App Store conflict if iOS is ever added.
 
+### Undo and Redo say what they would undo
+
+`SessionAction` in `session.ts` records *what* each history step was — `{kind:'place',count:5}` and
+so on — and the UI phrases it: the button reads **Undo place 5**, with the full sentence and the
+keyboard shortcut in the tooltip. Structured in core, worded in `describe-action.ts`, because core
+has no business choosing English.
+
+The pairing is the part that would drift silently. A history entry holds a *past* state, but the
+name people want is the change that **replaced** it, so the action recorded with a past state is the
+one applied to leave it — and undoing must carry that action onto the redo stack unchanged, or Redo
+offers the name of a different step. A test walks a three-step history down and back up to pin it.
+
+Labels are one word or a word and a count: measured at 375px, "clock offset" left 15px of slack on
+the header row and overflowed a 320px screen outright. A test caps the length for that reason.
+
+**The wordmark is hidden on a phone once photos are open** (`header.working h1`). With it, the two
+labelled buttons plus *More* needed up to 436px of a 375px screen. The app's name is the least
+useful thing on that row while placing photographs, and it is still on the landing screen, the
+browser tab and the home-screen icon. Below 360px Redo drops its label too, and Undo keeps
+its — Undo is the one reached for after a mis-tap, which is the whole reason the labels exist.
+
 ### Overflow by scrolling is not overflow
 
 The narrow header was one horizontally scrolling row. The user's verdict: *"you wouldn't know to
