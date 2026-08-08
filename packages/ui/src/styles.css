@@ -308,6 +308,27 @@ input[type='text'], input:not([type]), input[type='number'] {
 }
 input.invalid { border-color: var(--danger); }
 
+/*
+ * A checkbox and its words on one line.
+ *
+ * `label` is `display: block` above, which is right for a field with an input beneath it and wrong
+ * for a tick box — the checkbox and the text would sit on the baseline with no consistent gap, and
+ * a label that wraps onto two lines would run its second line under the box. Flex with
+ * `align-items: start` keeps the box against the first line where the eye expects it.
+ */
+label.check {
+  display: flex;
+  align-items: start;
+  gap: 0.5rem;
+}
+label.check input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  /* Nudged down to sit on the text's baseline rather than its box top. */
+  margin-top: 0.15em;
+}
+
 .note { font-size: 0.8rem; opacity: 0.65; margin: 0.3rem 0; }
 .note.error, .error { color: var(--danger); }
 .dim { opacity: 0.5; }
@@ -953,6 +974,8 @@ button.big { padding: 0.7rem 1.2rem; font-size: 1rem; border-radius: 8px; }
 
   .photo { padding: 0.65rem 0.5rem; gap: 0.7rem; }
   .photo input[type='checkbox'] { width: 26px; height: 26px; }
+  /* A thumb-sized target for the matching options too. */
+  label.check input[type='checkbox'] { width: 22px; height: 22px; }
   .photo .name { font-size: 0.9rem; }
   .photo .meta { font-size: 0.8rem; }
   /*

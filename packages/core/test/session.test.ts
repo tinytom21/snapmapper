@@ -26,8 +26,10 @@ import {
   toggleSelected,
   undo,
   undoAction,
+  applyTrack,
   type PhotoEntry,
 } from '../src/session.ts';
+import { parseGpx } from '../src/gpx.ts';
 import type { CameraClock } from '../src/time.ts';
 import type { FolderHandle, PhotoRef } from '../src/storage.ts';
 
@@ -577,5 +579,128 @@ describe('naming what undo would take back', () => {
     const saved = markSaved(placed, ['a.jpg']);
     assert.equal(undoAction(saved), undefined);
     assert.equal(canUndo(saved), false);
+  });
+});
+
+describe('placing photos from a GPS track', () => {
+  const TRACK = parseGpx(
+    '<gpx><trk><trkseg>'
+    // 12:00 and 12:10 London on 1 July is 11:00 and 11:10 UTC — BST is in force.
+    + '<trkpt lat="51.0" lon="-1.0"><time>2024-07-01T11:00:00Z</time></trkpt>'
+    + '<trkpt lat="51.1" lon="-1.1"><time>2024-07-01T11:10:00Z</time></trkpt>'
+    + '</trkseg></trk></gpx>',
+  );
+
+  /** A photo whose camera clock read `hh:mm:ss` on 1 July 2024. */
+  function shotAt(name: string, hour: number, minute: number, second = 0): PhotoEntry {
+    return entry(name, {
+      takenAt: { year: 2024, month: 7, day: 1, hour, minute, second, millisecond: 0 },
+    });
+  }
+
+  it('places a photo where the track says it was', () => {
+    const session = createSession([shotAt('a.jpg', 12, 0)], CLOCK);
+    const { session: after, placed } = applyTrack(session, TRACK);
+
+    assert.equal(placed.length, 1);
+    assert.deepEqual(locationOf(after, 'a.jpg'), {
+      kind: 'pending',
+      coordinates: { latitude: 51, longitude: -1 },
+    });
+  });
+
+  it('goes through the corrected clock, not the camera reading', () => {
+    /*
+     * The point of the whole feature, and the way it would fail silently.
+     *
+     * This photo's *camera* reading is 12:05, which under the session zone resolves to 11:05 UTC —
+     * the middle of the track. But the camera is five minutes fast, so it was really taken at
+     * 11:00 UTC, at the start. Matching the uncorrected reading would put it half a kilometre
+     * along the walk with nothing to suggest anything was wrong.
+     */
+    const fast = { timeZone: 'Europe/London', offsetSeconds: 300 };
+    const { session: after } = applyTrack(
+      createSession([shotAt('a.jpg', 12, 5)], fast),
+      TRACK,
+    );
+
+    const location = locationOf(after, 'a.jpg');
+    assert.ok(location.kind === 'pending');
+    assert.equal(location.coordinates.latitude, 51);
+  });
+
+  it('interpolates between fixes', () => {
+    const { session: after, placed } = applyTrack(
+      createSession([shotAt('a.jpg', 12, 5)], CLOCK),
+      // Five minutes past the first fix is halfway, but ten minutes from the nearest one, so the
+      // tolerance has to allow it.
+      { ...TRACK },
+      { toleranceSeconds: 600 },
+    );
+
+    assert.equal(placed[0]?.interpolated, true);
+    const location = locationOf(after, 'a.jpg');
+    assert.ok(location.kind === 'pending');
+    assert.equal(Math.round(location.coordinates.latitude * 1000) / 1000, 51.05);
+  });
+
+  it('leaves hand-placed photos alone unless told otherwise', () => {
+    // A hand-placed photograph is somebody's considered judgement. A track sweeping it aside is a
+    // loss Undo can reverse and nobody would notice in time to press it.
+    const session = assignLocation(
+      createSession([shotAt('a.jpg', 12, 0)], CLOCK),
+      ['a.jpg'],
+      SANTIAGO,
+    );
+
+    const { session: kept, skipped } = applyTrack(session, TRACK);
+    assert.deepEqual(skipped, [{ name: 'a.jpg', reason: 'already-placed' }]);
+    assert.equal(kept, session);
+
+    const { placed } = applyTrack(session, TRACK, { replaceExisting: true });
+    assert.equal(placed.length, 1);
+  });
+
+  it('says why each photo it could not place was skipped', () => {
+    const session = createSession([
+      shotAt('near.jpg', 12, 0),
+      shotAt('late.jpg', 18, 0),
+      entry('undated.jpg', { takenAt: undefined }),
+      failedEntry(ref('broken.jpg'), 'unreadable'),
+    ], CLOCK);
+
+    const { placed, skipped } = applyTrack(session, TRACK);
+
+    assert.deepEqual(placed.map((one) => one.name), ['near.jpg']);
+    assert.deepEqual(skipped.map((one) => [one.name, one.reason]), [
+      ['late.jpg', 'no-fix'],
+      ['undated.jpg', 'no-date'],
+      ['broken.jpg', 'unreadable'],
+    ]);
+    // How far off the nearest fix was, so the user can judge whether raising the tolerance is
+    // reasonable or absurd. Six hours is absurd.
+    const missed = skipped.find((one) => one.name === 'late.jpg');
+    assert.equal(missed?.reason === 'no-fix' && missed.gapSeconds, 6 * 3600 - 600);
+  });
+
+  it('honours a list of names, so "match selected" is possible', () => {
+    const session = createSession([shotAt('a.jpg', 12, 0), shotAt('b.jpg', 12, 0)], CLOCK);
+    const { placed } = applyTrack(session, TRACK, { names: ['b.jpg'] });
+    assert.deepEqual(placed.map((one) => one.name), ['b.jpg']);
+  });
+
+  it('is one undo step, named as a track match', () => {
+    const session = createSession([shotAt('a.jpg', 12, 0), shotAt('b.jpg', 12, 1)], CLOCK);
+    const { session: after } = applyTrack(session, TRACK);
+
+    assert.deepEqual(undoAction(after), { kind: 'track', count: 2 });
+    assert.equal(hasPendingChanges(undo(after)), false);
+  });
+
+  it('changes nothing at all when it places nothing', () => {
+    // Not merely "no edits": no history entry either, or Undo would offer to take back a match
+    // that never happened.
+    const session = createSession([shotAt('a.jpg', 18, 0)], CLOCK);
+    assert.equal(applyTrack(session, TRACK).session, session);
   });
 });

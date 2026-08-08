@@ -16,6 +16,7 @@ import { Accordion, type AccordionSection } from './Accordion.tsx';
 import { ClockPanel, describeClock } from './ClockPanel.tsx';
 import { PhotoList } from './PhotoList.tsx';
 import { PlatformReport, describePlatformBriefly } from './PlatformReport.tsx';
+import { TrackPanel, describeTrack, type TrackPanelProps } from './TrackPanel.tsx';
 import { pendingPhotos, type ClockSync, type Session } from '@snapmapper/core';
 import type { ViewMode } from './view-mode.ts';
 
@@ -41,6 +42,9 @@ export interface SidebarProps {
   readonly onSync: (sync: ClockSync) => void;
   readonly onClearSync: () => void;
   readonly onScanReference: (name: string) => Promise<string | null>;
+
+  /** The GPS track section, passed through whole — this component only decides where it sits. */
+  readonly track: Omit<TrackPanelProps, 'session' | 'busy'>;
 }
 
 export function Sidebar(props: SidebarProps) {
@@ -89,6 +93,16 @@ export function Sidebar(props: SidebarProps) {
           onScanReference={props.onScanReference}
         />
       ),
+    },
+    /*
+     * Directly after the clock, and that ordering is the argument for it: a track match is only as
+     * good as the clock it is matched against, so the section that sets the clock comes first.
+     */
+    {
+      id: 'track',
+      title: 'GPS track',
+      state: describeTrack(props.track.track, props.track.trackFile),
+      content: <TrackPanel session={session} busy={props.busy} {...props.track} />,
     },
     {
       id: 'device',

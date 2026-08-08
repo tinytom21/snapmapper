@@ -1,0 +1,320 @@
+/**
+ * The GPS track panel: load a GPX file, then let it place the photographs.
+ *
+ * This is the second half of the camera clock, and the two are useless apart. A track says where
+ * you were at a given instant; `clock-sync.ts` says what the camera's timestamps actually mean.
+ * Match on an uncorrected clock and every photograph lands somewhere plausible and wrong, so this
+ * panel says what clock it is about to use and links back to the one that sets it.
+ *
+ * The file arrives through a plain `<input type="file">` rather than `showOpenFilePicker`. A GPX
+ * file is read once and never written, so nothing here needs the File System Access API — which
+ * means this works in browsers where the rest of the app does not, and, more usefully, that the
+ * input's own click is the user gesture, with no chance of repeating the picker-gesture bug that
+ * the destination bar exists to avoid.
+ */
+
+import { useRef, useState } from 'react';
+
+import {
+  DEFAULT_TOLERANCE_SECONDS,
+  parseGpx,
+  trackSpan,
+  type GpxTrack,
+  type Session,
+  type TrackApplyOptions,
+  type TrackPlacement,
+  type TrackSkip,
+} from '@snapmapper/core';
+
+export interface TrackPanelProps {
+  readonly session: Session;
+  readonly track: GpxTrack | null;
+  /** The file's name, for saying which track is loaded when the GPX carries no `<name>`. */
+  readonly trackFile: string | null;
+  readonly onTrack: (track: GpxTrack, fileName: string) => void;
+  readonly onClearTrack: () => void;
+  readonly onMatch: (options: TrackApplyOptions) => {
+    readonly placed: readonly TrackPlacement[];
+    readonly skipped: readonly TrackSkip[];
+  };
+  readonly busy: boolean;
+}
+
+interface MatchResult {
+  readonly placed: readonly TrackPlacement[];
+  readonly skipped: readonly TrackSkip[];
+  readonly scope: 'all' | 'selected';
+}
+
+export function TrackPanel({
+  session, track, trackFile, onTrack, onClearTrack, onMatch, busy,
+}: TrackPanelProps) {
+  const input = useRef<HTMLInputElement>(null);
+  const [problem, setProblem] = useState<string | null>(null);
+  const [result, setResult] = useState<MatchResult | null>(null);
+
+  const [toleranceSeconds, setToleranceSeconds] = useState(DEFAULT_TOLERANCE_SECONDS);
+  const [interpolate, setInterpolate] = useState(true);
+  const [replaceExisting, setReplaceExisting] = useState(false);
+
+  const selected = session.selected.size;
+
+  async function load(file: File) {
+    setProblem(null);
+    setResult(null);
+    try {
+      onTrack(parseGpx(await file.text()), file.name);
+    } catch (cause) {
+      setProblem(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+
+  function match(scope: 'all' | 'selected') {
+    const outcome = onMatch({
+      toleranceSeconds,
+      interpolate,
+      replaceExisting,
+      ...(scope === 'selected' ? { names: [...session.selected] } : {}),
+    });
+    setResult({ ...outcome, scope });
+  }
+
+  return (
+    <div className="panel-body">
+      <input
+        ref={input}
+        type="file"
+        accept=".gpx,application/gpx+xml,text/xml"
+        hidden
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          if (file) void load(file);
+          // Cleared so choosing the same file twice fires a change event — after a failed parse,
+          // re-picking the file you just fixed is the obvious thing to try.
+          event.target.value = '';
+        }}
+      />
+
+      {!track && (
+        <p className="note">
+          If you carried a GPS logger or a phone recording a track, load it here and the
+          photographs place themselves by time.
+        </p>
+      )}
+
+      <div className="row">
+        <button type="button" onClick={() => input.current?.click()} disabled={busy}>
+          {track ? 'Load a different track…' : 'Load a GPX file…'}
+        </button>
+        {track && (
+          <button type="button" onClick={() => { onClearTrack(); setResult(null); }}>
+            Remove
+          </button>
+        )}
+      </div>
+
+      {problem && <p className="note error">{problem}</p>}
+
+      {track && (
+        <>
+          <TrackSummary track={track} fileName={trackFile} />
+
+          {/*
+            The clock, restated where the decision is made. Somebody reaching for a track has not
+            necessarily been through the Camera clock section, and a match against an unmeasured
+            clock is the one failure here that leaves no trace.
+          */}
+          <p className={`note${unsetClock(session) ? ' error' : ''}`}>
+            Matching against <strong>{session.clock.timeZone}</strong>
+            {session.clock.offsetSeconds === 0
+              ? ', with no camera drift set'
+              : `, camera ${Math.abs(session.clock.offsetSeconds)}s `
+                + `${session.clock.offsetSeconds > 0 ? 'fast' : 'slow'}`}
+            {session.sync ? ' (measured).' : ' (typed in).'}
+            {/*
+              The nudge appears only when there is genuinely nothing set. Repeating it beside a
+              drift somebody has already entered reads as the app not having noticed, which is how
+              a warning stops being read at all.
+            */}
+            {unsetClock(session)
+              && ' A track match is only as good as the clock — set them in Camera clock first.'}
+          </p>
+
+          <details className="manual">
+            <summary>Matching options</summary>
+
+            <label>
+              Accept a fix up to (seconds) away
+              <input
+                type="number"
+                min={1}
+                value={toleranceSeconds}
+                onChange={(event) =>
+                  setToleranceSeconds(Math.max(1, Number(event.target.value) || 1))}
+              />
+            </label>
+            <p className="note">
+              Beyond this a photo is left alone rather than placed from a fix that may be nowhere
+              near it. Anything skipped reports how far the nearest fix was, so you can tell
+              whether raising this would be reasonable.
+            </p>
+
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={interpolate}
+                onChange={(event) => setInterpolate(event.target.checked)}
+              />
+              Interpolate between the fixes either side
+            </label>
+
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={replaceExisting}
+                onChange={(event) => setReplaceExisting(event.target.checked)}
+              />
+              Replace locations that are already set
+            </label>
+          </details>
+
+          <div className="row">
+            <button type="button" className="primary" onClick={() => match('all')} disabled={busy}>
+              Match all photos
+            </button>
+            <button
+              type="button"
+              onClick={() => match('selected')}
+              disabled={busy || selected === 0}
+            >
+              Match selected {selected || ''}
+            </button>
+          </div>
+
+          {result && <MatchReport result={result} />}
+        </>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The track in one line, for the collapsed accordion header.
+ *
+ * Which file and how long it covers — the two things that answer "is the right track loaded",
+ * which is the question you would otherwise open the section to ask.
+ */
+export function describeTrack(track: GpxTrack | null, fileName: string | null): string {
+  if (!track) return 'none loaded';
+
+  const span = trackSpan(track);
+  const day = span ? span.from.toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) : '';
+  return `${track.name ?? fileName ?? 'track'} · ${track.points.length} fixes${day ? ` · ${day}` : ''}`;
+}
+
+function TrackSummary({ track, fileName }: { track: GpxTrack; fileName: string | null }) {
+  const span = trackSpan(track);
+
+  return (
+    <div className="banner ok inline">
+      <strong>{track.name ?? fileName ?? 'Track'}</strong>
+      <div className="note">
+        {track.points.length.toLocaleString()} fixes
+        {span && (
+          <>
+            {' · '}
+            {/*
+              Local time, explicitly labelled. The file holds UTC and the photographs hold a
+              wall-clock reading, so an unlabelled time here would be a third convention to guess
+              between — and "does this track cover that afternoon" is a question people answer in
+              the time they remember, not in UTC.
+            */}
+            {formatLocal(span.from)} to {formatLocal(span.to)} local
+          </>
+        )}
+      </div>
+      {track.untimed > 0 && (
+        <div className="note">
+          {track.untimed} point(s) carry no time and were ignored — they cannot be matched to
+          anything.
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MatchReport({ result }: { result: MatchResult }) {
+  const { placed, skipped } = result;
+  const interpolated = placed.filter((one) => one.interpolated).length;
+
+  // Grouped by reason, because a list of forty filenames each saying "no fix" is not a report.
+  const noFix = skipped.filter((one) => one.reason === 'no-fix');
+  const alreadyPlaced = skipped.filter((one) => one.reason === 'already-placed').length;
+  const noDate = skipped.filter((one) => one.reason === 'no-date').length;
+  const unreadable = skipped.filter((one) => one.reason === 'unreadable').length;
+
+  return (
+    <div className={`banner ${placed.length > 0 ? 'ok' : 'warn'} inline`}>
+      <strong>
+        Placed {placed.length} of {placed.length + skipped.length}
+        {result.scope === 'selected' ? ' selected' : ''}
+      </strong>
+
+      {placed.length > 0 && (
+        <div className="note">
+          {interpolated > 0 && `${interpolated} interpolated between fixes. `}
+          Nothing is written yet — check them on the map, then Save.
+        </div>
+      )}
+
+      {noFix.length > 0 && (
+        <div className="note">
+          {noFix.length} had no fix close enough; the nearest was{' '}
+          {describeGap(Math.min(...noFix.map((one) =>
+            (one.reason === 'no-fix' ? one.gapSeconds : Infinity))))} away.
+          {' '}Raise the tolerance if that sounds reasonable for this track.
+        </div>
+      )}
+      {alreadyPlaced > 0 && (
+        <div className="note">
+          {alreadyPlaced} already had a location and were left alone. Tick{' '}
+          <em>Replace locations that are already set</em> to overwrite them.
+        </div>
+      )}
+      {noDate > 0 && (
+        <div className="note">
+          {noDate} {noDate === 1 ? 'has' : 'have'} no readable date to match on.
+        </div>
+      )}
+      {unreadable > 0 && <div className="note">{unreadable} could not be read at all.</div>}
+    </div>
+  );
+}
+
+/**
+ * Whether nothing has been done about the camera clock at all.
+ *
+ * A drift of zero with no measurement is the default a fresh session starts with, so it means "not
+ * looked at" rather than "checked and found correct". A camera that has genuinely never drifted is
+ * indistinguishable from that, and saying so costs nothing — the measurement takes one photograph.
+ */
+function unsetClock(session: Session): boolean {
+  return session.clock.offsetSeconds === 0 && !session.sync;
+}
+
+/** `95s`, `4 min`, `3 h` — a duration at the precision anybody would actually say it in. */
+function describeGap(seconds: number): string {
+  if (!Number.isFinite(seconds)) return 'nowhere near';
+  if (seconds < 120) return `${Math.round(seconds)}s`;
+  if (seconds < 5400) return `${Math.round(seconds / 60)} min`;
+  return `${Math.round(seconds / 360) / 10} h`;
+}
+
+function formatLocal(instant: Date): string {
+  return instant.toLocaleString(undefined, {
+    day: 'numeric',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}

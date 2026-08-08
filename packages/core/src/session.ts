@@ -14,6 +14,7 @@
 
 import { clockFromSync, type ClockSync } from './clock-sync.ts';
 import { assertValidCoordinates, type Coordinates } from './gps.ts';
+import { matchTrack, type GpxTrack, type MatchOptions } from './gpx.ts';
 import { parseExifDateTime, photoInstant, type CameraClock, type NaiveDateTime } from './time.ts';
 import type { PhotoRef } from './storage.ts';
 
@@ -69,6 +70,7 @@ interface SessionSnapshot {
  */
 export type SessionAction =
   | { readonly kind: 'place'; readonly count: number }
+  | { readonly kind: 'track'; readonly count: number }
   | { readonly kind: 'clear'; readonly count: number }
   | { readonly kind: 'revert'; readonly count: number }
   | { readonly kind: 'time-zone'; readonly timeZone: string }
@@ -214,6 +216,113 @@ export function assignLocation(
     { edits, clock: session.clock, sync: session.sync },
     { kind: 'place', count: writable.length },
   );
+}
+
+/** Why a photo came away from a track with nothing. Phrased by the UI, like `SessionAction`. */
+export type TrackSkip =
+  | { readonly name: string; readonly reason: 'unreadable' }
+  | { readonly name: string; readonly reason: 'no-date' }
+  | { readonly name: string; readonly reason: 'already-placed' }
+  /** The track has no fix close enough. `gapSeconds` is how far the nearest one was. */
+  | { readonly name: string; readonly reason: 'no-fix'; readonly gapSeconds: number };
+
+/** A photo the track placed, and how confidently. */
+export interface TrackPlacement {
+  readonly name: string;
+  readonly coordinates: Coordinates;
+  readonly gapSeconds: number;
+  readonly interpolated: boolean;
+}
+
+export interface TrackApplyOptions extends MatchOptions {
+  /** Which photos to consider. All of them when absent. */
+  readonly names?: readonly string[];
+  /**
+   * Overwrite photos that already have a location.
+   *
+   * Off by default, and that default is the important one: a hand-placed photograph is somebody's
+   * considered judgement, and a track sweeping it aside is a loss that Undo can reverse but nobody
+   * would notice in time to press it.
+   */
+  readonly replaceExisting?: boolean;
+}
+
+/**
+ * Place photographs from a GPS track, by time.
+ *
+ * The correction chain is the point of the whole feature: `instantOf` resolves the camera's naive
+ * reading through the session's zone *and* its measured drift, and only then is the track asked
+ * where that instant was. A track match with an uncorrected clock is confidently wrong — off by
+ * the drift, and by hours if the zone is wrong — which is exactly the failure the clock panel
+ * exists to prevent, so the two features are only useful together.
+ *
+ * Reports what it skipped and why, rather than quietly placing the ones it could. "18 of 24" with
+ * no explanation is the sort of result that makes people distrust a tool that was working
+ * correctly.
+ */
+export function applyTrack(
+  session: Session,
+  track: GpxTrack,
+  options: TrackApplyOptions = {},
+): {
+  readonly session: Session;
+  readonly placed: readonly TrackPlacement[];
+  readonly skipped: readonly TrackSkip[];
+} {
+  const wanted = options.names ? new Set(options.names) : undefined;
+  const candidates = wanted
+    ? session.photos.filter((entry) => wanted.has(entry.ref.name))
+    : session.photos;
+
+  const placed: TrackPlacement[] = [];
+  const skipped: TrackSkip[] = [];
+  const edits = new Map(session.edits);
+
+  for (const entry of candidates) {
+    const name = entry.ref.name;
+
+    if (entry.error !== undefined) {
+      skipped.push({ name, reason: 'unreadable' });
+      continue;
+    }
+
+    if (!options.replaceExisting && locationOf(session, name).kind !== 'none') {
+      skipped.push({ name, reason: 'already-placed' });
+      continue;
+    }
+
+    const instant = instantOf(session, entry);
+    if (!instant) {
+      skipped.push({ name, reason: 'no-date' });
+      continue;
+    }
+
+    const match = matchTrack(track, instant, options);
+    if (match.kind === 'none') {
+      skipped.push({ name, reason: 'no-fix', gapSeconds: match.gapSeconds });
+      continue;
+    }
+
+    edits.set(name, match.coordinates);
+    placed.push({
+      name,
+      coordinates: match.coordinates,
+      gapSeconds: match.gapSeconds,
+      interpolated: match.kind === 'interpolated',
+    });
+  }
+
+  if (placed.length === 0) return { session, placed, skipped };
+
+  return {
+    session: commit(
+      session,
+      { edits, clock: session.clock, sync: session.sync },
+      { kind: 'track', count: placed.length },
+    ),
+    placed,
+    skipped,
+  };
 }
 
 /** Stage removal of a photo's location. */

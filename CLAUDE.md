@@ -38,10 +38,12 @@ reasoning are in `spike/README.md`.
 http://localhost:5173/ (see HANDOFF.md; `localhost` is required for a secure context).
 
 - `packages/core` is complete for the MVP: `gps`, `time`, `jpeg` (the splice), `exif-tags`,
-  `exiftool` (the write path), `exiftool-wasm`, `session` (staged edits + undo), `storage`.
-  **122 tests, `tsc` clean.**
+  `exiftool` (the write path), `exiftool-wasm`, `session` (staged edits + undo), `storage`,
+  `gpx` (track parsing and time matching).
+  **215 tests, `tsc` clean.**
 - `packages/ui` is React 19 + MapLibre 5 on Vite 7, with a `FileStore` over the File System
-  Access API. **20 tests** covering save orchestration, partial failure and QR scan scaling.
+  Access API. **133 tests** covering save orchestration, partial failure, QR scan scaling, the
+  palette and the track line.
   Thumbnails come from the camera's own embedded ~6KB JPEG, and shift-click selects a range.
   Placement is select-then-click on the map, and only that — see below.
 - **Two ways in: the OS file picker (default) or a whole folder.** The picker exists because a
@@ -151,6 +153,39 @@ from scratch three times and produced phantoms every time: an element scrolled o
 still reports its real off-screen rect, and an element inside a *closed* `<details>` reports a rect
 although nothing is painted. It clips to every scrolling ancestor and asks `checkVisibility()`
 first. Do not write a fourth one.
+
+### GPX import is the camera clock's other half
+
+`gpx.ts` parses a track and `applyTrack` in `session.ts` places photographs from it. The correction
+chain is the whole point: `instantOf` resolves the camera's naive reading through the session's zone
+**and** its measured drift, and only then is the track asked where that instant was. Matching an
+uncorrected reading puts every photograph somewhere plausible and wrong — which is why the panel
+sits directly below Camera clock and restates what clock it is about to use.
+
+Four things that would each be a silent wrong answer:
+
+- **A `<time>` with no zone is read as UTC.** GPX requires UTC and nearly every logger writes the
+  `Z`, but `new Date('2024-07-01T11:00:00')` is *local* time in JavaScript — a whole-hours error
+  producing coordinates from the wrong part of the walk, with nothing to suggest anything is amiss.
+- **The tolerance is measured against the nearest fix, not the interval around it.** An hour parked
+  in a café with the logger running leaves two fixes an hour apart; a photo taken one minute after
+  the first is where that fix says, whatever the size of the hole that follows it.
+- **Longitude is interpolated the short way round.** Straight arithmetic between +179.9 and −179.9
+  sweeps backwards across the planet and lands at longitude 0.
+- **Photos that already have a location are left alone by default.** A hand-placed photograph is
+  somebody's considered judgement, and a track sweeping it aside is a loss Undo can reverse and
+  nobody would notice in time to press it. `replaceExisting` is the opt-in.
+
+The parser is **hand-rolled rather than `DOMParser`**, because `packages/core` has zero platform
+dependencies by rule and `DOMParser` does not exist in Node — using it would put the matching logic
+beyond the test runner, which is exactly where these errors would hide. Note `indexOfClose`: finding
+each point's closing tag by lower-casing the document inside the loop is **quadratic**, and it was
+measured — 1053 ms to parse 5,000 points, 42 ms after the fix. Folding once outside the loop is fast
+but unsound, because `toLowerCase` can change a string's *length* on some Unicode and shift every
+offset.
+
+`applyTrack` is one undo step and reports what it skipped, grouped by reason. "18 of 24" with no
+explanation is how a tool that is working correctly loses people's trust.
 
 ### Camera-clock sync stores the measurement, not the offset
 
@@ -519,9 +554,6 @@ replaces the photo now on screen with the one just left.
   is blank over ground never loaded online. See the PWA section.
 - **A dark map style.** The interface is dark and the map is bright, which jars at night. Liberty
   has no dark variant, so it means recolouring the style after load.
-- **GPX import**, deferred by the plan but now the biggest thing missing: every photo is placed by
-  hand, and `clock-sync.ts` already knows the camera's true offset, which is what matching a track
-  needs. See HANDOFF.md for the ordering.
 
 Settled:
 
@@ -555,7 +587,7 @@ permission prompt disappears entirely. Manual placement on a map. Camera-clock/t
 correction. Map showing photos. Online tiles, designed so offline drops in later. Photos read from
 the camera's SD card on Android.
 
-**Deferred:** ARW (offer XMP sidecars first), video, GPX import, built-in track logging, reverse
+**Deferred:** ARW (offer XMP sidecars first), video, built-in track logging, reverse
 geocoding, IPTC editing, offline tiles.
 
 ## Conventions

@@ -17,9 +17,15 @@
  */
 
 import { useEffect, useMemo, useRef } from 'react';
-import maplibregl, { type Map as MapLibreMap, type Marker } from 'maplibre-gl';
+import maplibregl, {
+  type GeoJSONSource,
+  type Map as MapLibreMap,
+  type Marker,
+} from 'maplibre-gl';
+import type { Feature, LineString } from 'geojson';
 
 import { boundsOf, selectionFocus } from './map-focus.ts';
+import { trackLine, type LinePoint } from './track-line.ts';
 import {
   ATTRIBUTION,
   RASTER_FALLBACK,
@@ -28,7 +34,11 @@ import {
   labelDensity,
   tileChoiceFrom,
 } from './tiles.ts';
-import type { Coordinates } from '@snapmapper/core';
+import type { Coordinates, GpxTrack } from '@snapmapper/core';
+
+/** Ids for the track line. Named constants because they are referenced from three effects. */
+const TRACK_SOURCE = 'snapmapper-track';
+const TRACK_LAYER = 'snapmapper-track-line';
 
 export interface MapPin {
   readonly name: string;
@@ -60,10 +70,12 @@ export interface PhotoMapProps {
    * nonsense zoom and apply it silently. So framing waits until the map can see itself.
    */
   readonly visible: boolean;
+  /** Drawn as a line, so you can see whether the right track is loaded. */
+  readonly track: GpxTrack | null;
 }
 
 export function PhotoMap({
-  pins, onPlace, onSelectPin, onMovePin, armed, selectedCount, visible,
+  pins, onPlace, onSelectPin, onMovePin, armed, selectedCount, visible, track,
 }: PhotoMapProps) {
   const container = useRef<HTMLDivElement>(null);
   const map = useRef<MapLibreMap | null>(null);
@@ -73,6 +85,9 @@ export function PhotoMap({
   // tearing the map down and rebuilding it whenever a prop identity changes.
   const handlers = useRef({ onPlace, onSelectPin, onMovePin });
   handlers.current = { onPlace, onSelectPin, onMovePin };
+
+  /** The track as `[lng, lat]` pairs, held in a ref so `style.load` can redraw it. */
+  const line = useRef<readonly LinePoint[]>([]);
 
   useEffect(() => {
     if (!container.current || map.current) return;
@@ -120,6 +135,10 @@ export function PhotoMap({
      * simply finds no symbol layers to adjust.
      */
     instance.on('style.load', () => {
+      // A style swap wipes every source and layer the app added, so the track goes back on here
+      // as well as when it changes. Without this, falling back to raster loses the line silently.
+      drawTrack(instance, line.current);
+
       for (const layer of labelDensity(instance.getStyle().layers ?? [])) {
         instance.setLayerZoomRange(layer.id, layer.minzoom, layer.maxzoom ?? 24);
         instance.setLayoutProperty(layer.id, 'text-padding', layer.textPadding);
@@ -202,6 +221,13 @@ export function PhotoMap({
     }
   }, [pins]);
 
+  useEffect(() => {
+    line.current = trackLine(track);
+    const instance = map.current;
+    // Before the style is in there is nowhere to put a layer; `style.load` draws it instead.
+    if (instance?.isStyleLoaded()) drawTrack(instance, line.current);
+  }, [track]);
+
   // A hidden map never learns it was resized, so it comes back with the container size it had
   // when it was hidden. Cheap to ask; wrong-looking if not asked.
   useEffect(() => {
@@ -259,6 +285,48 @@ export function PhotoMap({
       )}
     </div>
   );
+}
+
+/**
+ * Put the line on the map, or take it off.
+ *
+ * Below every symbol layer would be ideal, but the id to insert before differs by style and the
+ * raster fallback has none at all. On top is the honest choice anyway: the track is a temporary
+ * working overlay, not part of the map, and it is drawn translucent so the ground stays readable
+ * underneath it.
+ */
+function drawTrack(
+  instance: MapLibreMap,
+  coordinates: readonly LinePoint[],
+): void {
+  const data: Feature<LineString> = {
+    type: 'Feature',
+    properties: {},
+    geometry: { type: 'LineString', coordinates: coordinates.map(([lng, lat]) => [lng, lat]) },
+  };
+
+  const existing = instance.getSource(TRACK_SOURCE);
+  if (existing) {
+    (existing as GeoJSONSource).setData(data);
+    return;
+  }
+  if (coordinates.length === 0) return;
+
+  instance.addSource(TRACK_SOURCE, { type: 'geojson', data });
+  instance.addLayer({
+    id: TRACK_LAYER,
+    type: 'line',
+    source: TRACK_SOURCE,
+    layout: { 'line-join': 'round', 'line-cap': 'round' },
+    paint: {
+      // The interface's accent would put the line in the same colour family as the pins, which are
+      // the thing that must stand out. A track is context, so it gets its own hue and stays under
+      // full opacity.
+      'line-color': '#c2410c',
+      'line-width': 3,
+      'line-opacity': 0.65,
+    },
+  });
 }
 
 function paint(element: HTMLElement, pin: MapPin): void {

@@ -15,6 +15,7 @@ import { describeAction, explainAction } from '../src/describe-action.ts';
 
 const ACTIONS: readonly SessionAction[] = [
   { kind: 'place', count: 5 },
+  { kind: 'track', count: 12 },
   { kind: 'clear', count: 2 },
   { kind: 'revert', count: 1 },
   { kind: 'time-zone', timeZone: 'Europe/London' },

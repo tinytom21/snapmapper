@@ -10,6 +10,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   addPhotos as addPhotosToSession,
   applySync,
+  applyTrack,
   assignLocation,
   canRedo,
   canUndo,
@@ -35,6 +36,8 @@ import {
   type CameraClock,
   type ClockSync,
   type Coordinates,
+  type GpxTrack,
+  type TrackApplyOptions,
   type MetadataBackend,
   type PhotoEntry,
   type PhotoRef,
@@ -127,6 +130,9 @@ export function App() {
   /** The narrow-screen overflow menu. */
   const [menuOpen, setMenuOpen] = useState(false);
   const [view, setViewState] = useState<ViewMode>(loadViewMode);
+  /** The loaded GPS track, if any, and the file it came from. */
+  const [track, setTrack] = useState<GpxTrack | null>(null);
+  const [trackFile, setTrackFile] = useState<string | null>(null);
 
   const setView = useCallback((next: ViewMode) => {
     saveViewMode(next);
@@ -471,6 +477,20 @@ export function App() {
     setSession((current) => (current ? assignLocation(current, [name], coordinates) : current));
   }, []);
 
+  /**
+   * Place photographs from the loaded track.
+   *
+   * Returns the outcome rather than pushing it into state, because the report belongs to the panel
+   * that asked — it is the answer to a button press, not a property of the session. The session
+   * change itself is one undo step, so a match that goes wrong costs one Ctrl+Z.
+   */
+  const matchToTrack = useCallback((options: TrackApplyOptions) => {
+    if (!session || !track) return { placed: [], skipped: [] };
+    const outcome = applyTrack(session, track, options);
+    setSession(outcome.session);
+    return { placed: outcome.placed, skipped: outcome.skipped };
+  }, [session, track]);
+
   const readOriginal = useCallback(
     (entry: PhotoEntry) => store.read(entry.ref),
     [],
@@ -760,6 +780,19 @@ export function App() {
                   onSync={(sync: ClockSync) => setSession(applySync(session, sync))}
                   onClearSync={() => setSession(clearSync(session))}
                   onScanReference={scanReference}
+                  track={{
+                    track,
+                    trackFile,
+                    onTrack: (loaded, fileName) => {
+                      setTrack(loaded);
+                      setTrackFile(fileName);
+                    },
+                    onClearTrack: () => {
+                      setTrack(null);
+                      setTrackFile(null);
+                    },
+                    onMatch: matchToTrack,
+                  }}
                 />
               )
               : !loading && (
@@ -810,6 +843,7 @@ export function App() {
               armed={Boolean(session && session.selected.size > 0)}
               selectedCount={selected}
               visible={mapVisible}
+              track={track}
             />
           </div>
         )}

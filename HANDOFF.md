@@ -16,13 +16,13 @@ Nothing is half-finished. The tree is clean and every change is deployed.
 
 | Path | State |
 |---|---|
-| `packages/core` | Platform-agnostic logic. **187 tests, `tsc` clean.** `gps`, `time`, `jpeg` (the splice), `exif-tags`, `exiftool` (write path), `exiftool-wasm`, `session` (staged edits, undo, named actions), `clock-sync`, `verify-write`, `storage`. |
-| `packages/ui` | React 19 + MapLibre 5 on Vite 7. **128 tests.** The only platform-specific file is `browser-file-store.ts`, behind `FileStore`. |
+| `packages/core` | Platform-agnostic logic. **215 tests, `tsc` clean.** `gps`, `time`, `jpeg` (the splice), `exif-tags`, `exiftool` (write path), `exiftool-wasm`, `session` (staged edits, undo, named actions), `clock-sync`, `gpx` (track parsing and matching), `verify-write`, `storage`. |
+| `packages/ui` | React 19 + MapLibre 5 on Vite 7. **133 tests.** The only platform-specific file is `browser-file-store.ts`, behind `FileStore`. |
 | `packages/shells` | Does not exist and is not needed. There is no native shell and no reason for one. |
 | `spike/` | Phase 0, done. Still where the write path is checked against a **native** ExifTool: `npm run splice --workspace spike` → 184 checks. |
 | `docs/PLAN.md` | Historical. Useful for intent, wrong in places. |
 
-**315 tests, `tsc` clean, production build succeeds.**
+**348 tests, `tsc` clean, production build succeeds.**
 
 ```bash
 npm test && npm run typecheck
@@ -48,14 +48,14 @@ was found:
 ```
 (await import('/src/dev-preview.tsx')).previewPhotoList()   // the real Sidebar, 24 sample photos
 (await import('/src/dev-preview.tsx')).previewFullSize()    // the full-size preview overlay
-(await import('/src/dev-preview.tsx')).previewMap()         // the map on its own, with pins
+(await import('/src/dev-preview.tsx')).previewMap()         // the map on its own, pins and a track
 (await import('/src/dev-preview.tsx')).previewActionMenu()  // the phone's overflow menu
 (await import('/src/dev-preview.tsx')).findOverlaps()       // anything painted over anything
 ```
 
 ## Deploying
 
-**Push to `main` and it ships.** `.github/workflows/deploy.yml` typechecks, runs all 315 tests,
+**Push to `main` and it ships.** `.github/workflows/deploy.yml` typechecks, runs all 348 tests,
 builds and publishes to GitHub Pages; a failing test blocks the deploy. About two minutes.
 
 The base path comes from the repository name, so renaming the repo needs no edit. A Pages project
@@ -84,21 +84,20 @@ a *"A new version is ready"* banner rather than leaving it a mystery.
 - **The sidebar is an accordion**, exactly one section open. Structural, not cosmetic — see CLAUDE.md.
 - **Vector tiles** from OpenFreeMap's `liberty`, with label density raised for a phone-sized
   viewport and the old raster source kept as a fallback.
+- **GPX import works**, and it is the camera clock's other half — a track match runs through the
+  measured drift and the session zone, so the two features are only useful together.
 
 ## What to pick up next
 
 Ordered by what would change the tool most.
 
-1. **GPX import with timestamp matching.** The biggest functional leap: every photo is placed by hand
-   today. The hard part is already built and tested — `clock-sync.ts` knows the camera's true offset,
-   which is exactly what matching a track needs.
-2. **Offline map tiles.** The app opens offline but the map is blank over ground never loaded. The
+1. **Offline map tiles.** The app opens offline but the map is blank over ground never loaded. The
    service worker *cannot* fix this: MapLibre fetches tiles inside a worker created from a `blob:`
    URL and those requests never reach it (measured). It needs `maplibregl.addProtocol`, whose
    handlers run on the main thread. PMTiles is the plan's long-term answer.
-3. **A dark map.** The interface is dark and the map is bright. Liberty has no dark variant, so this
+2. **A dark map.** The interface is dark and the map is bright. Liberty has no dark variant, so this
    means recolouring the style after load — worth trying, and it needs a human eye to judge.
-4. **Code-split the ~1.5MB bundle.** Fine on a desktop, worth it on mobile data. It is precached, so
+3. **Code-split the ~1.5MB bundle.** Fine on a desktop, worth it on mobile data. It is precached, so
    it is paid once per version rather than per visit.
 
 Deferred by the plan rather than by us: ARW via XMP sidecars, reverse geocoding into IPTC, video.

@@ -19,15 +19,18 @@
 import { createRoot, type Root } from 'react-dom/client';
 
 import {
+  applyTrack,
   assignLocation,
   clearLocation,
   createSession,
+  parseGpx,
   entryFromTags,
   failedEntry,
   revert,
   select,
   selectRange,
   toggleSelected,
+  type GpxTrack,
   type PhotoEntry,
   type Session,
 } from '@snapmapper/core';
@@ -94,6 +97,25 @@ let root: Root | undefined;
  * the grid the interesting question is precisely whether tapping a tile selects it, tapping its
  * tick box toggles only that one, and tapping its corner opens the preview instead of doing either.
  */
+/**
+ * A synthetic walk, so the track panel and the map's line can be inspected without a GPX file.
+ *
+ * The times bracket `sampleSession`'s photographs, which all read `2024:05:17 14:32:08` — with the
+ * sample clock (Europe/London, 45s fast) that resolves to 13:31:23Z. A track over any other
+ * afternoon would look right in the panel and place nothing, which exercises none of this.
+ */
+export function sampleTrack(): GpxTrack {
+  const points: string[] = [];
+  for (let minute = 0; minute <= 120; minute++) {
+    const time = new Date(Date.UTC(2024, 4, 17, 12, 30 + minute)).toISOString();
+    points.push(
+      `<trkpt lat="${43.6047 + minute * 0.002}" lon="${1.4442 + minute * 0.003}">`
+      + `<ele>${150 + minute}</ele><time>${time}</time></trkpt>`,
+    );
+  }
+  return parseGpx(`<gpx><trk><name>Sample walk</name><trkseg>${points.join('')}</trkseg></trk></gpx>`);
+}
+
 export function previewPhotoList(
   initial: Session = sampleSession(),
   view: ViewMode = 'list',
@@ -110,6 +132,9 @@ export function previewPhotoList(
 
   root = createRoot(host);
   const thumbnails = sampleThumbnails(initial);
+  // Mutable rather than state: this harness re-renders by calling `render` itself, so a hook
+  // would need a component wrapper that exists only to hold one value.
+  let track: GpxTrack | null = sampleTrack();
   function render(session: Session, current: ViewMode) {
     const again = (next: Session) => render(next, current);
 
@@ -119,6 +144,18 @@ export function previewPhotoList(
         thumbnails={thumbnails}
         busy={false}
         addPhotosLabel="Add photos…"
+        track={{
+          track: track,
+          trackFile: 'sample.gpx',
+          onTrack: (loaded) => { track = loaded; again(session); },
+          onClearTrack: () => { track = null; again(session); },
+          onMatch: (options) => {
+            if (!track) return { placed: [], skipped: [] };
+            const outcome = applyTrack(session, track, options);
+            again(outcome.session);
+            return { placed: outcome.placed, skipped: outcome.skipped };
+          },
+        }}
         onToggle={(name) => again(toggleSelected(session, name))}
         onSelectOnly={(name) => again(select(session, [name]))}
         onSelectRange={(from, to, add) => again(selectRange(session, from, to, add))}
@@ -302,6 +339,7 @@ export function previewMap(): void {
         { name: 'a.jpg', coordinates: { latitude: 43.6047, longitude: 1.4442 }, pending: false, selected: false },
         { name: 'b.jpg', coordinates: { latitude: 43.2965, longitude: 5.3698 }, pending: true, selected: true },
       ]}
+      track={sampleTrack()}
       onPlace={(c) => console.log('place', c)}
       onSelectPin={(n) => console.log('select', n)}
       onMovePin={(n, c) => console.log('move', n, c)}

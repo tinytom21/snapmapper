@@ -14,6 +14,9 @@ works with the network switched off entirely.
 ## What it does
 
 - **Place photos by hand on a map.** Select one or fifty, tap the map, done.
+- **Or load a GPX track** and let it place them by time. Anything it cannot place confidently is
+  left alone and reported, rather than dropped somewhere plausible — and it matches against the
+  *corrected* camera clock, so the two features work together.
 - **Writes real EXIF GPS** with a genuine ExifTool, compiled to WebAssembly — the same ExifTool
   everything else in this space uses, not a reimplementation.
 - **Saves copies by default**, into a `geotagged` folder beside your originals. Your originals are
@@ -47,8 +50,8 @@ Node's built-in type stripping.
 Working, and used in earnest on both a PC and an Android phone against real A6400 files. JPEG only
 so far.
 
-**Deferred:** Sony ARW (XMP sidecars first, which is what raw editors read anyway), video, GPX
-track import, reverse geocoding, offline map tiles.
+**Deferred:** Sony ARW (XMP sidecars first, which is what raw editors read anyway), video,
+built-in track logging, reverse geocoding, offline map tiles.
 
 **Known limitation:** no browser can set a file's modification date, so copies carry the date they
 were written. Your originals keep theirs, which is most of why copies are the default.
