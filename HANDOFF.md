@@ -16,13 +16,13 @@ Nothing is half-finished. The tree is clean and every change is deployed.
 
 | Path | State |
 |---|---|
-| `packages/core` | Platform-agnostic logic. **215 tests, `tsc` clean.** `gps`, `time`, `jpeg` (the splice), `exif-tags`, `exiftool` (write path), `exiftool-wasm`, `session` (staged edits, undo, named actions), `clock-sync`, `gpx` (track parsing and matching), `verify-write`, `storage`. |
+| `packages/core` | Platform-agnostic logic. **238 tests, `tsc` clean.** `gps`, `time`, `jpeg` (the splice), `exif-tags`, `exiftool` (write path), `exiftool-wasm`, `session` (staged edits, undo, named actions), `clock-sync`, `gpx` (track parsing and matching), `google-timeline` + `track-file` (Timeline import), `verify-write`, `storage`. |
 | `packages/ui` | React 19 + MapLibre 5 on Vite 7. **133 tests.** The only platform-specific file is `browser-file-store.ts`, behind `FileStore`. |
 | `packages/shells` | Does not exist and is not needed. There is no native shell and no reason for one. |
 | `spike/` | Phase 0, done. Still where the write path is checked against a **native** ExifTool: `npm run splice --workspace spike` → 184 checks. |
 | `docs/PLAN.md` | Historical. Useful for intent, wrong in places. |
 
-**348 tests, `tsc` clean, production build succeeds.**
+**371 tests, `tsc` clean, production build succeeds.**
 
 ```bash
 npm test && npm run typecheck
@@ -55,7 +55,7 @@ was found:
 
 ## Deploying
 
-**Push to `main` and it ships.** `.github/workflows/deploy.yml` typechecks, runs all 348 tests,
+**Push to `main` and it ships.** `.github/workflows/deploy.yml` typechecks, runs all 371 tests,
 builds and publishes to GitHub Pages; a failing test blocks the deploy. About two minutes.
 
 The base path comes from the repository name, so renaming the repo needs no edit. A Pages project
@@ -84,8 +84,10 @@ a *"A new version is ready"* banner rather than leaving it a mystery.
 - **The sidebar is an accordion**, exactly one section open. Structural, not cosmetic — see CLAUDE.md.
 - **Vector tiles** from OpenFreeMap's `liberty`, with label density raised for a phone-sized
   viewport and the old raster source kept as a fallback.
-- **GPX import works**, and it is the camera clock's other half — a track match runs through the
-  measured drift and the session zone, so the two features are only useful together.
+- **Track import works**, and it is the camera clock's other half — a match runs through the
+  measured drift and the session zone, so the two features are only useful together. Both a GPX
+  from a logger app and a **Google Timeline export** are accepted, sniffed by content. Timeline is
+  inferred rather than logged, so the panel reports what each track is made of; see CLAUDE.md.
 
 ## What to pick up next
 

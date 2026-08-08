@@ -38,6 +38,15 @@ export interface GpxTrack {
   readonly name: string | undefined;
   /** Points that were dropped for having no usable time. Reported, not hidden. */
   readonly untimed: number;
+  /**
+   * Anything the reader wants said about where this track came from.
+   *
+   * Empty for a GPX file, where the answer is "the file". A converted Google Timeline export needs
+   * it: what it contains varies by Android version and by how long Timeline has been on, and
+   * whether a match came from a real GPS fix or an inferred visit to a shop is the difference
+   * between metres and a hundred metres. Silently averaging the two would be the wrong kindness.
+   */
+  readonly notes?: readonly string[];
 }
 
 /**
@@ -151,7 +160,7 @@ export function parseGpx(xml: string): GpxTrack {
     );
   }
 
-  return { points: sortAndDedupe(points), name: element(xml, 'name'), untimed };
+  return trackFromPoints(points, element(xml, 'name'), untimed);
 }
 
 /**
@@ -176,10 +185,43 @@ function attribute(attributes: string, name: string): string | undefined {
   return match?.[2] ?? match?.[3];
 }
 
-/** The text of the first `<name>`/`<time>`/`<ele>` in a fragment. */
+/** The text of the first `<name>`/`<time>`/`<ele>` in a fragment, with entities decoded. */
 function element(fragment: string, name: string): string | undefined {
   const match = new RegExp(`<${name}\\b[^>]*>([\\s\\S]*?)</${name}>`, 'i').exec(fragment);
-  return match?.[1]?.trim();
+  const text = match?.[1]?.trim();
+  return text === undefined ? undefined : decodeEntities(text);
+}
+
+/**
+ * XML's five entities, plus numeric references.
+ *
+ * Needed because a hand-rolled reader gets no decoding for free, and it showed up the moment the
+ * writer was tested against the reader: a track named `Dad & I` is written correctly as
+ * `Dad &amp; I` by any tool and read back as the literal `&amp;` without this. Harmless in a
+ * `<time>`, which has no special characters, and plainly wrong everywhere a human named something.
+ *
+ * `&amp;` is decoded **last**. Doing it first would turn `&amp;lt;` — the correct encoding of the
+ * literal text `&lt;` — into `&lt;` and then into `<`, which is how a decoder invents markup that
+ * was never in the document.
+ */
+function decodeEntities(text: string): string {
+  return text
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&#x([\da-f]+);/gi, (_, hex: string) => codePoint(parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_, digits: string) => codePoint(Number(digits)))
+    .replace(/&amp;/g, '&');
+}
+
+/** A numeric reference, or the empty string if it names nothing a string can hold. */
+function codePoint(value: number): string {
+  try {
+    return String.fromCodePoint(value);
+  } catch {
+    return '';
+  }
 }
 
 /**
@@ -198,6 +240,11 @@ function indexOfClose(xml: string, closing: RegExp, from: number): number {
 }
 
 /**
+ * Build a track from points gathered anywhere — the GPX parser, or a converted Timeline export.
+ *
+ * The sorting and de-duplication are not optional garnish, which is why every producer goes
+ * through here rather than assembling a `GpxTrack` literal. See below.
+ *
  * Ascending by time, with repeated timestamps collapsed.
  *
  * Both halves are load-bearing for the matcher, which binary-searches and therefore assumes order.
@@ -206,6 +253,15 @@ function indexOfClose(xml: string, closing: RegExp, from: number): number {
  * claiming the same instant cannot both be right, and keeping them would make the answer depend on
  * which one the search happened to land on.
  */
+export function trackFromPoints(
+  points: readonly TrackPoint[],
+  name: string | undefined,
+  untimed = 0,
+  notes: readonly string[] = [],
+): GpxTrack {
+  return { points: sortAndDedupe(points), name, untimed, notes };
+}
+
 function sortAndDedupe(points: readonly TrackPoint[]): readonly TrackPoint[] {
   const sorted = [...points].sort((a, b) => a.time - b.time);
 
@@ -215,6 +271,46 @@ function sortAndDedupe(points: readonly TrackPoint[]): readonly TrackPoint[] {
     unique.push(point);
   }
   return unique;
+}
+
+/**
+ * A track back out as a GPX document.
+ *
+ * The point of this is a Timeline export, which is a format only Google reads and which Google has
+ * already changed twice. Converting once and keeping the GPX means the day's track survives in
+ * something every mapping tool on earth can open — and it is a far smaller file than the export it
+ * came from, which covers years.
+ *
+ * Times are written in UTC with the `Z`, as the schema requires, because the whole reason
+ * `parseGpxTime` has to be lenient is loggers that do not.
+ */
+export function toGpx(track: GpxTrack, name = track.name ?? 'Track'): string {
+  const points = track.points.map((point) => {
+    const elevation = point.altitude !== undefined
+      ? `<ele>${round(point.altitude, 2)}</ele>`
+      : '';
+    return `      <trkpt lat="${round(point.latitude, 7)}" lon="${round(point.longitude, 7)}">`
+      + `${elevation}<time>${new Date(point.time).toISOString()}</time></trkpt>`;
+  });
+
+  return '<?xml version="1.0" encoding="UTF-8"?>\n'
+    + '<gpx version="1.1" creator="Snapmapper" xmlns="http://www.topografix.com/GPX/1/1">\n'
+    + `  <trk>\n    <name>${escapeXml(name)}</name>\n    <trkseg>\n`
+    + `${points.join('\n')}\n`
+    + '    </trkseg>\n  </trk>\n</gpx>\n';
+}
+
+/** Only the five that matter, and only in text — no attribute here takes user content. */
+function escapeXml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function round(value: number, decimals: number): number {
+  const factor = 10 ** decimals;
+  return Math.round(value * factor) / factor;
 }
 
 // --- Matching ----------------------------------------------------------------
@@ -259,10 +355,25 @@ export function matchTrack(
     return { kind: 'none', gapSeconds: gapMs / MS_PER_SECOND };
   }
 
-  if (interpolate && before && next && next.time > before.time) {
+  /*
+   * Interpolate only when *both* neighbours are close, not merely the nearer one.
+   *
+   * The tolerance asks "is there a fix near this photo", which is the right question for whether
+   * to place it at all. It is the wrong question for how. A photo one minute after a fix whose
+   * successor is half an hour and twenty kilometres away is genuinely *at* that fix — but
+   * interpolating would slide it a thirtieth of the way along, several hundred metres into a
+   * journey it was not yet on. Taking the near fix is both more accurate and easier to defend.
+   *
+   * This is the difference between a track logged every second, where every neighbour is close and
+   * interpolation always wins, and a sparse or inferred one — a Google Timeline export, a
+   * battery-saving logger — where most intervals are long and only the endpoints are real.
+   */
+  const bracketed = before !== undefined && next !== undefined && next.time > before.time;
+  if (interpolate && bracketed && gapBefore <= toleranceMs && gapAfter <= toleranceMs) {
     return {
       kind: 'interpolated',
-      coordinates: interpolatePosition(before, next, time),
+      // Non-null by `bracketed`, which the checker cannot narrow through a const.
+      coordinates: interpolatePosition(before as TrackPoint, next as TrackPoint, time),
       gapSeconds: gapMs / MS_PER_SECOND,
     };
   }

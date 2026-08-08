@@ -39,8 +39,8 @@ http://localhost:5173/ (see HANDOFF.md; `localhost` is required for a secure con
 
 - `packages/core` is complete for the MVP: `gps`, `time`, `jpeg` (the splice), `exif-tags`,
   `exiftool` (the write path), `exiftool-wasm`, `session` (staged edits + undo), `storage`,
-  `gpx` (track parsing and time matching).
-  **215 tests, `tsc` clean.**
+  `gpx` (track parsing and time matching), `google-timeline` and `track-file` (Google Timeline
+  import). **238 tests, `tsc` clean.**
 - `packages/ui` is React 19 + MapLibre 5 on Vite 7, with a `FileStore` over the File System
   Access API. **133 tests** covering save orchestration, partial failure, QR scan scaling, the
   palette and the track line.
@@ -186,6 +186,49 @@ offset.
 
 `applyTrack` is one undo step and reports what it skipped, grouped by reason. "18 of 24" with no
 explanation is how a tool that is working correctly loses people's trust.
+
+**Interpolate only when *both* neighbours are within the tolerance.** The tolerance answers "is
+there a fix near this photograph", which decides whether to place it; it is the wrong question for
+*how*. A photo 60s after a fix whose successor is half an hour away was at that fix — interpolating
+slides it a thirtieth of the way into a journey it had not started. Shipped wrong on the first cut
+and found when Timeline import arrived, because sparse tracks are made almost entirely of such gaps.
+
+### Google Timeline import, because a logger you must remember to start is off when it matters
+
+`google-timeline.ts` converts an export to the same `GpxTrack`; `track-file.ts` sniffs which format
+a picked file is **by its first character**, since a Timeline export has been called `Timeline.json`,
+`location-history.json` and `Records.json` depending on the year and the phone. `toGpx` writes the
+result back out, so a day survives as something every mapping tool reads.
+
+Timeline is *inferred, not recorded*, and the interface says so per track rather than averaging it
+away — a match against a real fix is accurate to metres, one against a visit to a building.
+
+- **Three shapes, all live:** `rawSignals` (genuine fixes, best), `semanticSegments[].timelinePath`
+  (thinned, road-snapped), and the old Takeout `locations` with `latitudeE7` integers. The last is
+  read **only if the others produced nothing**, or an export holding both doubles every fix.
+- **Gathered in quality order, and that is load-bearing.** `trackFromPoints` drops points sharing a
+  timestamp, keeping the first, and `Array.sort` is stable — so raw fixes must be pushed before
+  visit samples or an inferred point displaces a real one. Observed live: 63 points in, 62 out.
+- **A visit is expanded into fixes at a 60s step**, not reduced to two endpoints. It asserts a
+  *constant* position across an interval, which a point-fix matcher cannot represent; with only the
+  ends, a photo taken mid-visit is refused despite the data being perfectly clear.
+- **A journey contributes only its endpoints.** The route between is unrecorded, so a photo taken
+  mid-journey is correctly refused rather than dropped on a straight line.
+- **Timeline quotes numbers inconsistently** — `"0"` beside `5` in one array. `numberish` handles it
+  for offsets; coordinates deliberately stay strict, because a coordinate that is not what it should
+  be is a reason to discard the point. Equally, `0, 0` is a real place, so a half-parsed position
+  must vanish rather than default.
+- **iOS exports are a bare array**, and their path times are *minutes from the segment start*, not
+  instants. Read as an instant that is 1970, and a photo matched against 1970 never matches at
+  all — a silent nothing rather than a visible error.
+
+The fixtures are written from the documented shapes, **not captured from a real export**, and the
+tests say so. Google does not document this format and has changed it twice; the parser reports what
+it could not recognise for that reason.
+
+Note `decodeEntities` in `gpx.ts`, found by testing the writer against the reader: a hand-rolled XML
+reader decodes nothing for free, so a track named `Dad & I` read back as the literal `&amp;`.
+`&amp;` must be decoded **last**, or `&amp;lt;` becomes `<` and the reader invents markup.
 
 ### Camera-clock sync stores the measurement, not the offset
 

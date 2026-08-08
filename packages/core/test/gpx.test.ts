@@ -191,6 +191,32 @@ describe('matching a photo to a track', () => {
     assert.notEqual(match.kind, 'none');
   });
 
+  it('does not interpolate across a gap, only within one', () => {
+    /*
+     * A behaviour change made when Google Timeline import arrived, and a genuine bug before it.
+     *
+     * The tolerance answers "is there a fix near this photograph", which is the right test for
+     * whether to place it at all — and the wrong one for how. Here the photo is 60s after a fix
+     * whose successor is half an hour and a long way away. Interpolating slides it a thirtieth of
+     * the way into a journey it had not started, which is both less accurate than the near fix and
+     * much harder to defend. Sparse and inferred tracks are made almost entirely of gaps like this.
+     */
+    const sparse = parseGpx(gpxOf([
+      ['2024-07-01T11:00:00Z', 51.0, -1.0],
+      ['2024-07-01T11:30:00Z', 52.0, -2.0],
+    ]));
+
+    const match = matchTrack(sparse, at('2024-07-01T11:01:00Z'));
+    assert.equal(match.kind, 'nearest');
+    assert.ok(match.kind === 'nearest');
+    assert.equal(match.coordinates.latitude, 51);
+  });
+
+  it('still interpolates when both neighbours are close, which is the dense case', () => {
+    const match = matchTrack(WALK, at('2024-07-01T11:01:30Z'));
+    assert.equal(match.kind, 'interpolated');
+  });
+
   it('refuses a photo with no fix inside the tolerance', () => {
     const sparse = parseGpx(gpxOf([
       ['2024-07-01T11:00:00Z', 51.0, -1.0],

@@ -17,7 +17,8 @@ import { useRef, useState } from 'react';
 
 import {
   DEFAULT_TOLERANCE_SECONDS,
-  parseGpx,
+  readTrackFile,
+  toGpx,
   trackSpan,
   type GpxTrack,
   type Session,
@@ -63,7 +64,7 @@ export function TrackPanel({
     setProblem(null);
     setResult(null);
     try {
-      onTrack(parseGpx(await file.text()), file.name);
+      onTrack(readTrackFile(await file.text()).track, file.name);
     } catch (cause) {
       setProblem(cause instanceof Error ? cause.message : String(cause));
     }
@@ -84,7 +85,7 @@ export function TrackPanel({
       <input
         ref={input}
         type="file"
-        accept=".gpx,application/gpx+xml,text/xml"
+        accept=".gpx,.json,application/gpx+xml,application/json,text/xml"
         hidden
         onChange={(event) => {
           const file = event.target.files?.[0];
@@ -96,15 +97,23 @@ export function TrackPanel({
       />
 
       {!track && (
-        <p className="note">
-          If you carried a GPS logger or a phone recording a track, load it here and the
-          photographs place themselves by time.
-        </p>
+        <>
+          <p className="note">
+            A <strong>.gpx</strong> from a logger app, or a <strong>Google Timeline</strong> export
+            — the photographs then place themselves by time.
+          </p>
+          <p className="note">
+            Timeline needs no app running on the day, which is its whole advantage. On Android:
+            Settings → Location → Location Services → Timeline → <em>Export Timeline data</em>. It
+            is inferred rather than logged, so it is less precise; the panel says which kind of
+            point each match came from.
+          </p>
+        </>
       )}
 
       <div className="row">
         <button type="button" onClick={() => input.current?.click()} disabled={busy}>
-          {track ? 'Load a different track…' : 'Load a GPX file…'}
+          {track ? 'Load a different track…' : 'Load a track…'}
         </button>
         {track && (
           <button type="button" onClick={() => { onClearTrack(); setResult(null); }}>
@@ -214,6 +223,9 @@ export function describeTrack(track: GpxTrack | null, fileName: string | null): 
 
 function TrackSummary({ track, fileName }: { track: GpxTrack; fileName: string | null }) {
   const span = trackSpan(track);
+  // Notes are only produced by a conversion, so their presence is the signal — no second flag to
+  // thread through and keep in step with the first.
+  const isConverted = (track.notes ?? []).length > 0;
 
   return (
     <div className="banner ok inline">
@@ -239,6 +251,58 @@ function TrackSummary({ track, fileName }: { track: GpxTrack; fileName: string |
           anything.
         </div>
       )}
+
+      {/*
+        What the track is made of, when that varies. A Google Timeline export mixes real GPS fixes
+        with a road-snapped path and inferred visits, and which one a photograph matched is the
+        difference between ten metres and a hundred. The converter counts them; this says so.
+      */}
+      {(track.notes ?? []).map((note) => <div key={note} className="note">{note}</div>)}
+
+      {/*
+        Only offered for a converted track, because for a GPX it would hand back the file you just
+        opened. Worth having for Timeline: the export is a format only Google reads, covers years,
+        and has already changed twice — a GPX of the one day is small, portable and stable.
+      */}
+      {isConverted && <SaveAsGpx track={track} />}
+    </div>
+  );
+}
+
+/**
+ * Keep the converted track as a GPX.
+ *
+ * An object URL and a synthetic click, not the File System Access API. This is a download rather
+ * than a managed write — it wants the browser's own "where do you want this" behaviour, it needs no
+ * permission grant, and it works in browsers where the rest of the app does not.
+ */
+function SaveAsGpx({ track }: { track: GpxTrack }) {
+  const [saved, setSaved] = useState(false);
+
+  function save() {
+    const span = trackSpan(track);
+    // Named for the day it covers, because a folder of files called `track.gpx` is a folder of
+    // files nobody can tell apart.
+    const day = span ? span.from.toISOString().slice(0, 10) : 'track';
+    const blob = new Blob([toGpx(track, `${track.name ?? 'Track'} ${day}`)], {
+      type: 'application/gpx+xml',
+    });
+
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `snapmapper-${day}.gpx`;
+    link.click();
+    // Revoked on the next tick: revoking synchronously can beat the download starting.
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+    setSaved(true);
+  }
+
+  return (
+    <div className="row">
+      <button type="button" className="link" onClick={save}>
+        {saved ? 'Saved as GPX — save again' : 'Save this as a GPX file'}
+      </button>
     </div>
   );
 }
