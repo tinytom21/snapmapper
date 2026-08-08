@@ -25,12 +25,19 @@
  * asked at all.
  */
 
-const DATABASE = 'snapmapper';
-const STORE = 'handles';
-const VERSION = 1;
+
+import { HANDLE_STORE, canPersist, transact } from './idb.ts';
 
 /** What a remembered folder is for. One row each. */
 export type HandleSlot = 'track-folder' | 'output-folder';
+
+/** The schema lives in `idb.ts`; see there for why this file no longer opens the database. */
+function store<T>(
+  mode: IDBTransactionMode,
+  run: (rows: IDBObjectStore) => IDBRequest<T>,
+): Promise<T> {
+  return transact(HANDLE_STORE, mode, run);
+}
 
 export type PermissionState = 'granted' | 'prompt' | 'denied';
 
@@ -40,32 +47,6 @@ export interface RememberedFolder {
   readonly permission: PermissionState;
 }
 
-function open(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DATABASE, VERSION);
-    request.onupgradeneeded = () => {
-      if (!request.result.objectStoreNames.contains(STORE)) request.result.createObjectStore(STORE);
-    };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error ?? new Error('could not open the database'));
-  });
-}
-
-async function transact<T>(
-  mode: IDBTransactionMode,
-  run: (store: IDBObjectStore) => IDBRequest<T>,
-): Promise<T> {
-  const database = await open();
-  try {
-    return await new Promise<T>((resolve, reject) => {
-      const request = run(database.transaction(STORE, mode).objectStore(STORE));
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error ?? new Error('the database request failed'));
-    });
-  } finally {
-    database.close();
-  }
-}
 
 /**
  * Store a folder for next time, or quietly fail to.
@@ -81,7 +62,7 @@ export async function rememberFolder(
   handle: FileSystemDirectoryHandle,
 ): Promise<void> {
   try {
-    await transact('readwrite', (store) => store.put(handle, slot));
+    await store('readwrite', (rows) => rows.put(handle, slot));
   } catch {
     // See above. Nothing here is worth interrupting a pick for.
   }
@@ -89,7 +70,7 @@ export async function rememberFolder(
 
 export async function forgetFolder(slot: HandleSlot): Promise<void> {
   try {
-    await transact('readwrite', (store) => store.delete(slot));
+    await store('readwrite', (rows) => rows.delete(slot));
   } catch {
     // Forgetting something that was never stored is not a failure worth reporting.
   }
@@ -104,7 +85,7 @@ export async function forgetFolder(slot: HandleSlot): Promise<void> {
  */
 export async function rememberedFolder(slot: HandleSlot): Promise<RememberedFolder | null> {
   try {
-    const handle = await transact<unknown>('readonly', (store) => store.get(slot));
+    const handle = await store('readonly', (rows) => rows.get(slot));
     if (!handle || typeof (handle as FileSystemDirectoryHandle).queryPermission !== 'function') {
       return null;
     }
@@ -134,5 +115,5 @@ export async function regrantFolder(handle: FileSystemDirectoryHandle): Promise<
 
 /** Whether folders can be remembered at all here. False in a browser without IndexedDB. */
 export function canRememberFolders(): boolean {
-  return typeof indexedDB !== 'undefined';
+  return canPersist();
 }

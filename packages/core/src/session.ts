@@ -71,6 +71,7 @@ interface SessionSnapshot {
 export type SessionAction =
   | { readonly kind: 'place'; readonly count: number }
   | { readonly kind: 'track'; readonly count: number }
+  | { readonly kind: 'restore'; readonly count: number }
   | { readonly kind: 'clear'; readonly count: number }
   | { readonly kind: 'revert'; readonly count: number }
   | { readonly kind: 'time-zone'; readonly timeZone: string }
@@ -323,6 +324,41 @@ export function applyTrack(
     placed,
     skipped,
   };
+}
+
+/**
+ * Put a whole set of staged edits back, as one step.
+ *
+ * For restoring work a killed tab took — see `session-backup.ts` in the UI. Not a general-purpose
+ * setter: it validates every coordinate before staging any of them, because these have been
+ * through storage and out again, and a value that has been serialised is a value that could have
+ * come back as something else.
+ *
+ * Photos that are no longer in the session are skipped rather than refused, since a backup may be
+ * offered against a folder that has changed underneath it. The caller reports the shortfall.
+ */
+export function restoreEdits(
+  session: Session,
+  restored: ReadonlyMap<string, Coordinates | null>,
+): Session {
+  const edits = new Map(session.edits);
+  let count = 0;
+
+  for (const [name, staged] of restored) {
+    const photo = session.photos.find((entry) => entry.ref.name === name);
+    if (!photo || photo.error !== undefined) continue;
+    if (staged !== null) assertValidCoordinates(staged);
+    edits.set(name, staged);
+    count += 1;
+  }
+
+  if (count === 0) return session;
+
+  return commit(
+    session,
+    { edits, clock: session.clock, sync: session.sync },
+    { kind: 'restore', count },
+  );
 }
 
 /** Stage removal of a photo's location. */

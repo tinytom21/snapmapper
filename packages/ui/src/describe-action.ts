@@ -23,6 +23,7 @@ export function describeAction(action: SessionAction | undefined): string {
   switch (action.kind) {
     case 'place': return `place ${action.count}`;
     case 'track': return `track ${action.count}`;
+    case 'restore': return `restore ${action.count}`;
     case 'clear': return `clear ${action.count}`;
     case 'revert': return `revert ${action.count}`;
     // One word each. Measured at 375px: "clock offset" left 15px of slack on the header row and
@@ -48,6 +49,8 @@ function longForm(action: SessionAction): string {
       return `placing ${photos(action.count)} on the map`;
     case 'track':
       return `placing ${photos(action.count)} from the GPS track`;
+    case 'restore':
+      return `restoring ${photos(action.count)} of unsaved work`;
     case 'clear':
       return `clearing the location of ${photos(action.count)}`;
     case 'revert':

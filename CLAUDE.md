@@ -40,10 +40,10 @@ http://localhost:5173/ (see HANDOFF.md; `localhost` is required for a secure con
 - `packages/core` is complete for the MVP: `gps`, `time`, `jpeg` (the splice), `exif-tags`,
   `exiftool` (the write path), `exiftool-wasm`, `session` (staged edits + undo), `storage`,
   `gpx` (track parsing and time matching), `google-timeline`, `track-file` and `track-folder`
-  (Timeline import and choosing a day's track). **263 tests, `tsc` clean.**
+  (Timeline import and choosing a day's track). **267 tests, `tsc` clean.**
 - `packages/ui` is React 19 + MapLibre 5 on Vite 7, with a `FileStore` over the File System
-  Access API. **140 tests** covering save orchestration, partial failure, QR scan scaling, the
-  palette, the track line and the track-folder span cache.
+  Access API. **147 tests** covering save orchestration, partial failure, QR scan scaling, the
+  palette, the track line, the track-folder span cache and the crash backup.
   Thumbnails come from the camera's own embedded ~6KB JPEG, and shift-click selects a range.
   Placement is select-then-click on the map, and only that — see below.
 - **Two ways in: the OS file picker (default) or a whole folder.** The picker exists because a
@@ -318,6 +318,38 @@ If the load ever feels slow on a phone, the next lever is byte-ranging the *load
 span: the file is chronological, so a binary search over slices would find the window's offsets in
 about nine probes. It is not done, because it assumes an ordering nothing enforces and 526 ms is
 not yet a problem worth that risk.
+
+### Staged edits survive the tab being killed
+
+`session-backup.ts`. The loss this prevents is silent and specific: **Android discards backgrounded
+tabs** whenever it wants the memory, and `beforeunload` does not fire for it — the page is not
+unloading, it is being destroyed. So the guard against a stray refresh does nothing for the
+likeliest way to lose work on a phone, and forty photographs placed by hand look exactly like forty
+that were never touched.
+
+- **Debounced at 800 ms.** Placing fifty photographs is one gesture and fifty state changes.
+- **Only what cannot be recovered**: the edits, the clock, the measurement. Not the photographs —
+  they are on disk. Not the undo history, which nobody expects to survive a crash.
+- **Offered, never restored automatically.** These coordinates end up in files, and quietly staging
+  edits somebody did not ask for — possibly against a different folder — is how a tool loses trust.
+- **`applicableEdits` reports the shortfall.** A backup is offered against whatever folder is open;
+  restoring what matches beats refusing because two are missing, and the count is what lets you
+  notice you have opened the wrong folder.
+- **The stored shape is checked, not trusted.** A restore is a *write* path, and structured clone
+  returns whatever an older version wrote. Anything unrecognised is treated as no backup at all.
+- **It never throws.** It runs while somebody is tapping a map; private browsing blocks IndexedDB.
+
+### One module owns the IndexedDB schema
+
+`idb.ts`, and this is not tidiness. Two modules opening the same database name with their own
+`VERSION` and their own `onupgradeneeded` **breaks outright**: whoever opens first wins, a later
+request for a *lower* version throws `VersionError`, and one asking for the same version but
+expecting a store the first did not create fails at transaction time — so the symptom appears
+somewhere unrelated to the cause. Both stores are now created together and nothing else calls
+`indexedDB.open`.
+
+Verified live on the real upgrade path: a v1 database holding a remembered folder, opened by the new
+code, comes out at v2 with **the folder intact and the new store usable**.
 
 ### Folders are remembered in IndexedDB, and permission is not
 

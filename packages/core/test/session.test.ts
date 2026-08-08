@@ -27,6 +27,7 @@ import {
   undo,
   undoAction,
   applyTrack,
+  restoreEdits,
   type PhotoEntry,
 } from '../src/session.ts';
 import { parseGpx } from '../src/gpx.ts';
@@ -702,5 +703,51 @@ describe('placing photos from a GPS track', () => {
     // that never happened.
     const session = createSession([shotAt('a.jpg', 18, 0)], CLOCK);
     assert.equal(applyTrack(session, TRACK).session, session);
+  });
+});
+
+describe('putting back work a crash took', () => {
+  it('stages a whole set as one undo step', () => {
+    const session = createSession([entry('a.jpg'), entry('b.jpg')], CLOCK);
+    const after = restoreEdits(session, new Map([
+      ['a.jpg', GREENWICH],
+      ['b.jpg', null],
+    ]));
+
+    assert.deepEqual(locationOf(after, 'a.jpg'), { kind: 'pending', coordinates: GREENWICH });
+    assert.deepEqual(locationOf(after, 'b.jpg'), { kind: 'pending-clear' });
+    // One step, so a restore somebody did not want costs one Ctrl+Z rather than forty.
+    assert.deepEqual(undoAction(after), { kind: 'restore', count: 2 });
+    assert.equal(hasPendingChanges(undo(after)), false);
+  });
+
+  it('validates what came out of storage before staging any of it', () => {
+    /*
+     * These coordinates have been serialised and deserialised, and they are on their way into
+     * files. A value that has been through storage is a value that could have come back as
+     * something else, so it gets the same check as one that came off the map.
+     */
+    const session = createSession([entry('a.jpg')], CLOCK);
+    assert.throws(
+      () => restoreEdits(session, new Map([['a.jpg', { latitude: 91, longitude: 0 }]])),
+      RangeError,
+    );
+  });
+
+  it('skips photos that are no longer here rather than refusing the lot', () => {
+    // A backup may be offered against a folder that has changed underneath it. Restoring what
+    // matches is more useful than refusing because one is missing.
+    const session = createSession([entry('a.jpg')], CLOCK);
+    const after = restoreEdits(session, new Map([
+      ['a.jpg', GREENWICH],
+      ['gone.jpg', SANTIAGO],
+    ]));
+
+    assert.deepEqual(undoAction(after), { kind: 'restore', count: 1 });
+  });
+
+  it('changes nothing when none of it applies', () => {
+    const session = createSession([entry('a.jpg')], CLOCK);
+    assert.equal(restoreEdits(session, new Map([['gone.jpg', GREENWICH]])), session);
   });
 });

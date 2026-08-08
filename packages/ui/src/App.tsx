@@ -28,6 +28,7 @@ import {
   readTrackFile,
   redo,
   redoAction,
+  restoreEdits,
   revert,
   select,
   selectRange,
@@ -77,6 +78,13 @@ import {
 } from './track-search.ts';
 import type { TrackSearchOutcome } from './TrackPanel.tsx';
 import {
+  applicableEdits,
+  backupSession,
+  clearBackup,
+  findBackup,
+  type SessionBackup,
+} from './session-backup.ts';
+import {
   loadPhotos,
   revokeThumbnailUrls,
   toThumbnailUrls,
@@ -86,6 +94,15 @@ import { saveSession, type SaveOutcome, type SaveProgress } from './save.ts';
 import { loadViewMode, saveViewMode, type ViewMode } from './view-mode.ts';
 
 const store = createBrowserFileStore();
+
+/**
+ * How long after the last edit the backup is written.
+ *
+ * Placing fifty photographs is one gesture and fifty state changes, and writing the whole edit map
+ * on each would be fifty round trips while somebody is watching the map. Short enough that a tab
+ * killed moments after a placement still has it.
+ */
+const BACKUP_DEBOUNCE_MS = 800;
 
 /** The system zone is the right default; the camera was probably set to it. */
 function defaultClock(): CameraClock {
@@ -452,6 +469,58 @@ export function App() {
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
+
+  /*
+   * Keep staged edits somewhere a killed tab cannot take them.
+   *
+   * Android discards backgrounded tabs when it wants the memory, and `beforeunload` does not fire
+   * for that — the page is not unloading, it is being destroyed. So the guard below does nothing
+   * for the likeliest way to lose work on a phone.
+   *
+   * Debounced, because placing fifty photographs at once is one gesture and fifty state changes,
+   * and writing the whole edit map each time would be fifty round trips to the database while
+   * somebody is looking at the map.
+   */
+  useEffect(() => {
+    if (!session) return;
+
+    if (!hasPendingChanges(session)) {
+      // Nothing staged means nothing to restore. Clearing here is what makes a save that empties
+      // the edit map also clear the backup, without `save` having to remember to.
+      void clearBackup();
+      return;
+    }
+
+    const timer = setTimeout(
+      () => void backupSession(session, folder?.displayName ?? 'photos', Date.now()),
+      BACKUP_DEBOUNCE_MS,
+    );
+    return () => clearTimeout(timer);
+  }, [session, folder]);
+
+  /*
+   * Offer a backup back, once, when a session appears.
+   *
+   * Deliberately an offer rather than an automatic restore. Coordinates from this end up in files,
+   * and quietly staging edits somebody did not ask for — against a folder that may not even be the
+   * one they came from — is the sort of helpfulness that loses trust. `applicableEdits` reports
+   * how many match, so the banner can say what it would actually do.
+   */
+  const [backup, setBackup] = useState<SessionBackup | null>(null);
+  const offeredFor = useRef<readonly PhotoEntry[] | null>(null);
+
+  useEffect(() => {
+    if (!session || offeredFor.current === session.photos) return;
+    offeredFor.current = session.photos;
+    // Only worth offering against a session that has no staged edits of its own; otherwise the
+    // restore would be competing with work in progress.
+    if (hasPendingChanges(session)) return;
+
+    void (async () => {
+      const found = await findBackup(Date.now());
+      if (found && applicableEdits(found, session).edits.size > 0) setBackup(found);
+    })();
+  }, [session]);
 
   // Refuse to lose staged edits to a stray refresh.
   useEffect(() => {
@@ -834,6 +903,22 @@ export function App() {
         </div>
       )}
 
+      {backup && session && (
+        <RestoreBanner
+          backup={backup}
+          session={session}
+          onRestore={() => {
+            const { edits } = applicableEdits(backup, session);
+            setSession(restoreEdits(session, edits));
+            setBackup(null);
+          }}
+          onDiscard={() => {
+            void clearBackup();
+            setBackup(null);
+          }}
+        />
+      )}
+
       {error && <div className="banner error">{error}</div>}
       {notice && (
         <div className="banner warn">
@@ -1026,6 +1111,59 @@ export function App() {
           }}
         />
       )}
+    </div>
+  );
+}
+
+/**
+ * The offer to put back work a killed tab took.
+ *
+ * Phrased around what it *would do* rather than around what happened, because "your session was
+ * interrupted" invites the question "was it?" while "put back 23 unsaved locations" can simply be
+ * answered. Discard is offered beside it and is not the quiet option — leaving a backup sitting
+ * there to be offered again next time is worse than deleting it on request.
+ */
+function RestoreBanner({
+  backup,
+  session,
+  onRestore,
+  onDiscard,
+}: {
+  backup: SessionBackup;
+  session: Session;
+  onRestore: () => void;
+  onDiscard: () => void;
+}) {
+  const { edits, missing } = applicableEdits(backup, session);
+  const when = new Date(backup.savedAtMs);
+
+  return (
+    <div className="banner warn">
+      <strong>
+        {edits.size} unsaved location{edits.size === 1 ? '' : 's'} from last time
+      </strong>
+      <div className="note">
+        Staged in <code>{backup.folderName}</code>{' '}
+        {when.toLocaleString(undefined, {
+          day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
+        })}
+        , and never written to disk. Putting them back stages them again — nothing is saved until
+        you press Save.
+      </div>
+      {missing > 0 && (
+        // The signal that a different folder is open. Worth saying plainly rather than restoring
+        // what matches and leaving somebody to wonder why the count is short.
+        <div className="note">
+          {missing} more {missing === 1 ? 'was' : 'were'} for {missing === 1 ? 'a photo' : 'photos'}
+          {' '}not in this folder, so {missing === 1 ? 'it' : 'they'} cannot be put back here.
+        </div>
+      )}
+      <div className="row">
+        <button type="button" className="primary" onClick={onRestore}>
+          Put {edits.size === 1 ? 'it' : 'them'} back
+        </button>
+        <button type="button" onClick={onDiscard}>Discard</button>
+      </div>
     </div>
   );
 }
