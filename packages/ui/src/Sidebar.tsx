@@ -31,6 +31,7 @@ export interface SidebarProps {
   readonly onSelectRange: (from: string, to: string, add: boolean) => void;
   readonly onSelectAll: () => void;
   readonly onSelectNone: () => void;
+  readonly onSelectUnplaced: () => void;
   readonly onClear: () => void;
   readonly onRevert: () => void;
   readonly onPreview: (name: string) => void;
@@ -69,6 +70,7 @@ export function Sidebar(props: SidebarProps) {
           onSelectRange={props.onSelectRange}
           onSelectAll={props.onSelectAll}
           onSelectNone={props.onSelectNone}
+          onSelectUnplaced={props.onSelectUnplaced}
           onClear={props.onClear}
           onRevert={props.onRevert}
           onPreview={props.onPreview}

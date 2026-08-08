@@ -17,6 +17,8 @@ import { useRef, useState } from 'react';
 
 import {
   DEFAULT_TOLERANCE_SECONDS,
+  accuracyCoverage,
+  filterByAccuracy,
   readTrackFile,
   toGpx,
   trackSpan,
@@ -36,11 +38,14 @@ export interface TrackPanelProps {
   readonly trackFile: string | null;
   readonly onTrack: (track: GpxTrack, fileName: string) => void;
   readonly onClearTrack: () => void;
-  readonly onMatch: (options: TrackApplyOptions) => {
+  /** `maxAccuracy` filters the track before matching; null keeps every fix. */
+  readonly onMatch: (options: TrackApplyOptions & { maxAccuracy?: number | null }) => {
     readonly placed: readonly TrackPlacement[];
     readonly skipped: readonly TrackSkip[];
   };
   readonly busy: boolean;
+  /** Start a pass over what was just placed. See `ReviewBar.tsx`. */
+  readonly onReview: () => void;
 
   /**
    * The remembered track folder and how to search it. Absent where folders cannot be remembered.
@@ -81,7 +86,7 @@ interface MatchResult {
 }
 
 export function TrackPanel({
-  session, track, trackFile, onTrack, onClearTrack, onMatch, busy, folder,
+  session, track, trackFile, onTrack, onClearTrack, onMatch, busy, folder, onReview,
 }: TrackPanelProps) {
   const input = useRef<HTMLInputElement>(null);
   const [problem, setProblem] = useState<string | null>(null);
@@ -90,6 +95,15 @@ export function TrackPanel({
   const [toleranceSeconds, setToleranceSeconds] = useState(DEFAULT_TOLERANCE_SECONDS);
   const [interpolate, setInterpolate] = useState(true);
   const [replaceExisting, setReplaceExisting] = useState(false);
+  /**
+   * Discard fixes the logger itself was doubtful about. Off unless asked for.
+   *
+   * Free precision where a track carries accuracy — a receiver just out of a tunnel reports a
+   * position it does not believe, and matching against one puts a photograph confidently in the
+   * wrong street. Off by default because the threshold is a judgement, and silently dropping a
+   * third of somebody's track is not a default.
+   */
+  const [maxAccuracy, setMaxAccuracy] = useState<number | null>(null);
 
   const selected = session.selected.size;
 
@@ -103,11 +117,18 @@ export function TrackPanel({
     }
   }
 
+  /** How many of the loaded track's points say anything about accuracy. Zero hides the dial. */
+  const withAccuracy = track ? accuracyCoverage(track) : 0;
+  const kept = track && maxAccuracy !== null
+    ? filterByAccuracy(track, maxAccuracy).points.length
+    : track?.points.length ?? 0;
+
   function match(scope: 'all' | 'selected') {
     const outcome = onMatch({
       toleranceSeconds,
       interpolate,
       replaceExisting,
+      maxAccuracy,
       ...(scope === 'selected' ? { names: [...session.selected] } : {}),
     });
     setResult({ ...outcome, scope });
@@ -205,6 +226,43 @@ export function TrackPanel({
               Interpolate between the fixes either side
             </label>
 
+            {/*
+              Shown only when the track actually carries accuracy. A dial that silently does
+              nothing is worse than an absent one — it invites you to believe you have filtered
+              something.
+            */}
+            {withAccuracy > 0 && (
+              <>
+                <label className="check">
+                  <input
+                    type="checkbox"
+                    checked={maxAccuracy !== null}
+                    onChange={(event) => setMaxAccuracy(event.target.checked ? 30 : null)}
+                  />
+                  Ignore fixes worse than
+                </label>
+                {maxAccuracy !== null && (
+                  <>
+                    <label>
+                      Accuracy (metres)
+                      <input
+                        type="number"
+                        min={1}
+                        value={maxAccuracy}
+                        onChange={(event) =>
+                          setMaxAccuracy(Math.max(1, Number(event.target.value) || 1))}
+                      />
+                    </label>
+                    <p className="note">
+                      Keeps {kept.toLocaleString()} of {track?.points.length.toLocaleString()} fixes.
+                      {' '}Points that state no accuracy are kept — most tracks have none, and
+                      dropping those would empty the track rather than clean it.
+                    </p>
+                  </>
+                )}
+              </>
+            )}
+
             <label className="check">
               <input
                 type="checkbox"
@@ -228,7 +286,7 @@ export function TrackPanel({
             </button>
           </div>
 
-          {result && <MatchReport result={result} />}
+          {result && <MatchReport result={result} onReview={onReview} />}
         </>
       )}
     </div>
@@ -423,7 +481,7 @@ function SaveAsGpx({ track }: { track: GpxTrack }) {
   );
 }
 
-function MatchReport({ result }: { result: MatchResult }) {
+function MatchReport({ result, onReview }: { result: MatchResult; onReview: () => void }) {
   const { placed, skipped } = result;
   const interpolated = placed.filter((one) => one.interpolated).length;
 
@@ -441,10 +499,20 @@ function MatchReport({ result }: { result: MatchResult }) {
       </strong>
 
       {placed.length > 0 && (
-        <div className="note">
-          {interpolated > 0 && `${interpolated} interpolated between fixes. `}
-          Nothing is written yet — check them on the map, then Save.
-        </div>
+        <>
+          <div className="note">
+            {interpolated > 0 && `${interpolated} interpolated between fixes. `}
+            Nothing is written yet.
+          </div>
+          {/*
+            Offered here because here is where somebody has just been handed 38 placements they did
+            not make by hand. A match's failure mode is a frame a few hundred metres along the road,
+            which is invisible as a pin and obvious beside its own photograph.
+          */}
+          <div className="row">
+            <button type="button" onClick={onReview}>Review them one by one</button>
+          </div>
+        </>
       )}
 
       {noFix.length > 0 && (

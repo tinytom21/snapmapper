@@ -29,6 +29,15 @@ export interface TrackPoint {
   readonly longitude: number;
   /** Metres. Absent when the logger recorded none — plenty of phone tracks have no elevation. */
   readonly altitude?: number;
+  /**
+   * How good the logger thought this fix was, in metres, if it said.
+   *
+   * Read from `<hdop>` scaled to metres, or from a GPSLogger-style `<extensions>` accuracy. Only
+   * ever used to *discard* points, never to weight them — a bad fix is not a slightly worse
+   * position, it is a position from before the receiver reacquired, and averaging it in would move
+   * a good answer towards a wrong one.
+   */
+  readonly accuracy?: number;
 }
 
 export interface GpxTrack {
@@ -163,11 +172,13 @@ export function parseGpx(xml: string, window?: TimeWindow): GpxTrack {
       if (window && (time < window.from || time > window.to)) continue;
 
       const elevation = Number(element(body, 'ele'));
+      const accuracy = accuracyOf(body);
       points.push({
         time,
         latitude,
         longitude,
         ...(Number.isFinite(elevation) ? { altitude: elevation } : {}),
+        ...(accuracy !== undefined ? { accuracy } : {}),
       });
     }
 
@@ -209,6 +220,40 @@ export function parseGpxTime(text: string | undefined): number | undefined {
   const zoned = /(Z|[+-]\d{2}:?\d{2})$/i.test(trimmed) ? trimmed : `${trimmed}Z`;
   const parsed = Date.parse(zoned);
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+/**
+ * How far out the logger thought a fix might be, in metres.
+ *
+ * Two sources, in order of how much they can be trusted:
+ *
+ *   1. **An explicit accuracy in `<extensions>`.** GPSLogger and several others write the
+ *      receiver's own estimate in metres, which is exactly the number wanted and needs no
+ *      interpretation at all.
+ *   2. **`<hdop>`**, which is the standard field and is *not* metres — it is a unitless geometric
+ *      dilution factor. Multiplying by the receiver's nominal error is the usual convention, and
+ *      `HDOP_METRES` is that constant. It is a rule of thumb, and treating it as a measurement
+ *      would be false precision; it is good enough to separate "fine" from "the receiver had four
+ *      satellites and no idea", which is all this is for.
+ *
+ * `undefined` when the logger said nothing, and that must stay distinct from a large value — a
+ * track with no accuracy at all should not be filtered out entirely by a threshold.
+ */
+const HDOP_METRES = 5;
+
+function accuracyOf(body: string): number | undefined {
+  // Any element whose name ends in "accuracy": `<accuracy>`, `<gpxtpx:accuracy>`, `<hAcc>` is
+  // handled by the explicit list below rather than guessed at.
+  for (const tag of ['accuracy', 'hacc', 'horizontalaccuracy']) {
+    // Doubled backslashes: this is a template literal, so `\w` would be a literal `w` and `\b`
+    // an actual backspace character — a regex that quietly matches almost nothing.
+    const match = new RegExp(`<[\\w:]*${tag}\\b[^>]*>([^<]*)<`, 'i').exec(body);
+    const value = Number(match?.[1]);
+    if (Number.isFinite(value) && value >= 0) return value;
+  }
+
+  const hdop = Number(element(body, 'hdop'));
+  return Number.isFinite(hdop) && hdop >= 0 ? hdop * HDOP_METRES : undefined;
 }
 
 /** `lat="51.4"` out of an attribute run. */
@@ -390,6 +435,27 @@ export function mergeSpans(
   }
 
   return Number.isFinite(from) ? { from, to } : undefined;
+}
+
+/**
+ * Drop fixes the logger itself was doubtful about.
+ *
+ * Free precision where a track has the data: a receiver that has just come out of a tunnel or a
+ * building reports a position it does not believe, and matching a photograph against one puts it
+ * confidently in the wrong street. Points with *no* stated accuracy are **kept** — most tracks
+ * have none, and discarding them would empty the track rather than clean it.
+ */
+export function filterByAccuracy(track: GpxTrack, maxMetres: number): GpxTrack {
+  const points = track.points.filter(
+    (point) => point.accuracy === undefined || point.accuracy <= maxMetres,
+  );
+  if (points.length === track.points.length) return track;
+  return { ...track, points };
+}
+
+/** How many of a track's points state an accuracy at all. Zero means the dial is pointless. */
+export function accuracyCoverage(track: GpxTrack): number {
+  return track.points.reduce((count, point) => count + (point.accuracy === undefined ? 0 : 1), 0);
 }
 
 /**

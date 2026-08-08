@@ -15,6 +15,7 @@ import { useRef } from 'react';
 import {
   instantOf,
   locationOf,
+  unplacedPhotos,
   type PhotoEntry,
   type Session,
 } from '@snapmapper/core';
@@ -36,6 +37,7 @@ export interface PhotoListProps {
   readonly onSelectRange: (from: string, to: string, add: boolean) => void;
   readonly onSelectAll: () => void;
   readonly onSelectNone: () => void;
+  readonly onSelectUnplaced: () => void;
   readonly onClear: () => void;
   readonly onRevert: () => void;
 }
@@ -43,6 +45,7 @@ export interface PhotoListProps {
 export function PhotoList(props: PhotoListProps) {
   const { session, view } = props;
   const selectedCount = session.selected.size;
+  const unplacedCount = unplacedPhotos(session).length;
   const grid = isGrid(view);
 
   /** Where the last plain click landed, so shift-click has something to extend from. */
@@ -116,6 +119,21 @@ export function PhotoList(props: PhotoListProps) {
 
       <div className="row">
         <button type="button" onClick={props.onSelectAll}>All</button>
+        {/*
+          The set left over after a track match, which is the whole reason this is here: 38 of 45
+          placed leaves seven scattered through a list of forty-five, and finding those by eye is
+          the tedious part of an otherwise automatic job. Hidden when there are none, because then
+          it is a button that does nothing and its absence is the good news.
+        */}
+        {unplacedCount > 0 && (
+          <button
+            type="button"
+            onClick={props.onSelectUnplaced}
+            title={`Select the ${unplacedCount} photo(s) with no location yet`}
+          >
+            Unplaced {unplacedCount}
+          </button>
+        )}
         <button type="button" onClick={props.onSelectNone} disabled={selectedCount === 0}>
           None
         </button>

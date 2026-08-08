@@ -18,6 +18,7 @@ import {
   clearSync,
   createSession,
   createWasmBackend,
+  filterByAccuracy,
   hasPendingChanges,
   instantOf,
   isValidTimeZone,
@@ -35,6 +36,8 @@ import {
   setOffsetSeconds,
   setTimeZone,
   toggleSelected,
+  stagedPhotos,
+  unplacedPhotos,
   undo,
   undoAction,
   type CameraClock,
@@ -49,6 +52,7 @@ import {
 } from '@snapmapper/core';
 
 import { PlatformReport } from './PlatformReport.tsx';
+import { ReviewBar } from './ReviewBar.tsx';
 import { Sidebar } from './Sidebar.tsx';
 import { PhotoMap, type MapPin } from './PhotoMap.tsx';
 import { PhotoPreview } from './PhotoPreview.tsx';
@@ -163,6 +167,14 @@ export function App() {
   /** The logger's folder, remembered across visits. See `handle-store.ts`. */
   const [trackFolder, setTrackFolder] = useState<TrackFolder | null>(null);
   const [searching, setSearching] = useState<TrackSearchProgress | null>(null);
+  /**
+   * Which staged photo is being reviewed, or null when not reviewing.
+   *
+   * A pass over what a track just placed, one at a time, so the map centres on each — the failure
+   * mode of a match is not a wild outlier but a frame a few hundred metres down the road, which
+   * looks perfectly reasonable as a pin and obviously wrong beside its own picture.
+   */
+  const [reviewing, setReviewing] = useState<string | null>(null);
   const [lastSearch, setLastSearch] = useState<TrackSearchOutcome | null>(null);
 
   const setView = useCallback((next: ViewMode) => {
@@ -567,9 +579,18 @@ export function App() {
    * that asked — it is the answer to a button press, not a property of the session. The session
    * change itself is one undo step, so a match that goes wrong costs one Ctrl+Z.
    */
-  const matchToTrack = useCallback((options: TrackApplyOptions) => {
+  const matchToTrack = useCallback((
+    options: TrackApplyOptions & { maxAccuracy?: number | null },
+  ) => {
     if (!session || !track) return { placed: [], skipped: [] };
-    const outcome = applyTrack(session, track, options);
+
+    // Filtering here rather than on load, so the dial can be moved and re-tried without
+    // re-reading the file — and so the map keeps showing the whole track that was found.
+    const usable = options.maxAccuracy != null
+      ? filterByAccuracy(track, options.maxAccuracy)
+      : track;
+
+    const outcome = applyTrack(session, usable, options);
     setSession(outcome.session);
     return { placed: outcome.placed, skipped: outcome.skipped };
   }, [session, track]);
@@ -903,6 +924,17 @@ export function App() {
         </div>
       )}
 
+      {session && reviewing !== null && (
+        <ReviewBar
+          session={session}
+          thumbnails={thumbnails}
+          current={reviewing}
+          onGo={(name) => { setReviewing(name); selectOnly(name); if (narrow) setPane('map'); }}
+          onClose={() => setReviewing(null)}
+          onPreview={setPreview}
+        />
+      )}
+
       {backup && session && (
         <RestoreBanner
           backup={backup}
@@ -983,6 +1015,10 @@ export function App() {
                   onSelectAll={() =>
                     setSession(select(session, session.photos.map((entry) => entry.ref.name)))}
                   onSelectNone={() => setSession(select(session, []))}
+                  onSelectUnplaced={() => setSession(select(
+                    session,
+                    unplacedPhotos(session).map((entry) => entry.ref.name),
+                  ))}
                   onClear={() => setSession(clearLocation(session, [...session.selected]))}
                   onRevert={() => setSession(revert(session, [...session.selected]))}
                   onPreview={setPreview}
@@ -1005,6 +1041,13 @@ export function App() {
                       setTrackFile(null);
                     },
                     onMatch: matchToTrack,
+                    onReview: () => {
+                      const first = stagedPhotos(session)[0];
+                      if (!first) return;
+                      setReviewing(first.ref.name);
+                      selectOnly(first.ref.name);
+                      if (narrow) setPane('map');
+                    },
                     folder: {
                       name: trackFolder?.displayName ?? null,
                       needsPermission: trackFolder?.needsPermission ?? false,

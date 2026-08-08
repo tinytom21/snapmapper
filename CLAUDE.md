@@ -40,7 +40,7 @@ http://localhost:5173/ (see HANDOFF.md; `localhost` is required for a secure con
 - `packages/core` is complete for the MVP: `gps`, `time`, `jpeg` (the splice), `exif-tags`,
   `exiftool` (the write path), `exiftool-wasm`, `session` (staged edits + undo), `storage`,
   `gpx` (track parsing and time matching), `google-timeline`, `track-file` and `track-folder`
-  (Timeline import and choosing a day's track). **267 tests, `tsc` clean.**
+  (Timeline import and choosing a day's track). **275 tests, `tsc` clean.**
 - `packages/ui` is React 19 + MapLibre 5 on Vite 7, with a `FileStore` over the File System
   Access API. **147 tests** covering save orchestration, partial failure, QR scan scaling, the
   palette, the track line, the track-folder span cache and the crash backup.
@@ -262,6 +262,29 @@ it could not recognise for that reason.
 Note `decodeEntities` in `gpx.ts`, found by testing the writer against the reader: a hand-rolled XML
 reader decodes nothing for free, so a track named `Dad & I` read back as the literal `&amp;`.
 `&amp;` must be decoded **last**, or `&amp;lt;` becomes `<` and the reader invents markup.
+
+### Three small things that carry their weight
+
+- **Unplaced.** `unplacedPhotos` and one button. A match that places 38 of 45 leaves seven
+  scattered through a list of forty-five, and finding those by eye is the tedious part of an
+  otherwise automatic job. Hidden when the count is zero — then it is a button that does nothing,
+  and its absence is the good news.
+- **The review pass.** `ReviewBar.tsx` steps through *staged* edits only, selecting each so the map
+  centres on it, with arrow keys because it is repetitive. The failure mode of a track match is not
+  a wild outlier — it is a frame a few hundred metres along the road, which is invisible as a pin
+  and obvious beside its own photograph. What is already on disk is excluded, or a pass over this
+  afternoon's work becomes a pass over the whole card.
+- **Accuracy filtering.** `filterByAccuracy` drops fixes the logger itself doubted. Read from an
+  explicit `<accuracy>` in metres where a logger writes one, otherwise from `<hdop>` × 5 — HDOP is
+  a unitless dilution factor, *not* metres, and `HDOP_METRES` is a rule of thumb good enough to
+  separate "fine" from "no idea". Points stating **no** accuracy are kept: most tracks have none,
+  and dropping them would empty the track rather than clean it. `accuracyCoverage` hides the dial
+  when the track says nothing, because a control that silently does nothing invites you to believe
+  you filtered something.
+
+Note the regex in `accuracyOf`: it is built with `new RegExp` from a **template literal**, so `\w`
+and `` must be doubled. Written singly, `` is a backspace character and the pattern quietly
+matches almost nothing — it shipped that way for one test run.
 
 ### A remembered track folder, searched by date
 

@@ -133,6 +133,29 @@ export function hasPendingChanges(session: Session): boolean {
   return session.edits.size > 0;
 }
 
+/**
+ * Photos with no location at all — neither on disk nor staged.
+ *
+ * The set that still needs work after a track match, and the reason "Select unplaced" exists: a
+ * match that places 38 of 45 leaves seven scattered through a list of forty-five, and finding them
+ * by eye is the tedious part of an otherwise automatic job.
+ *
+ * Unreadable photos are excluded. They cannot be placed by hand either, so selecting them would
+ * only ever be a way to arm the map with something it cannot act on.
+ */
+export function unplacedPhotos(session: Session): readonly PhotoEntry[] {
+  return session.photos.filter(
+    (entry) => entry.error === undefined && locationOf(session, entry.ref.name).kind === 'none',
+  );
+}
+
+/** Photos with a staged location, in list order. What a review pass steps through. */
+export function stagedPhotos(session: Session): readonly PhotoEntry[] {
+  return session.photos.filter(
+    (entry) => locationOf(session, entry.ref.name).kind === 'pending',
+  );
+}
+
 export function selectedPhotos(session: Session): readonly PhotoEntry[] {
   return session.photos.filter((entry) => session.selected.has(entry.ref.name));
 }

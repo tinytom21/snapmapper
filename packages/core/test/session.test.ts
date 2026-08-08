@@ -28,6 +28,8 @@ import {
   undoAction,
   applyTrack,
   restoreEdits,
+  stagedPhotos,
+  unplacedPhotos,
   type PhotoEntry,
 } from '../src/session.ts';
 import { parseGpx } from '../src/gpx.ts';
@@ -749,5 +751,39 @@ describe('putting back work a crash took', () => {
   it('changes nothing when none of it applies', () => {
     const session = createSession([entry('a.jpg')], CLOCK);
     assert.equal(restoreEdits(session, new Map([['gone.jpg', GREENWICH]])), session);
+  });
+});
+
+describe('finding what still needs work', () => {
+  it('lists photos with no location, saved or staged', () => {
+    // The set left over after a track match, and the reason "Unplaced" exists: 38 of 45 placed
+    // leaves seven scattered through a list of forty-five.
+    const session = createSession([
+      entry('placed.jpg', { existing: GREENWICH }),
+      entry('bare.jpg'),
+      entry('staged.jpg'),
+      failedEntry(ref('broken.jpg'), 'unreadable'),
+    ], CLOCK);
+
+    const withStaging = assignLocation(session, ['staged.jpg'], SANTIAGO);
+    assert.deepEqual(
+      unplacedPhotos(withStaging).map((one) => one.ref.name),
+      ['bare.jpg'],
+    );
+  });
+
+  it('excludes unreadable photos, which cannot be placed by hand either', () => {
+    const session = createSession([failedEntry(ref('broken.jpg'), 'unreadable')], CLOCK);
+    assert.deepEqual(unplacedPhotos(session), []);
+  });
+
+  it('lists staged photos for a review pass, and not what is already on disk', () => {
+    // A pass over this afternoon's work, not over the whole card.
+    const session = assignLocation(
+      createSession([entry('saved.jpg', { existing: GREENWICH }), entry('new.jpg')], CLOCK),
+      ['new.jpg'],
+      SANTIAGO,
+    );
+    assert.deepEqual(stagedPhotos(session).map((one) => one.ref.name), ['new.jpg']);
   });
 });

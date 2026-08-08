@@ -30,6 +30,8 @@ import {
   select,
   selectRange,
   toggleSelected,
+  stagedPhotos,
+  unplacedPhotos,
   type GpxTrack,
   type PhotoEntry,
   type Session,
@@ -38,6 +40,7 @@ import {
 import { ActionMenu } from './ActionMenu.tsx';
 import { PhotoMap } from './PhotoMap.tsx';
 import { PhotoPreview } from './PhotoPreview.tsx';
+import { ReviewBar } from './ReviewBar.tsx';
 import { Sidebar } from './Sidebar.tsx';
 import type { ViewMode } from './view-mode.ts';
 
@@ -116,6 +119,51 @@ export function sampleTrack(): GpxTrack {
   return parseGpx(`<gpx><trk><name>Sample walk</name><trkseg>${points.join('')}</trkseg></trk></gpx>`);
 }
 
+/**
+ * The review bar, above a stand-in for the map.
+ *
+ * Its own entry point because it is mounted by `App` rather than by the sidebar, so the harness
+ * that checks the sidebar cannot reach it — and a strip that sits over a working interface is
+ * exactly the sort of thing that looks fine in isolation and overlaps something at 375px.
+ */
+export function previewReviewBar(): void {
+  const host = document.createElement('div');
+  host.style.cssText = 'position:fixed;inset:0;z-index:20;display:flex;flex-direction:column;'
+    + 'background:var(--bg)';
+  document.body.append(host);
+
+  reviewRoot?.unmount();
+  reviewRoot = createRoot(host);
+
+  const base = sampleSession();
+  const placed = assignLocation(
+    base,
+    base.photos.slice(0, 6).map((entry) => entry.ref.name),
+    { latitude: 43.6047, longitude: 1.4442 },
+  );
+  const thumbnails = sampleThumbnails(placed);
+
+  function render(current: string) {
+    reviewRoot?.render(
+      <>
+        <ReviewBar
+          session={placed}
+          thumbnails={thumbnails}
+          current={current}
+          onGo={render}
+          onClose={() => { reviewRoot?.unmount(); reviewRoot = null; host.remove(); }}
+          onPreview={(name) => console.log('preview', name)}
+        />
+        <div style={{ flex: 1, background: 'var(--surface)', display: 'grid', placeItems: 'center' }}>
+          the map would be here
+        </div>
+      </>,
+    );
+  }
+
+  render(stagedPhotos(placed)[0]?.ref.name ?? '');
+}
+
 export function previewPhotoList(
   initial: Session = sampleSession(),
   view: ViewMode = 'list',
@@ -149,6 +197,7 @@ export function previewPhotoList(
           trackFile: 'sample.gpx',
           onTrack: (loaded) => { track = loaded; again(session); },
           onClearTrack: () => { track = null; again(session); },
+          onReview: () => console.log("review"),
           onMatch: (options) => {
             if (!track) return { placed: [], skipped: [] };
             const outcome = applyTrack(session, track, options);
@@ -173,6 +222,7 @@ export function previewPhotoList(
         onSelectRange={(from, to, add) => again(selectRange(session, from, to, add))}
         onSelectAll={() =>
           again(select(session, session.photos.map((entry) => entry.ref.name)))}
+        onSelectUnplaced={() => again(select(session, unplacedPhotos(session).map((e) => e.ref.name)))}
         onSelectNone={() => again(select(session, []))}
         onClear={() => again(clearLocation(session, [...session.selected]))}
         onRevert={() => again(revert(session, [...session.selected]))}
@@ -330,6 +380,7 @@ export function previewActionMenu(): void {
 }
 
 let mapRoot: Root | undefined;
+let reviewRoot: Root | null | undefined;
 
 /**
  * Mount the map on its own, with pins.

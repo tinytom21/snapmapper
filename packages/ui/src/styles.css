@@ -317,6 +317,58 @@ input.invalid { border-color: var(--danger); }
  * `align-items: start` keeps the box against the first line where the eye expects it.
  */
 /*
+ * The review bar: one staged photo at a time, above everything.
+ *
+ * A strip rather than a panel, because it sits over a working interface and the map behind it is
+ * the thing being checked — covering the map to review what is on it would be self-defeating.
+ * Fixed to the bottom on a phone, where the thumb is, and inline under the header on a desktop.
+ */
+.review {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+.review-thumb {
+  width: 64px;
+  /* The camera's 160x120 thumbnail is a 3:2 frame letterboxed into 4:3 — see the photo list. */
+  aspect-ratio: 3 / 2;
+  object-fit: cover;
+  border-radius: 5px;
+  cursor: zoom-in;
+  flex: none;
+}
+.review-what { flex: 1; min-width: 0; }
+.review-what .name {
+  font-size: 0.9rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.review-what .note { margin: 0; font-variant-numeric: tabular-nums; }
+.review-step {
+  flex: none;
+  /* A comfortable target either side, since this is pressed repeatedly. */
+  min-width: 2.5rem;
+  font-size: 1.2rem;
+  line-height: 1;
+  padding: 0.4rem 0.6rem;
+}
+
+@media (max-width: 900px) {
+  .review {
+    position: sticky;
+    bottom: 0;
+    z-index: 3;
+    border-top: 1px solid var(--line);
+    border-bottom: 0;
+  }
+  .review-step { min-width: 3rem; padding: 0.55rem 0.7rem; }
+}
+
+/*
  * The remembered track folder, set apart from the manual picker below it.
  *
  * A left rule rather than a box: this is the automatic route and the buttons under it are the

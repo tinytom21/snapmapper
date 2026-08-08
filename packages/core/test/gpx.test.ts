@@ -13,6 +13,8 @@ import { describe, it } from 'node:test';
 
 import {
   DEFAULT_TOLERANCE_SECONDS,
+  accuracyCoverage,
+  filterByAccuracy,
   matchTrack,
   parseGpx,
   parseGpxTime,
@@ -286,3 +288,53 @@ function round(value: number, decimals = 6): number {
   const factor = 10 ** decimals;
   return Math.round(value * factor) / factor;
 }
+
+describe('accuracy, where the logger states it', () => {
+  it('reads an explicit accuracy in metres from extensions', () => {
+    // What GPSLogger and several others write: the receiver's own estimate, already in metres and
+    // needing no interpretation at all.
+    const track = parseGpx(
+      '<gpx><trkpt lat="51" lon="-1"><time>2024-07-01T11:00:00Z</time>'
+      + '<extensions><accuracy>8.5</accuracy></extensions></trkpt></gpx>',
+    );
+    assert.equal(track.points[0]?.accuracy, 8.5);
+  });
+
+  it('scales HDOP, which is not metres and must not be treated as though it were', () => {
+    // HDOP is a unitless geometric dilution factor. Multiplying by the receiver's nominal error is
+    // the usual rule of thumb — good enough to separate "fine" from "no idea", which is all this
+    // is for, and deliberately not presented as a measurement.
+    const track = parseGpx(
+      '<gpx><trkpt lat="51" lon="-1"><time>2024-07-01T11:00:00Z</time>'
+      + '<hdop>2</hdop></trkpt></gpx>',
+    );
+    assert.equal(track.points[0]?.accuracy, 10);
+  });
+
+  it('leaves accuracy absent when the logger said nothing', () => {
+    // Distinct from a large value, and it has to stay that way: a threshold must not empty a
+    // track that simply never reported accuracy.
+    const track = parseGpx(gpxOf([['2024-07-01T11:00:00Z', 51, -1]]));
+    assert.equal('accuracy' in (track.points[0] ?? {}), false);
+  });
+
+  it('drops bad fixes and keeps the ones that never said', () => {
+    const track = parseGpx(
+      '<gpx>'
+      + '<trkpt lat="51" lon="-1"><time>2024-07-01T11:00:00Z</time><hdop>1</hdop></trkpt>'
+      + '<trkpt lat="52" lon="-2"><time>2024-07-01T11:00:10Z</time><hdop>40</hdop></trkpt>'
+      + '<trkpt lat="53" lon="-3"><time>2024-07-01T11:00:20Z</time></trkpt>'
+      + '</gpx>',
+    );
+
+    assert.equal(accuracyCoverage(track), 2);
+    const clean = filterByAccuracy(track, 30);
+    assert.deepEqual(clean.points.map((point) => point.latitude), [51, 53]);
+  });
+
+  it('reports no coverage for a track that states nothing, so the dial can hide', () => {
+    // A control that silently does nothing is worse than an absent one: it invites you to believe
+    // you have filtered something.
+    assert.equal(accuracyCoverage(WALK), 0);
+  });
+});
