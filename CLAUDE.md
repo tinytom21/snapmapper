@@ -517,13 +517,19 @@ replaces the photo now on screen with the one just left.
   the service worker, so it is paid once per version rather than per visit.
 - **Offline map tiles.** The app opens offline and photos can be placed by coordinates, but the map
   is blank over ground never loaded online. See the PWA section.
-- **Is the horizontally scrolling header action row discoverable**, or does it just read as broken?
+- **A dark map style.** The interface is dark and the map is bright, which jars at night. Liberty
+  has no dark variant, so it means recolouring the style after load.
+- **GPX import**, deferred by the plan but now the biggest thing missing: every photo is placed by
+  hand, and `clock-sync.ts` already knows the camera's true offset, which is what matching a track
+  needs. See HANDOFF.md for the ordering.
 
 Settled:
 
 - **File modification dates do not matter.** Asked and answered: the user does not care, so the one
   thing a browser cannot do costs nothing. **No native desktop build.**
 - **The mobile tabs are right.** Confirmed in use — no draggable split needed.
+- ~~**Is the horizontally scrolling header row discoverable?**~~ It was not — *"you wouldn't know to
+  scroll it if you hadn't told me"* — and it is gone. See the overflow menu above.
 - **The name is Snapmapper**, published at https://tinytom21.github.io/snapmapper/ and deployed by
   `.github/workflows/deploy.yml` on every push to `main`.
 
