@@ -19,10 +19,13 @@ import {
   createSession,
   createWasmBackend,
   hasPendingChanges,
+  instantOf,
   isValidTimeZone,
+  mergeTracks,
   locationOf,
   markSaved,
   pendingPhotos,
+  readTrackFile,
   redo,
   redoAction,
   revert,
@@ -65,7 +68,14 @@ import {
   isFolderPickerSupported,
   type BrowserFolder,
   type SaveDestination,
+  type TrackFolder,
 } from './browser-file-store.ts';
+import {
+  clearSpanCache,
+  searchTrackFolder,
+  type TrackSearchProgress,
+} from './track-search.ts';
+import type { TrackSearchOutcome } from './TrackPanel.tsx';
 import {
   loadPhotos,
   revokeThumbnailUrls,
@@ -133,6 +143,10 @@ export function App() {
   /** The loaded GPS track, if any, and the file it came from. */
   const [track, setTrack] = useState<GpxTrack | null>(null);
   const [trackFile, setTrackFile] = useState<string | null>(null);
+  /** The logger's folder, remembered across visits. See `handle-store.ts`. */
+  const [trackFolder, setTrackFolder] = useState<TrackFolder | null>(null);
+  const [searching, setSearching] = useState<TrackSearchProgress | null>(null);
+  const [lastSearch, setLastSearch] = useState<TrackSearchOutcome | null>(null);
 
   const setView = useCallback((next: ViewMode) => {
     saveViewMode(next);
@@ -491,6 +505,101 @@ export function App() {
     return { placed: outcome.placed, skipped: outcome.skipped };
   }, [session, track]);
 
+  /**
+   * Search the logger's folder for whatever covers the photographs that are open.
+   *
+   * Everything about *which* file is decided in core from the times inside them — see
+   * `track-folder.ts`. This is the plumbing: read what has to be read, merge the winners, and turn
+   * the outcome into something the panel can phrase.
+   */
+  const searchTracks = useCallback(async (
+    folder: TrackFolder,
+    current: Session,
+  ): Promise<void> => {
+    setSearching({ read: 0, total: 0 });
+    setLastSearch(null);
+
+    try {
+      const found = await searchTrackFolder(
+        store,
+        folder,
+        current.photos.map((entry) => instantOf(current, entry)),
+        setSearching,
+      );
+
+      if (found === 'no-dates') {
+        setLastSearch({ kind: 'no-dates', files: [], considered: 0 });
+        return;
+      }
+
+      if (found.chosen.length === 0) {
+        setLastSearch({
+          kind: 'nothing',
+          files: [],
+          considered: found.considered,
+          ...(found.nearest
+            ? { nearestDays: Math.round(found.nearest.offBy / 86_400_000) }
+            : {}),
+        });
+        return;
+      }
+
+      // Only the winners are fully parsed. The search read nothing but their `<time>` elements.
+      const loaded = await Promise.all(found.chosen.map(async (name) =>
+        readTrackFile(await store.readTrack(folder, name)).track));
+
+      setTrack(mergeTracks(loaded));
+      setTrackFile(found.chosen.join(', '));
+      setLastSearch({ kind: 'loaded', files: found.chosen, considered: found.considered });
+    } catch (cause) {
+      setLastSearch({
+        kind: 'error',
+        files: [],
+        considered: 0,
+        message: cause instanceof Error ? cause.message : String(cause),
+      });
+    } finally {
+      setSearching(null);
+    }
+  }, []);
+
+  /*
+   * Bring the remembered folders back on start-up.
+   *
+   * Neither is *asked* for here — `requestPermission` needs a user gesture and would throw. The
+   * track folder reports that it needs reconnecting, which becomes a button; the output folder is
+   * simply not restored unless its grant survived, so the destination bar asks as it always did.
+   */
+  useEffect(() => {
+    void (async () => {
+      const remembered = await store.restoreTrackFolder();
+      if (remembered) setTrackFolder(remembered);
+
+      const output = await store.restoreOutputFolder();
+      if (output) applyDestination(output);
+    })();
+  }, [applyDestination]);
+
+  /*
+   * Search as soon as a session exists, without being asked.
+   *
+   * The whole point of remembering the folder: the photographs know their own dates, so the
+   * question "which track" has an answer before anybody has to ask it.
+   *
+   * Keyed on `session.photos`, **not on the session**. A session is immutable, so selecting a
+   * photograph or staging an edit produces a new one — keying on that restarted the folder search
+   * on every click, which on a year of daily tracks is a real cost and a flickering panel. The
+   * photo array's identity survives every edit and changes exactly when photos are opened or
+   * added, which is precisely when the answer could differ.
+   */
+  const searchedFor = useRef<readonly PhotoEntry[] | null>(null);
+  useEffect(() => {
+    if (!session || !trackFolder || trackFolder.needsPermission || track) return;
+    if (searchedFor.current === session.photos) return;
+    searchedFor.current = session.photos;
+    void searchTracks(trackFolder, session);
+  }, [session, trackFolder, track, searchTracks]);
+
   const readOriginal = useCallback(
     (entry: PhotoEntry) => store.read(entry.ref),
     [],
@@ -792,6 +901,40 @@ export function App() {
                       setTrackFile(null);
                     },
                     onMatch: matchToTrack,
+                    folder: {
+                      name: trackFolder?.displayName ?? null,
+                      needsPermission: trackFolder?.needsPermission ?? false,
+                      searching,
+                      lastSearch,
+                      onChoose: async () => {
+                        setError(null);
+                        try {
+                          const picked = await store.pickTrackFolder();
+                          if (!picked) return;
+                          setTrackFolder(picked);
+                          clearSpanCache();
+                          if (session) await searchTracks(picked, session);
+                        } catch (cause) {
+                          setError(cause instanceof Error ? cause.message : String(cause));
+                        }
+                      },
+                      onReconnect: async () => {
+                        // This click is the user gesture `requestPermission` requires.
+                        const regranted = await store.regrantTrackFolder();
+                        if (!regranted) return;
+                        setTrackFolder(regranted);
+                        if (session) await searchTracks(regranted, session);
+                      },
+                      onForget: async () => {
+                        await store.forgetTrackFolder();
+                        clearSpanCache();
+                        setTrackFolder(null);
+                        setLastSearch(null);
+                      },
+                      onSearch: () => {
+                        if (trackFolder && session) void searchTracks(trackFolder, session);
+                      },
+                    },
                   }}
                 />
               )

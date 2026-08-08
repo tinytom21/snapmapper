@@ -39,11 +39,11 @@ http://localhost:5173/ (see HANDOFF.md; `localhost` is required for a secure con
 
 - `packages/core` is complete for the MVP: `gps`, `time`, `jpeg` (the splice), `exif-tags`,
   `exiftool` (the write path), `exiftool-wasm`, `session` (staged edits + undo), `storage`,
-  `gpx` (track parsing and time matching), `google-timeline` and `track-file` (Google Timeline
-  import). **238 tests, `tsc` clean.**
+  `gpx` (track parsing and time matching), `google-timeline`, `track-file` and `track-folder`
+  (Timeline import and choosing a day's track). **252 tests, `tsc` clean.**
 - `packages/ui` is React 19 + MapLibre 5 on Vite 7, with a `FileStore` over the File System
-  Access API. **133 tests** covering save orchestration, partial failure, QR scan scaling, the
-  palette and the track line.
+  Access API. **140 tests** covering save orchestration, partial failure, QR scan scaling, the
+  palette, the track line and the track-folder span cache.
   Thumbnails come from the camera's own embedded ~6KB JPEG, and shift-click selects a range.
   Placement is select-then-click on the map, and only that — see below.
 - **Two ways in: the OS file picker (default) or a whole folder.** The picker exists because a
@@ -229,6 +229,52 @@ it could not recognise for that reason.
 Note `decodeEntities` in `gpx.ts`, found by testing the writer against the reader: a hand-rolled XML
 reader decodes nothing for free, so a track named `Dad & I` read back as the literal `&amp;`.
 `&amp;` must be decoded **last**, or `&amp;lt;` becomes `<` and the reader invents markup.
+
+### A remembered track folder, searched by date
+
+The workflow this serves: a logger running permanently on a phone, writing one GPX per day into one
+folder, forever. The folder never changes, so being asked for it every visit is a question with a
+permanent answer — and once it is known, "which file covers these photographs" is a question the
+photographs answer themselves.
+
+- **Chosen by the times inside the files, never by the dates in their names.** `20240701.gpx`,
+  `2024-07-01_walk.gpx` and `track_1719….gpx` are all real, and a file named for the day it was
+  *written* is off by one for anything after midnight. `gpxSpan` reads only `<time>` elements — a
+  cheap scan, not a parse — and takes **min and max, not first and last**, because
+  `<metadata><time>` is the write time and comes first while being later than everything in the file.
+- **Midnight needs no special case, and gets none.** Selection is span overlap, so a shoot
+  straddling midnight overlaps both files, takes both, and `mergeTracks` sorts it out by timestamp.
+  Verified live against 32 files in OPFS: a 23:50–00:10 shoot chose both days.
+- **`SELECTION_PAD_MS` is 12 hours**, slack for the camera clock — the one quantity in the selection
+  *known* to be wrong. Being generous is free: an extra file contributes points the matcher then
+  refuses on its own tolerance. One file too many is invisible; one too few will not place.
+- **Spans are cached in `localStorage`, keyed on name + size + mtime.** Keyed on the name alone, a
+  logger appending to today's file all day would be answered with the morning's span all afternoon.
+  Measured: 32 files read once, then 0 reads and 13 ms. The cache is pruned to files still present,
+  or a day of appends leaves a trail of dead keys against a few-megabyte quota.
+- **The auto-search is keyed on `session.photos`, not on the session.** Sessions are immutable, so
+  every click makes a new one — keying on that restarted the folder search on every selection.
+
+### Folders are remembered in IndexedDB, and permission is not
+
+`handle-store.ts`. A `FileSystemDirectoryHandle` survives only through structured clone, which
+IndexedDB does and `localStorage` does not — there is no JSON-blob version of this.
+
+**A restored handle is real but not necessarily usable.** Chrome drops the grant when the tab
+closes, and `requestPermission` only works inside a user gesture — so `rememberedFolder` reports the
+permission state and asking is a separate call the UI makes from a button. Requesting on load
+throws; treating "needs asking" as "gone" would make the app forget a folder it has. Installed PWAs
+may keep the grant, which is the nicest case: nothing is asked at all.
+
+`rememberFolder` and `forgetFolder` **never throw**. Private browsing blocks IndexedDB, and the
+symptom of failure must be being asked again next time — not a broken picker. A test pinned this
+after the first version took the whole file store down under `node:test`.
+
+**`showOpenFilePicker` gives no access to a file's parent folder**, by design. So "create
+`geotagged` beside the photos without asking" is automatic in *folder* mode and impossible in
+file-pick mode; there, the chosen output folder is remembered instead, so it is asked once ever.
+`outputFolderWithin` is deliberately **not** remembered — it derives from the folder of photographs
+currently open, which is a different folder every shoot.
 
 ### Camera-clock sync stores the measurement, not the offset
 

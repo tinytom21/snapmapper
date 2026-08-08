@@ -313,6 +313,52 @@ function round(value: number, decimals: number): number {
   return Math.round(value * factor) / factor;
 }
 
+/**
+ * The first and last instant in a GPX document, without building its points.
+ *
+ * For choosing which of a folder's files covers a shoot. A day logged every ten seconds is some
+ * 8,000 points, and a folder holds a file per day for as long as the logger has been running — so
+ * fully parsing every candidate to find out which one to use would parse a year to use one day of
+ * it. This scans for `<time>` and nothing else.
+ *
+ * Min and max rather than first and last: `<metadata><time>` at the head of a file is when the
+ * file was *written*, which for a logger that flushes at midnight can be after everything in it.
+ */
+export function gpxSpan(xml: string): { readonly from: number; readonly to: number } | undefined {
+  let from = Infinity;
+  let to = -Infinity;
+
+  for (const [, text] of xml.matchAll(/<time>([^<]*)<\/time>/gi)) {
+    const instant = parseGpxTime(text);
+    if (instant === undefined) continue;
+    if (instant < from) from = instant;
+    if (instant > to) to = instant;
+  }
+
+  return Number.isFinite(from) ? { from, to } : undefined;
+}
+
+/**
+ * Several tracks as one.
+ *
+ * Needed because a shoot does not respect the boundaries a logger writes files on. A photograph
+ * taken at ten past midnight belongs to the track that was running at ten past midnight, which is
+ * in yesterday's file if the logger rolls over at midnight and in today's if it rolls over on
+ * first fix — and the honest way to be right either way is to take both and let the timestamps
+ * sort it out, which `trackFromPoints` does.
+ */
+export function mergeTracks(tracks: readonly GpxTrack[], name?: string): GpxTrack {
+  const named = tracks.filter((track) => track.points.length > 0);
+  if (named.length === 1 && name === undefined) return named[0] as GpxTrack;
+
+  return trackFromPoints(
+    named.flatMap((track) => track.points),
+    name ?? (named.map((track) => track.name).filter(Boolean).join(' + ') || 'Tracks'),
+    named.reduce((total, track) => total + track.untimed, 0),
+    [...new Set(named.flatMap((track) => track.notes ?? []))],
+  );
+}
+
 // --- Matching ----------------------------------------------------------------
 
 /** First and last instants in a track. */

@@ -316,6 +316,21 @@ input.invalid { border-color: var(--danger); }
  * a label that wraps onto two lines would run its second line under the box. Flex with
  * `align-items: start` keeps the box against the first line where the eye expects it.
  */
+/*
+ * The remembered track folder, set apart from the manual picker below it.
+ *
+ * A left rule rather than a box: this is the automatic route and the buttons under it are the
+ * manual one, and a full panel around a two-line block would give it more weight than the thing
+ * it sits above.
+ */
+.track-folder {
+  border-left: 2px solid var(--accent);
+  padding-left: 0.6rem;
+  margin: 0.5rem 0;
+}
+.track-folder .note { margin: 0.25rem 0; }
+.track-folder code { font-size: 0.82em; }
+
 label.check {
   display: flex;
   align-items: start;

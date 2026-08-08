@@ -15,7 +15,8 @@ works with the network switched off entirely.
 
 - **Place photos by hand on a map.** Select one or fifty, tap the map, done.
 - **Or load a track** — a GPX from a logger app, or a **Google Timeline export**, which needs
-  nothing running on the day — and let it place them by time. Anything it cannot place confidently is
+  nothing running on the day — and let it place them by time. Point it once at the folder your
+  logger writes to and it finds the right file for each shoot by itself, including across midnight. Anything it cannot place confidently is
   left alone and reported, rather than dropped somewhere plausible — and it matches against the
   *corrected* camera clock, so the two features work together.
 - **Writes real EXIF GPS** with a genuine ExifTool, compiled to WebAssembly — the same ExifTool

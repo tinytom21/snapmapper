@@ -155,6 +155,18 @@ export function previewPhotoList(
             again(outcome.session);
             return { placed: outcome.placed, skipped: outcome.skipped };
           },
+          // The folder half is stubbed: it needs a real directory handle, which only a picker can
+          // produce. What this harness is for is the layout, and the bar is present either way.
+          folder: {
+            name: 'GPSLogger',
+            needsPermission: false,
+            searching: null,
+            lastSearch: { kind: 'loaded', files: ['2024-05-17.gpx'], considered: 412 },
+            onChoose: () => console.log('choose track folder'),
+            onReconnect: () => console.log('reconnect'),
+            onForget: () => console.log('forget'),
+            onSearch: () => console.log('search'),
+          },
         }}
         onToggle={(name) => again(toggleSelected(session, name))}
         onSelectOnly={(name) => again(select(session, [name]))}

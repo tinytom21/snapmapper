@@ -27,6 +27,8 @@ import {
   type TrackSkip,
 } from '@snapmapper/core';
 
+import type { TrackSearchProgress } from './track-search.ts';
+
 export interface TrackPanelProps {
   readonly session: Session;
   readonly track: GpxTrack | null;
@@ -39,6 +41,37 @@ export interface TrackPanelProps {
     readonly skipped: readonly TrackSkip[];
   };
   readonly busy: boolean;
+
+  /**
+   * The remembered track folder and how to search it. Absent where folders cannot be remembered.
+   *
+   * Passed as one object rather than six props because the panel treats it as one feature: either
+   * there is an automatic route to a track or there is not.
+   */
+  readonly folder: TrackFolderProps;
+}
+
+/** The automatic half: a folder remembered once, searched by date whenever photos are open. */
+export interface TrackFolderProps {
+  readonly name: string | null;
+  /** The folder came back from storage but the browser wants the grant confirmed. */
+  readonly needsPermission: boolean;
+  readonly searching: TrackSearchProgress | null;
+  /** What the last search found. Kept in the app, because a search survives closing the panel. */
+  readonly lastSearch: TrackSearchOutcome | null;
+  readonly onChoose: () => void;
+  readonly onReconnect: () => void;
+  readonly onForget: () => void;
+  readonly onSearch: () => void;
+}
+
+/** What a folder search came to, in terms the panel can phrase. */
+export interface TrackSearchOutcome {
+  readonly kind: 'loaded' | 'nothing' | 'no-dates' | 'error';
+  readonly files: readonly string[];
+  readonly considered: number;
+  readonly message?: string;
+  readonly nearestDays?: number;
 }
 
 interface MatchResult {
@@ -48,7 +81,7 @@ interface MatchResult {
 }
 
 export function TrackPanel({
-  session, track, trackFile, onTrack, onClearTrack, onMatch, busy,
+  session, track, trackFile, onTrack, onClearTrack, onMatch, busy, folder,
 }: TrackPanelProps) {
   const input = useRef<HTMLInputElement>(null);
   const [problem, setProblem] = useState<string | null>(null);
@@ -96,19 +129,14 @@ export function TrackPanel({
         }}
       />
 
-      {!track && (
-        <>
-          <p className="note">
-            A <strong>.gpx</strong> from a logger app, or a <strong>Google Timeline</strong> export
-            — the photographs then place themselves by time.
-          </p>
-          <p className="note">
-            Timeline needs no app running on the day, which is its whole advantage. On Android:
-            Settings → Location → Location Services → Timeline → <em>Export Timeline data</em>. It
-            is inferred rather than logged, so it is less precise; the panel says which kind of
-            point each match came from.
-          </p>
-        </>
+      <TrackFolderBar {...folder} busy={busy} />
+
+      {!track && !folder.name && (
+        <p className="note">
+          A <strong>.gpx</strong> from a logger app, or a <strong>Google Timeline</strong> export.
+          Timeline needs nothing running on the day, but it is inferred rather than logged and much
+          less precise — the panel says what each track is made of.
+        </p>
       )}
 
       <div className="row">
@@ -204,6 +232,94 @@ export function TrackPanel({
         </>
       )}
     </div>
+  );
+}
+
+/**
+ * The remembered track folder, and the automatic search over it.
+ *
+ * This is the whole point of the folder feature: chosen once per device, and from then on the
+ * question "which file covers these photographs" is answered by the photographs. The manual
+ * picker below stays, because a track that arrived by email is not in the logger's folder.
+ */
+function TrackFolderBar({
+  name, needsPermission, searching, lastSearch, onChoose, onReconnect, onForget, onSearch, busy,
+}: TrackFolderProps & { busy: boolean }) {
+  if (!name) {
+    return (
+      <div className="note">
+        <button type="button" className="link" onClick={onChoose} disabled={busy}>
+          Choose the folder your logger writes to…
+        </button>
+        {' '}— remembered on this device, so the right track is then found by date on its own.
+      </div>
+    );
+  }
+
+  return (
+    <div className="track-folder">
+      <div className="note">
+        Tracks from <code>{name}</code>
+        {' · '}
+        <button type="button" className="link" onClick={onForget} disabled={busy}>forget</button>
+      </div>
+
+      {needsPermission
+        ? (
+          /*
+           * Chrome drops the permission when the tab closes, and `requestPermission` only works
+           * inside a user gesture — so this button *is* the gesture. Saying "reconnect" rather
+           * than re-asking for the folder matters: the app has not forgotten it, and making
+           * somebody navigate a picker again would suggest otherwise.
+           */
+          <div className="row">
+            <button type="button" onClick={onReconnect} disabled={busy}>
+              Reconnect the track folder
+            </button>
+          </div>
+        )
+        : (
+          <div className="row">
+            <button type="button" onClick={onSearch} disabled={busy || searching !== null}>
+              {searching
+                ? `Reading tracks ${searching.read}/${searching.total}…`
+                : 'Find the track for these photos'}
+            </button>
+          </div>
+        )}
+
+      {lastSearch && <SearchReport result={lastSearch} />}
+    </div>
+  );
+}
+
+function SearchReport({ result }: { result: TrackSearchOutcome }) {
+  if (result.kind === 'loaded') {
+    return (
+      <p className="note">
+        Using {result.files.length === 1 ? result.files[0] : `${result.files.length} files`}
+        {result.files.length > 1 && ` (${result.files.join(', ')})`}
+        {' '}out of {result.considered}.
+      </p>
+    );
+  }
+
+  if (result.kind === 'no-dates') {
+    return <p className="note error">None of these photos has a readable date to search by.</p>;
+  }
+
+  if (result.kind === 'error') {
+    return <p className="note error">{result.message}</p>;
+  }
+
+  return (
+    <p className="note error">
+      No track covers these photographs, out of {result.considered} in the folder.
+      {result.nearestDays !== undefined && (
+        ` The closest is ${result.nearestDays === 0 ? 'less than a day' : `${result.nearestDays} day${result.nearestDays === 1 ? '' : 's'}`} away, `
+        + 'so the logger was probably not running.'
+      )}
+    </p>
   );
 }
 

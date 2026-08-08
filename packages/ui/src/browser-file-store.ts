@@ -39,6 +39,12 @@
 
 import type { FileStore, FolderHandle, PhotoRef, WrittenFile } from '@snapmapper/core';
 import { FileWriteError } from '@snapmapper/core';
+import {
+  forgetFolder,
+  regrantFolder,
+  rememberFolder,
+  rememberedFolder,
+} from './handle-store.ts';
 
 /**
  * Stated in one place so the UI can show it and a native shell can drop it.
@@ -168,7 +174,42 @@ export interface BrowserFileStore extends FileStore {
 
   setDestination(destination: SaveDestination): void;
   getDestination(): SaveDestination;
+
+  /**
+   * Ask for the folder the GPS logger writes into, and remember it for good.
+   *
+   * A permanent answer to a permanent question: the logger writes into one folder forever, so
+   * being asked on every visit is friction with no purpose.
+   */
+  pickTrackFolder(): Promise<TrackFolder | undefined>;
+  /** The remembered track folder, if there is one and it is usable. */
+  restoreTrackFolder(): Promise<TrackFolder | undefined>;
+  /** Re-grant a remembered folder. Must be called from a user gesture — see `handle-store.ts`. */
+  regrantTrackFolder(): Promise<TrackFolder | undefined>;
+  forgetTrackFolder(): Promise<void>;
+  /** Every `.gpx` in the track folder, newest first. Names and sizes only; nothing is read. */
+  listTracks(folder: TrackFolder): Promise<readonly TrackFileRef[]>;
+  /** The text of one track file. */
+  readTrack(folder: TrackFolder, name: string): Promise<string>;
+
+  /** The remembered output folder, so copies are asked about once ever rather than once a visit. */
+  restoreOutputFolder(): Promise<SaveDestination | undefined>;
 }
+
+export interface TrackFolder {
+  readonly directory: FileSystemDirectoryHandle;
+  readonly displayName: string;
+  /** True when it came back from storage still needing permission. */
+  readonly needsPermission: boolean;
+}
+
+export interface TrackFileRef {
+  readonly name: string;
+  readonly sizeBytes: number;
+  readonly modifiedAtMs: number;
+}
+
+const TRACK_PATTERN = /\.gpx$/i;
 
 export function createBrowserFileStore(): BrowserFileStore {
   /**
@@ -322,6 +363,15 @@ export function createBrowserFileStore(): BrowserFileStore {
           mode: 'readwrite',
           id: 'output',
         });
+
+        /*
+         * Remembered, so this is asked once ever rather than once a visit.
+         *
+         * Only here, and not in `outputFolderWithin`. That one derives the destination from the
+         * folder of photographs currently open, which is a different folder every shoot — storing
+         * it would mean the next card's copies landed beside the last card's.
+         */
+        await rememberFolder('output-folder', chosen);
         return await prepareOutput(chosen);
       } catch (error) {
         if (error instanceof DOMException && error.name === 'AbortError') return undefined;
@@ -332,6 +382,90 @@ export function createBrowserFileStore(): BrowserFileStore {
     async outputFolderWithin(folder: BrowserFolder): Promise<SaveDestination | undefined> {
       if (!folder.directory) return undefined;
       return prepareOutput(folder.directory);
+    },
+
+    // --- The track folder ----------------------------------------------------
+
+    async pickTrackFolder(): Promise<TrackFolder | undefined> {
+      if (!isFolderPickerSupported()) {
+        throw new Error('This browser has no folder picker, so a track folder cannot be chosen.');
+      }
+
+      try {
+        // `read` is enough and is the right thing to ask for: nothing here ever writes a track,
+        // and asking for more permission than a feature needs is how people learn to click
+        // through prompts without reading them.
+        const directory = await globalThis.showDirectoryPicker({ mode: 'read', id: 'tracks' });
+        await rememberFolder('track-folder', directory);
+        return { directory, displayName: directory.name, needsPermission: false };
+      } catch (error) {
+        if (error instanceof DOMException && error.name === 'AbortError') return undefined;
+        throw error;
+      }
+    },
+
+    async restoreTrackFolder(): Promise<TrackFolder | undefined> {
+      const remembered = await rememberedFolder('track-folder');
+      if (!remembered || remembered.permission === 'denied') return undefined;
+
+      return {
+        directory: remembered.handle,
+        displayName: remembered.handle.name,
+        // Reported rather than resolved: `requestPermission` needs a user gesture, and calling it
+        // here would throw. The UI turns this into one button.
+        needsPermission: remembered.permission !== 'granted',
+      };
+    },
+
+    async regrantTrackFolder(): Promise<TrackFolder | undefined> {
+      const remembered = await rememberedFolder('track-folder');
+      if (!remembered) return undefined;
+      if (!(await regrantFolder(remembered.handle))) return undefined;
+
+      return {
+        directory: remembered.handle,
+        displayName: remembered.handle.name,
+        needsPermission: false,
+      };
+    },
+
+    forgetTrackFolder(): Promise<void> {
+      return forgetFolder('track-folder');
+    },
+
+    async listTracks(folder: TrackFolder): Promise<readonly TrackFileRef[]> {
+      const found: TrackFileRef[] = [];
+
+      for await (const [name, handle] of folder.directory.entries()) {
+        if (handle.kind !== 'file' || !TRACK_PATTERN.test(name)) continue;
+        const file = await (handle as FileSystemFileHandle).getFile();
+        found.push({ name, sizeBytes: file.size, modifiedAtMs: file.lastModified });
+      }
+
+      // Newest first. A logger's folder grows without limit, and the day you want is nearly
+      // always near the end of it — which matters for the span cache, not for correctness.
+      found.sort((a, b) => b.modifiedAtMs - a.modifiedAtMs);
+      return found;
+    },
+
+    async readTrack(folder: TrackFolder, name: string): Promise<string> {
+      const handle = await folder.directory.getFileHandle(name);
+      return (await handle.getFile()).text();
+    },
+
+    async restoreOutputFolder(): Promise<SaveDestination | undefined> {
+      /*
+       * Only when the grant survived.
+       *
+       * A remembered output folder that still needs permission is worse than none: the app would
+       * report a destination it cannot write to, and the failure would arrive at the moment of
+       * saving. Falling back to `copy-pending` means the question is asked before anything is
+       * staged, which is the right time for it.
+       */
+      const remembered = await rememberedFolder('output-folder');
+      if (!remembered || remembered.permission !== 'granted') return undefined;
+
+      return prepareOutput(remembered.handle);
     },
 
     async read(ref: PhotoRef): Promise<Uint8Array> {
