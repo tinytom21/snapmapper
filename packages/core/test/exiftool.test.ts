@@ -9,6 +9,7 @@ import {
   readThumbnail,
   writeMetadataSpliced,
   type BackendInput,
+  readTagsAndThumbnail,
   type MetadataBackend,
 } from '../src/exiftool.ts';
 import { findScanStart } from '../src/jpeg.ts';
@@ -286,5 +287,89 @@ describe('readThumbnail', () => {
   it('survives output that is not JSON at all', async () => {
     const backend = fakeBackend({ readData: 'File not found' });
     assert.equal(await readThumbnail(backend, buildJpeg(), 'x.jpg'), undefined);
+  });
+});
+
+describe('reading tags and the thumbnail in one invocation', () => {
+  /*
+   * The reason this function exists is a measurement, not a tidiness preference: reading costs
+   * ~1s *per ExifTool invocation* and almost nothing per byte, so two calls per photograph was
+   * paying the fixed cost twice. Median of nine interleaved runs on a real 6.9MB A6400 JPEG:
+   * 1921ms for two calls against 1173ms for one. See `spike/src/load-cost.mjs`.
+   */
+  function readingBackend(payload: Record<string, unknown>): {
+    backend: MetadataBackend;
+    calls: BackendInput[];
+  } {
+    const calls: BackendInput[] = [];
+    return {
+      calls,
+      backend: {
+        async write() { throw new Error('not used'); },
+        async read(input) {
+          calls.push(input);
+          return { ok: true, data: JSON.stringify([payload]), message: undefined };
+        },
+      },
+    };
+  }
+
+  /** ExifTool's own encoding for binary inside JSON, verified against 13.59. */
+  const THUMB = `base64:${Buffer.from([0xff, 0xd8, 0xff, 0xd9]).toString('base64')}`;
+
+  it('asks once and returns both', async () => {
+    const { backend, calls } = readingBackend({
+      SourceFile: '/x.jpg',
+      'EXIF:DateTimeOriginal': '2024:07:01 12:00:00',
+      'EXIF:ThumbnailImage': THUMB,
+    });
+
+    const result = await readTagsAndThumbnail(
+      backend, new Uint8Array([1]), 'x.jpg', ['EXIF:DateTimeOriginal'],
+    );
+
+    assert.equal(calls.length, 1, 'the whole point is that this is one call');
+    assert.equal(result.tags['EXIF:DateTimeOriginal'], '2024:07:01 12:00:00');
+    assert.deepEqual([...(result.thumbnail ?? [])], [0xff, 0xd8, 0xff, 0xd9]);
+  });
+
+  it('passes -n and -b together, which is what makes one call possible', () => {
+    // They are independent: -n controls how numbers are rendered, -b how binary is. Dropping
+    // either silently changes the result — without -n, coordinates come back as DMS strings that
+    // `entryFromTags` cannot read, and the failure looks like photos having no location.
+    return (async () => {
+      const { backend, calls } = readingBackend({ SourceFile: '/x.jpg' });
+      await readTagsAndThumbnail(backend, new Uint8Array([1]), 'x.jpg', ['EXIF:Make']);
+
+      const args = calls[0]?.args ?? [];
+      assert.ok(args.includes('-n'), 'missing -n');
+      assert.ok(args.includes('-b'), 'missing -b');
+      assert.ok(args.includes('-G') && !args.includes('-G0:1'), 'must be -G, never -G0:1');
+      assert.ok(args.includes('-ThumbnailImage'));
+    })();
+  });
+
+  it('lifts the thumbnail out of the tag values rather than leaving it there', async () => {
+    /*
+     * Not tidiness. Left in place, a several-kilobyte base64 string would sit in every photo
+     * entry for the life of the page — and a session is copied on every single edit, which is
+     * only free because entries are small.
+     */
+    const { backend } = readingBackend({
+      SourceFile: '/x.jpg',
+      'EXIF:Make': 'SONY',
+      'EXIF:ThumbnailImage': THUMB,
+    });
+
+    const { tags } = await readTagsAndThumbnail(backend, new Uint8Array([1]), 'x.jpg');
+    assert.deepEqual(Object.keys(tags), ['EXIF:Make']);
+  });
+
+  it('is fine with a photo that has no thumbnail', async () => {
+    // Plenty of edited or exported JPEGs have none, and it is cosmetic — it must not fail a load.
+    const { backend } = readingBackend({ SourceFile: '/x.jpg', 'EXIF:Make': 'SONY' });
+    const { tags, thumbnail } = await readTagsAndThumbnail(backend, new Uint8Array([1]), 'x.jpg');
+    assert.equal(thumbnail, undefined);
+    assert.equal(tags['EXIF:Make'], 'SONY');
   });
 });

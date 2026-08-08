@@ -5,17 +5,27 @@
  * minute and a half of waiting. That is why this reports progress per photo and yields
  * between files: a frozen window for ninety seconds reads as a crash.
  *
- * Reading is also where the splice does not help — ExifTool must see the header, and the
- * cost is mostly fixed per invocation. `-fast2` is passed for the same reason it is
- * passed everywhere: not because it measured faster (it did not, materially) but because
- * scanning past the metadata is work with no purpose.
+ * The cost is **per invocation**, not per byte, and everything here follows from that. Measured on
+ * a real 6.9MB A6400 JPEG, median of nine interleaved runs (`spike/src/load-cost.mjs`):
+ *
+ *   - whole file, two calls — 1884 ms
+ *   - 101KB header stub, two calls — 1921 ms, i.e. **no different**
+ *   - 101KB header stub, one call — **1173 ms**
+ *
+ * So one invocation asking for the tags *and* the thumbnail is 1.64x faster than two, and that is
+ * what `readTagsAndThumbnail` is for. Pushing sixty-eight times the bytes changed nothing, so the
+ * header stub and `readHead` below are about disk and memory rather than about ExifTool.
+ *
+ * The next lever is much larger and is not taken here: the WASM wrapper mounts its input into a
+ * virtual filesystem that accepts any number of files, so several photographs could share one
+ * invocation and amortise the second that each currently costs. It needs reaching past the
+ * package's public API, so it is its own piece of work.
  */
 
 import {
   entryFromTags,
   failedEntry,
-  readTags,
-  readThumbnail,
+  readTagsAndThumbnail,
   type FileStore,
   type MetadataBackend,
   type PhotoEntry,
@@ -68,18 +78,15 @@ export async function loadPhotos(
     onProgress?.({ done: index, total: refs.length, current: ref.name });
 
     try {
-      const bytes = await store.read(ref);
+      const stub = headerOnly(await readForMetadata(store, ref));
 
-      // Only the header is needed to read metadata, and a 6MB file costs measurably
-      // more to push through the WASM boundary than a 100KB one.
-      const stub = headerOnly(bytes);
-      const tags = await readTags(backend, stub, ref.name, WANTED);
+      /*
+       * One invocation for both. The thumbnail is the camera's own embedded ~6KB JPEG, so it
+       * costs a fraction of the call it now shares rather than a second call of its own — and
+       * decoding a 24MP image to make one would cost far more than either.
+       */
+      const { tags, thumbnail } = await readTagsAndThumbnail(backend, stub, ref.name, WANTED);
       entries.push(entryFromTags(ref, tags));
-
-      // The camera already embedded a ~6KB JPEG of itself, so a thumbnail costs a small
-      // extra ExifTool call rather than decoding a 24MP image. A missing thumbnail is
-      // cosmetic, so it never fails the load.
-      const thumbnail = await readThumbnail(backend, stub, ref.name);
       if (thumbnail && thumbnail.byteLength > 0) thumbnails.set(ref.name, thumbnail);
     } catch (error) {
       // A photo that cannot be read still belongs in the list, marked unusable, so the
@@ -93,6 +100,34 @@ export async function loadPhotos(
 
   onProgress?.({ done: refs.length, total: refs.length, current: '' });
   return { entries, thumbnails };
+}
+
+/**
+ * How much of a photograph to read when only its metadata is wanted.
+ *
+ * An A6400's header is about 100KB, most of which is the ~400KB preview when there is one; 1MB is
+ * comfortable margin for a camera that embeds more. A file whose header is somehow larger simply
+ * falls back to `headerOnly` returning the truncated bytes, and ExifTool reads what it can — the
+ * date and coordinates are in the first few kilobytes regardless.
+ */
+const METADATA_BYTES = 1024 * 1024;
+
+/**
+ * The bytes to hand the parser, reading as few as the store allows.
+ *
+ * Falls back to a whole-file read, because `readHead` is optional on `FileStore` — a store that
+ * cannot seek is still a valid store, and this must not be the thing that stops one working.
+ */
+async function readForMetadata(store: FileStore, ref: PhotoRef): Promise<Uint8Array> {
+  if (store.readHead) {
+    try {
+      return await store.readHead(ref, METADATA_BYTES);
+    } catch {
+      // A store that has the method but failed on this file: fall through to the whole thing
+      // rather than failing a photograph over an optimisation.
+    }
+  }
+  return store.read(ref);
 }
 
 /**

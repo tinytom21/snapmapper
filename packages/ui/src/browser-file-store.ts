@@ -511,6 +511,17 @@ export function createBrowserFileStore(): BrowserFileStore {
       return new Uint8Array(await file.arrayBuffer());
     },
 
+    async readHead(ref: PhotoRef, maxBytes: number): Promise<Uint8Array> {
+      const handle = handles.get(ref.locator);
+      if (!handle) throw new Error(`no handle for ${ref.name}; open it again`);
+
+      const file = await handle.getFile();
+      // `Blob.slice` is a view: only these bytes are read from the card. One `arrayBuffer()` on
+      // the slice, never the Blob itself — see the note in core's exiftool.ts about per-syscall
+      // slicing, which is a ~69x penalty on a phone.
+      return new Uint8Array(await file.slice(0, maxBytes).arrayBuffer());
+    },
+
     async writeAtomic(ref: PhotoRef, bytes: Uint8Array): Promise<WrittenFile> {
       if (destination.kind === 'copy-pending') {
         // Never silently fall back to overwriting the originals. That is the one outcome the

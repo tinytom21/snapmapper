@@ -52,6 +52,19 @@ export interface FileStore {
   read(ref: PhotoRef): Promise<Uint8Array>;
 
   /**
+   * The first `maxBytes` of a photo, for stores that can read part of a file.
+   *
+   * Optional, and callers must fall back to `read`. Reading metadata needs only the header — about
+   * 100KB of a 7MB A6400 JPEG — so opening a card can touch a fraction of the bytes it does today.
+   *
+   * **This does not make ExifTool faster**, and it is worth being clear about that: measured, a
+   * 101KB stub and the whole 6.9MB file cost the same to parse, because the cost is per
+   * invocation. What this saves is the disk read and the allocation — which on a phone reading a
+   * camera card, for hundreds of photographs, is the part that is not free.
+   */
+  readHead?(ref: PhotoRef, maxBytes: number): Promise<Uint8Array>;
+
+  /**
    * Put a photo's new bytes on disk, without ever leaving a file partially written.
    *
    * Implementations MUST be atomic from the reader's point of view: write to a temporary file

@@ -40,7 +40,7 @@ http://localhost:5173/ (see HANDOFF.md; `localhost` is required for a secure con
 - `packages/core` is complete for the MVP: `gps`, `time`, `jpeg` (the splice), `exif-tags`,
   `exiftool` (the write path), `exiftool-wasm`, `session` (staged edits + undo), `storage`,
   `gpx` (track parsing and time matching), `google-timeline`, `track-file` and `track-folder`
-  (Timeline import and choosing a day's track). **259 tests, `tsc` clean.**
+  (Timeline import and choosing a day's track). **263 tests, `tsc` clean.**
 - `packages/ui` is React 19 + MapLibre 5 on Vite 7, with a `FileStore` over the File System
   Access API. **140 tests** covering save orchestration, partial failure, QR scan scaling, the
   palette, the track line and the track-folder span cache.
@@ -153,6 +153,39 @@ from scratch three times and produced phantoms every time: an element scrolled o
 still reports its real off-screen rect, and an element inside a *closed* `<details>` reports a rect
 although nothing is painted. It clips to every scrolling ancestor and asks `checkVisibility()`
 first. Do not write a fourth one.
+
+### Opening photographs costs one ExifTool invocation, not one megabyte
+
+The slowest thing the app does, and the reason the file picker exists at all. Measured on a real
+6.9MB A6400 JPEG, **median of nine interleaved runs** (`npm run load-cost --workspace spike`):
+
+| | per photo |
+|---|---|
+| whole 6.9MB file, two calls | 1884 ms |
+| 101KB header stub, two calls — *what shipped* | 1921 ms |
+| 101KB header stub, **one call** | **1173 ms** |
+| one call, tags only — the floor | 1021 ms |
+
+Two conclusions, and the second is the important one:
+
+- **Merging the tags and thumbnail into one call is 1.64x**, and `readTagsAndThumbnail` does it.
+  `-n` and `-b` are independent — one renders numbers, the other base64s binary — so the thumbnail
+  rides along for ~150 ms instead of costing a second ~900 ms invocation. Verified against all
+  seven fixtures: **14/14 identical**, same tags and byte-identical thumbnails.
+- **The bytes are nearly free; the invocation is the cost.** Sixty-eight times the data made *no
+  measurable difference*. So `readHead` and the header stub are about disk and memory on a phone,
+  not about ExifTool — do not expect them to show up in a timing.
+
+**The next lever is batching, and it is much bigger than anything above.** The wrapper mounts its
+input with `fileSystem.addFile(path, data)` and pushes the path onto an argument list — a list, and
+it already mounts a second file when given an ExifTool config. So several photographs could share
+one invocation and amortise the second each currently costs. It needs reaching past
+`@uswriting/exiftool`'s public API, which is why it is not done yet.
+
+**Beware measuring this badly.** The first attempt ran each variant in its own block and reported a
+mean of five, and produced impossibilities — tags-and-thumbnail faster than tags alone, a 101KB
+stub slower than the 6.9MB file it came from. Variants must be **interleaved round-robin** and
+reported as a **median**, or the numbers are measuring drift. `raceVariants` in the spike does it.
 
 ### GPX import is the camera clock's other half
 

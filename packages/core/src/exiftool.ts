@@ -259,6 +259,86 @@ export async function readTags(
 }
 
 /**
+ * Tags and the embedded thumbnail, in **one** ExifTool invocation.
+ *
+ * The reason this exists rather than calling `readTags` and `readThumbnail` in turn: the cost of
+ * reading is almost entirely *per invocation*, not per byte. Measured on a real 6.9MB A6400 JPEG,
+ * median of nine interleaved runs:
+ *
+ * | | per photo |
+ * |---|---|
+ * | whole 6.9MB file, two calls | 1884 ms |
+ * | 101KB header stub, two calls | 1921 ms |
+ * | 101KB header stub, **one call** | **1173 ms** |
+ * | one call, tags only — the floor | 1021 ms |
+ *
+ * So merging is **1.64x**, and the thumbnail costs 150 ms on top of a call that was going to
+ * happen anyway rather than a second 900 ms one. Note the first two rows: pushing sixty-eight
+ * times the bytes through the WASM boundary made **no measurable difference**, which is the same
+ * finding from the other end — the invocation is the cost.
+ *
+ * That is also why batching several photographs into one invocation is the next big lever, and a
+ * far larger one than this. See `spike/src/load-cost.mjs`.
+ */
+export async function readTagsAndThumbnail(
+  backend: MetadataBackend,
+  bytes: Uint8Array,
+  name: string,
+  tags: readonly string[] = [],
+  thumbnailTag = 'ThumbnailImage',
+): Promise<{ tags: TagValues; thumbnail: Uint8Array | undefined }> {
+  const result = await backend.read({
+    bytes,
+    name,
+    /*
+     * `-n` and `-b` together, which is the whole trick.
+     *
+     * `-n` keeps coordinates as signed decimals rather than ExifTool's pretty DMS, and `-b`
+     * base64-encodes binary values inside the JSON. They are independent: `-n` affects how numbers
+     * are rendered and `-b` how binary is, so asking for a thumbnail alongside numeric tags costs
+     * nothing but the thumbnail's own bytes.
+     */
+    args: ['-json', '-n', '-b', '-G', '-fast2', ...tags.map((tag) => `-${tag}`), `-${thumbnailTag}`],
+  });
+
+  if (!result.data) {
+    throw new MetadataWriteError('could not read metadata', result.message);
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(result.data);
+  } catch {
+    throw new MetadataWriteError('ExifTool did not return JSON', result.data.slice(0, 200));
+  }
+
+  if (!Array.isArray(parsed) || parsed.length === 0 || typeof parsed[0] !== 'object') {
+    throw new MetadataWriteError('ExifTool returned no metadata for this file');
+  }
+
+  const values = { ...(parsed[0] as TagValues) };
+  delete values.SourceFile;
+
+  /*
+   * The thumbnail comes out of the same object, and has to be lifted *out* of it.
+   *
+   * Left in place it would be a several-kilobyte base64 string sitting in the tag values, where
+   * `entryFromTags` would ignore it and every session would carry it around for the life of the
+   * page. A photo entry is meant to be small — that is what makes copying a session on every edit
+   * free — so this is not merely tidiness.
+   */
+  let thumbnail: Uint8Array | undefined;
+  for (const [key, value] of Object.entries(values)) {
+    if (typeof value !== 'string' || !value.startsWith(BASE64_PREFIX)) continue;
+    delete values[key];
+    // The first binary value is the thumbnail; there is only one asked for.
+    thumbnail ??= decodeBase64(value.slice(BASE64_PREFIX.length));
+  }
+
+  return { tags: values, thumbnail };
+}
+
+/**
  * ExifTool's marker for a binary value inside JSON output, under `-b`.
  *
  * Binary through a text channel needs an encoding, and this is the one ExifTool picks.
