@@ -15,12 +15,14 @@ import {
   VERIFY_ARGS,
   VERIFY_TAGS,
   buildClearLocationTags,
+  buildClearPlaceTags,
   buildGeotagTags,
+  buildPlaceTags,
   instantOf,
   pendingPhotos,
   verifyWrittenLocation,
   writeMetadataSpliced,
-  type Coordinates,
+  type ExpectedLocation,
   type FileStore,
   type MetadataBackend,
   type PhotoEntry,
@@ -149,21 +151,39 @@ async function writeOne(
   location: string | undefined;
 }> {
   const staged = session.edits.get(entry.ref.name);
-  if (staged === undefined) {
+  const place = session.places.get(entry.ref.name);
+  // Either kind of staging is a reason to write. A photo geocoded but not moved has no entry in
+  // `edits` at all, and returning here would silently drop the work.
+  if (staged === undefined && place === undefined) {
     return { warnings: [], verification: undefined, location: undefined };
   }
 
   // One bulk read into bytes. Handing a Blob to the backend is the ~69x mistake.
   const original = await store.read(entry.ref);
 
-  const tags = staged === null
-    ? buildClearLocationTags()
-    : buildGeotagTags({
-      coordinates: staged,
-      // No instant means no GPSDateStamp/GPSTimeStamp, which is correct: a photo with
-      // an unreadable date should get coordinates rather than a guessed GPS time.
-      ...(instantOf(session, entry) ? { instant: instantOf(session, entry) as Date } : {}),
-    });
+  /*
+   * Coordinates and place names are independent stagings and are merged into one write.
+   *
+   * One ExifTool invocation rather than two, which matters for the same reason it matters when
+   * reading: the cost is per invocation. It also means a photo cannot end up with its city written
+   * and its coordinates not, which is the state that would be hardest to notice and to explain.
+   */
+  const tags: Record<string, string> = {};
+
+  if (staged !== undefined) {
+    Object.assign(tags, staged === null
+      ? buildClearLocationTags()
+      : buildGeotagTags({
+        coordinates: staged,
+        // No instant means no GPSDateStamp/GPSTimeStamp, which is correct: a photo with
+        // an unreadable date should get coordinates rather than a guessed GPS time.
+        ...(instantOf(session, entry) ? { instant: instantOf(session, entry) as Date } : {}),
+      }));
+  }
+
+  if (place !== undefined) {
+    Object.assign(tags, place === null ? buildClearPlaceTags() : buildPlaceTags(place));
+  }
 
   const written = await writeMetadataSpliced(backend, original, entry.ref.name, tags);
 
@@ -172,7 +192,17 @@ async function writeOne(
   return {
     warnings: written.warnings,
     location: onDisk.location,
-    verification: verify ? await verifyOne(entry, onDisk, backend, staged) : undefined,
+    /*
+     * Verification is about the coordinates, so a geocode-only write has nothing to compare.
+     *
+     * That is not a gap: the half of verification that catches real damage is ExifTool's own
+     * structural warning on the read-back, and that runs whatever it was asked to check. Passing
+     * `null` here would be wrong in a way that matters — `null` asserts the coordinates are
+     * *absent*, so a geocode-only write would fail verification for leaving them alone.
+     */
+    verification: verify
+      ? await verifyOne(entry, onDisk, backend, staged === undefined ? 'unchanged' : staged)
+      : undefined,
   };
 }
 
@@ -188,7 +218,7 @@ async function verifyOne(
   entry: PhotoEntry,
   onDisk: WrittenFile,
   backend: MetadataBackend,
-  expected: Coordinates | null,
+  expected: ExpectedLocation,
 ): Promise<WriteVerification> {
   const after = await onDisk.read();
 

@@ -16,6 +16,7 @@ import { Accordion, type AccordionSection } from './Accordion.tsx';
 import { ClockPanel, describeClock } from './ClockPanel.tsx';
 import { PhotoList } from './PhotoList.tsx';
 import { PlatformReport, describePlatformBriefly } from './PlatformReport.tsx';
+import { PlacePanel, describePlaces, type PlacePanelProps } from './PlacePanel.tsx';
 import { TrackPanel, describeTrack, type TrackPanelProps } from './TrackPanel.tsx';
 import { pendingPhotos, type ClockSync, type Session } from '@snapmapper/core';
 import type { ViewMode } from './view-mode.ts';
@@ -46,6 +47,8 @@ export interface SidebarProps {
 
   /** The GPS track section, passed through whole — this component only decides where it sits. */
   readonly track: Omit<TrackPanelProps, 'session' | 'busy'>;
+  /** Place names, likewise. */
+  readonly places: Omit<PlacePanelProps, 'session' | 'busy'>;
 }
 
 export function Sidebar(props: SidebarProps) {
@@ -105,6 +108,16 @@ export function Sidebar(props: SidebarProps) {
       title: 'GPS track',
       state: describeTrack(props.track.track, props.track.trackFile),
       content: <TrackPanel session={session} busy={props.busy} {...props.track} />,
+    },
+    /*
+     * After the track, because a place name is derived from a location and there is no point
+     * looking one up before anything has been placed. The panel says so when nothing has.
+     */
+    {
+      id: 'places',
+      title: 'Place names',
+      state: describePlaces(session),
+      content: <PlacePanel session={session} busy={props.busy} {...props.places} />,
     },
     {
       id: 'device',

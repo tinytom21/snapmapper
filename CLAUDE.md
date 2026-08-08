@@ -40,7 +40,8 @@ http://localhost:5173/ (see HANDOFF.md; `localhost` is required for a secure con
 - `packages/core` is complete for the MVP: `gps`, `time`, `jpeg` (the splice), `exif-tags`,
   `exiftool` (the write path), `exiftool-wasm`, `session` (staged edits + undo), `storage`,
   `gpx` (track parsing and time matching), `google-timeline`, `track-file` and `track-folder`
-  (Timeline import and choosing a day's track). **275 tests, `tsc` clean.**
+  (Timeline import and choosing a day's track), `place` (names into IPTC/XMP).
+  **292 tests, `tsc` clean.**
 - `packages/ui` is React 19 + MapLibre 5 on Vite 7, with a `FileStore` over the File System
   Access API. **147 tests** covering save orchestration, partial failure, QR scan scaling, the
   palette, the track line, the track-folder span cache and the crash backup.
@@ -262,6 +263,42 @@ it could not recognise for that reason.
 Note `decodeEntities` in `gpx.ts`, found by testing the writer against the reader: a hand-rolled XML
 reader decodes nothing for free, so a track named `Dad & I` read back as the literal `&amp;`.
 `&amp;` must be decoded **last**, or `&amp;lt;` becomes `<` and the reader invents markup.
+
+### Place names, and the one field that is not what it looks like
+
+`place.ts` maps a `Place` to tags; `nominatim.ts` in the UI does the asking. Coordinates make a
+photograph mappable; **City and Country make it findable** — the question Lightroom, digiKam and
+Immich can all answer and a latitude cannot.
+
+- **`IPTC:Country-PrimaryLocationCode` is a three-octet field — ISO 3166-1 *alpha-3*.** Every
+  geocoder returns alpha-2, so `FR` is padded to `FR ` and ExifTool refuses the write outright:
+  `String too short (padded)`. Found against a real A6400 file. The code therefore goes to
+  **`XMP:CountryCode` only**, which is alpha-2 by its own specification. Converting would mean
+  carrying the whole alpha-2→alpha-3 table for one legacy field XMP already covers.
+- **Fields the service did not fill are omitted, never blanked.** An empty string is ExifTool's
+  *delete* value, so writing all five unconditionally would strip a city somebody set by hand
+  because this lookup returned only a country.
+- **Grouped by rounded position before anything is sent.** `PLACE_PRECISION` is 4 — about 11 m — so
+  a fifty-photo walk round a park is three or four requests. A tenth of a degree would be 11 km and
+  would put a photograph in the next town's name. This is what makes the free service usable rather
+  than abused.
+- **Serialised at one request a second across the whole app**, in a module-level promise chain
+  rather than a per-call sleep: two geocodes started from different places would otherwise each
+  wait politely and then fire together.
+- **A miss is cached too.** Somewhere with no address does not acquire one by being asked again.
+- **`places` is a second map on the session, not a field on the edit.** A photo whose coordinates
+  are already on disk can be named without its position being touched — folding them together
+  would make that impossible to express. `pendingPhotos` counts either, or geocoding a saved photo
+  would be work the Save button never offered to write.
+- **`verifyWrittenLocation` gained `'unchanged'`.** A geocode-only write must not be verified
+  against `null`, which asserts the coordinates are *absent* — it would fail for leaving them
+  alone. The structural-warning half still runs, which is the half that catches real damage.
+
+Verified against a real 6.9MB A6400 JPEG: **9/9 tags round-trip**, no warnings, coordinates intact,
+and a clear leaves nothing behind.
+
+**It is the only feature that needs the network**, and the panel says so before the button —
+including that it sends coordinates and never photographs.
 
 ### Three small things that carry their weight
 

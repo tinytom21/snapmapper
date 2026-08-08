@@ -16,13 +16,13 @@ Nothing is half-finished. The tree is clean and every change is deployed.
 
 | Path | State |
 |---|---|
-| `packages/core` | Platform-agnostic logic. **275 tests, `tsc` clean.** `gps`, `time`, `jpeg` (the splice), `exif-tags`, `exiftool` (write path), `exiftool-wasm`, `session` (staged edits, undo, named actions), `clock-sync`, `gpx` (track parsing and matching), `google-timeline` + `track-file` (Timeline import), `verify-write`, `storage`. |
+| `packages/core` | Platform-agnostic logic. **292 tests, `tsc` clean.** `gps`, `time`, `jpeg` (the splice), `exif-tags`, `exiftool` (write path), `exiftool-wasm`, `session` (staged edits, undo, named actions), `clock-sync`, `gpx` (track parsing and matching), `google-timeline` + `track-file` (Timeline import), `verify-write`, `storage`. |
 | `packages/ui` | React 19 + MapLibre 5 on Vite 7. **147 tests.** The only platform-specific file is `browser-file-store.ts`, behind `FileStore`. |
 | `packages/shells` | Does not exist and is not needed. There is no native shell and no reason for one. |
 | `spike/` | Phase 0, done. Still where the write path is checked against a **native** ExifTool: `npm run splice --workspace spike` → 184 checks. |
 | `docs/PLAN.md` | Historical. Useful for intent, wrong in places. |
 
-**422 tests, `tsc` clean, production build succeeds.**
+**439 tests, `tsc` clean, production build succeeds.**
 
 ```bash
 npm test && npm run typecheck
@@ -56,7 +56,7 @@ was found:
 
 ## Deploying
 
-**Push to `main` and it ships.** `.github/workflows/deploy.yml` typechecks, runs all 422 tests,
+**Push to `main` and it ships.** `.github/workflows/deploy.yml` typechecks, runs all 439 tests,
 builds and publishes to GitHub Pages; a failing test blocks the deploy. About two minutes.
 
 The base path comes from the repository name, so renaming the repo needs no edit. A Pages project

@@ -15,6 +15,7 @@
 import { clockFromSync, type ClockSync } from './clock-sync.ts';
 import { assertValidCoordinates, type Coordinates } from './gps.ts';
 import { matchTrack, type GpxTrack, type MatchOptions } from './gpx.ts';
+import { isEmptyPlace, type Place } from './place.ts';
 import { parseExifDateTime, photoInstant, type CameraClock, type NaiveDateTime } from './time.ts';
 import type { PhotoRef } from './storage.ts';
 
@@ -39,6 +40,15 @@ export interface Session {
   readonly photos: readonly PhotoEntry[];
   /** Staged coordinates by photo name. Absent means untouched. */
   readonly edits: ReadonlyMap<string, Coordinates | null>;
+  /**
+   * Staged place names by photo name. `null` is a staged clear.
+   *
+   * A second map rather than a field on the edit, because the two are genuinely independent: a
+   * photograph can have its coordinates changed without being re-geocoded, and one that already
+   * had coordinates on disk can be given place names without its position being touched at all.
+   * Folding them together would make "geocode what is already saved" impossible to express.
+   */
+  readonly places: ReadonlyMap<string, Place | null>;
   readonly selected: ReadonlySet<string>;
   readonly clock: CameraClock;
   /**
@@ -57,6 +67,7 @@ export interface Session {
 /** The part of a session undo restores. Selection is not worth undoing. */
 interface SessionSnapshot {
   readonly edits: ReadonlyMap<string, Coordinates | null>;
+  readonly places: ReadonlyMap<string, Place | null>;
   readonly clock: CameraClock;
   readonly sync: ClockSync | undefined;
 }
@@ -72,6 +83,7 @@ export type SessionAction =
   | { readonly kind: 'place'; readonly count: number }
   | { readonly kind: 'track'; readonly count: number }
   | { readonly kind: 'restore'; readonly count: number }
+  | { readonly kind: 'geocode'; readonly count: number }
   | { readonly kind: 'clear'; readonly count: number }
   | { readonly kind: 'revert'; readonly count: number }
   | { readonly kind: 'time-zone'; readonly timeZone: string }
@@ -101,6 +113,7 @@ export function createSession(photos: readonly PhotoEntry[], clock: CameraClock)
   return {
     photos,
     edits: new Map(),
+    places: new Map(),
     selected: new Set(),
     clock,
     sync: undefined,
@@ -124,13 +137,21 @@ export function locationOf(session: Session, name: string): LocationState {
   return { kind: 'none' };
 }
 
-/** Photos with staged changes, in list order. The save list. */
+/**
+ * Photos with staged changes, in list order. The save list.
+ *
+ * Coordinates *or* place names. Geocoding a photo whose position is already on disk stages nothing
+ * in `edits`, and if that did not count as pending it would be a change the Save button never
+ * offered to write — work done and silently discarded.
+ */
 export function pendingPhotos(session: Session): readonly PhotoEntry[] {
-  return session.photos.filter((entry) => session.edits.has(entry.ref.name));
+  return session.photos.filter(
+    (entry) => session.edits.has(entry.ref.name) || session.places.has(entry.ref.name),
+  );
 }
 
 export function hasPendingChanges(session: Session): boolean {
-  return session.edits.size > 0;
+  return session.edits.size > 0 || session.places.size > 0;
 }
 
 /**
@@ -237,7 +258,7 @@ export function assignLocation(
 
   return commit(
     session,
-    { edits, clock: session.clock, sync: session.sync },
+    { edits, places: session.places, clock: session.clock, sync: session.sync },
     { kind: 'place', count: writable.length },
   );
 }
@@ -341,7 +362,7 @@ export function applyTrack(
   return {
     session: commit(
       session,
-      { edits, clock: session.clock, sync: session.sync },
+      { edits, places: session.places, clock: session.clock, sync: session.sync },
       { kind: 'track', count: placed.length },
     ),
     placed,
@@ -379,8 +400,58 @@ export function restoreEdits(
 
   return commit(
     session,
-    { edits, clock: session.clock, sync: session.sync },
+    { edits, places: session.places, clock: session.clock, sync: session.sync },
     { kind: 'restore', count },
+  );
+}
+
+/**
+ * The place names a photo will have after a save, if any.
+ *
+ * Only staged values, and deliberately: place names already in the file are not read back when a
+ * folder is opened. Doing so would cost a fifth of the load budget on fields that change nothing
+ * about what the app can do — the map is drawn from coordinates, and nothing here decides anything
+ * from a city name. What is on disk stays on disk and is only ever *added to*.
+ */
+export function placeOf(session: Session, name: string): Place | null | undefined {
+  return session.places.get(name);
+}
+
+/** Photos with a staged place name. What a save has place tags to write for. */
+export function placedNames(session: Session): readonly string[] {
+  return session.photos
+    .map((entry) => entry.ref.name)
+    .filter((name) => session.places.has(name));
+}
+
+/**
+ * Stage place names for photos.
+ *
+ * One step for the lot, because a geocode is one action from the user's side however many requests
+ * it took. Empty results are stored as `null` — a staged *clear* rather than an absence — so that
+ * "the service had nothing for this spot" is distinguishable from "not looked up yet", and asking
+ * again is a decision rather than something that happens by itself.
+ */
+export function assignPlaces(
+  session: Session,
+  found: ReadonlyMap<string, Place>,
+): Session {
+  const places = new Map(session.places);
+  let count = 0;
+
+  for (const [name, place] of found) {
+    const photo = session.photos.find((entry) => entry.ref.name === name);
+    if (!photo || photo.error !== undefined) continue;
+    places.set(name, isEmptyPlace(place) ? null : place);
+    count += 1;
+  }
+
+  if (count === 0) return session;
+
+  return commit(
+    session,
+    { edits: session.edits, places, clock: session.clock, sync: session.sync },
+    { kind: 'geocode', count },
   );
 }
 
@@ -401,7 +472,7 @@ export function clearLocation(session: Session, names: readonly string[]): Sessi
   return changed
     ? commit(
       session,
-      { edits, clock: session.clock, sync: session.sync },
+      { edits, places: session.places, clock: session.clock, sync: session.sync },
       { kind: 'clear', count: countChanged(session.edits, edits) },
     )
     : session;
@@ -417,7 +488,7 @@ export function revert(session: Session, names: readonly string[]): Session {
   return reverted > 0
     ? commit(
       session,
-      { edits, clock: session.clock, sync: session.sync },
+      { edits, places: session.places, clock: session.clock, sync: session.sync },
       { kind: 'revert', count: reverted },
     )
     : session;
@@ -437,7 +508,7 @@ export function setTimeZone(session: Session, timeZone: string): Session {
 
   return commit(
     session,
-    { edits: session.edits, clock, sync: session.sync },
+    { edits: session.edits, places: session.places, clock, sync: session.sync },
     { kind: 'time-zone', timeZone },
   );
 }
@@ -451,7 +522,7 @@ export function setTimeZone(session: Session, timeZone: string): Session {
 export function setOffsetSeconds(session: Session, offsetSeconds: number): Session {
   return commit(
     session,
-    { edits: session.edits, clock: { ...session.clock, offsetSeconds }, sync: undefined },
+    { edits: session.edits, places: session.places, clock: { ...session.clock, offsetSeconds }, sync: undefined },
     { kind: 'offset', offsetSeconds },
   );
 }
@@ -464,7 +535,7 @@ export function setOffsetSeconds(session: Session, offsetSeconds: number): Sessi
 export function applySync(session: Session, sync: ClockSync): Session {
   return commit(
     session,
-    { edits: session.edits, clock: clockFromSync(sync, session.clock.timeZone), sync },
+    { edits: session.edits, places: session.places, clock: clockFromSync(sync, session.clock.timeZone), sync },
     { kind: 'sync' },
   );
 }
@@ -474,7 +545,7 @@ export function clearSync(session: Session): Session {
   if (!session.sync) return session;
   return commit(
     session,
-    { edits: session.edits, clock: session.clock, sync: undefined },
+    { edits: session.edits, places: session.places, clock: session.clock, sync: undefined },
     { kind: 'clear-sync' },
   );
 }
@@ -489,16 +560,22 @@ export function clearSync(session: Session): Session {
 export function markSaved(session: Session, savedNames: readonly string[]): Session {
   const saved = new Set(savedNames);
   const edits = new Map(session.edits);
+  const places = new Map(session.places);
 
   const photos = session.photos.map((entry) => {
     if (!saved.has(entry.ref.name)) return entry;
+
+    // Place names are settled by the same write, and are not read back into the entry — see
+    // `placeOf`. Clearing them here is what stops a saved photo staying listed as unsaved.
+    places.delete(entry.ref.name);
+
     const staged = session.edits.get(entry.ref.name);
     if (staged === undefined) return entry;
     edits.delete(entry.ref.name);
     return { ...entry, existing: staged === null ? undefined : staged };
   });
 
-  return { ...session, photos, edits, history: [], future: [] };
+  return { ...session, photos, edits, places, history: [], future: [] };
 }
 
 /**
@@ -543,6 +620,7 @@ export function undo(session: Session): Session {
   return {
     ...session,
     edits: previous.edits,
+    places: previous.places,
     clock: previous.clock,
     sync: previous.sync,
     history: session.history.slice(0, -1),
@@ -552,6 +630,7 @@ export function undo(session: Session): Session {
       ...session.future,
       {
         edits: session.edits,
+        places: session.places,
         clock: session.clock,
         sync: session.sync,
         action: previous.action,
@@ -567,11 +646,12 @@ export function redo(session: Session): Session {
   return {
     ...session,
     edits: next.edits,
+    places: next.places,
     clock: next.clock,
     sync: next.sync,
     history: [
       ...session.history,
-      { edits: session.edits, clock: session.clock, sync: session.sync, action: next.action },
+      { edits: session.edits, places: session.places, clock: session.clock, sync: session.sync, action: next.action },
     ],
     future: session.future.slice(0, -1),
   };
@@ -608,12 +688,13 @@ function countChanged(
 function commit(session: Session, next: SessionSnapshot, action: SessionAction): Session {
   const history = [
     ...session.history,
-    { edits: session.edits, clock: session.clock, sync: session.sync, action },
+    { edits: session.edits, places: session.places, clock: session.clock, sync: session.sync, action },
   ];
 
   return {
     ...session,
     edits: next.edits,
+    places: next.places,
     clock: next.clock,
     sync: next.sync,
     history: history.length > UNDO_LIMIT ? history.slice(-UNDO_LIMIT) : history,

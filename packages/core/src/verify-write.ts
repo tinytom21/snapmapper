@@ -81,9 +81,19 @@ export interface WriteVerification {
  * `expected` is `null` for a location that was cleared, which has to be verified as
  * *absence* — a clear that silently did nothing would otherwise pass unnoticed.
  */
+/**
+ * `'unchanged'` checks the file's structure without checking its coordinates.
+ *
+ * For a write that staged place names and nothing else: the coordinates were not touched, so
+ * neither "should equal these" nor "should be absent" is the right question. The half of this that
+ * catches real damage — ExifTool's structural warning on the read-back — still runs, and that is
+ * the half that would otherwise let a wrecked file through reporting perfect coordinates.
+ */
+export type ExpectedLocation = Coordinates | null | 'unchanged';
+
 export function verifyWrittenLocation(
   tags: TagValues,
-  expected: Coordinates | null,
+  expected: ExpectedLocation,
 ): WriteVerification {
   const problems: string[] = [];
   const warnings = collectWarnings(tags);
@@ -96,6 +106,9 @@ export function verifyWrittenLocation(
 
   const latitude = numberOf(tags['Composite:GPSLatitude']);
   const longitude = numberOf(tags['Composite:GPSLongitude']);
+
+  // Structure only. The warnings above have already been collected and judged.
+  if (expected === 'unchanged') return { ok: problems.length === 0, problems, warnings };
 
   if (expected === null) {
     if (latitude !== undefined || longitude !== undefined) {

@@ -1,4 +1,5 @@
 export * from './gps.ts';
+export * from './place.ts';
 export * from './gpx.ts';
 export * from './google-timeline.ts';
 export * from './track-file.ts';

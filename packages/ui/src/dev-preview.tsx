@@ -192,6 +192,12 @@ export function previewPhotoList(
         thumbnails={thumbnails}
         busy={false}
         addPhotosLabel="Add photos…"
+        places={{
+          progress: null,
+          lastRun: null,
+          onGeocode: (scope) => console.log('geocode', scope),
+          onStop: () => console.log('stop'),
+        }}
         track={{
           track: track,
           trackFile: 'sample.gpx',

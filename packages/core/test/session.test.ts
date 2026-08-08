@@ -27,6 +27,8 @@ import {
   undo,
   undoAction,
   applyTrack,
+  assignPlaces,
+  placeOf,
   restoreEdits,
   stagedPhotos,
   unplacedPhotos,
@@ -785,5 +787,70 @@ describe('finding what still needs work', () => {
       SANTIAGO,
     );
     assert.deepEqual(stagedPhotos(session).map((one) => one.ref.name), ['new.jpg']);
+  });
+});
+
+describe('staging place names', () => {
+  const PLACE = { city: 'Toulouse', country: 'France', countryCode: 'FR' };
+
+  it('counts as a pending change even when the position was not touched', () => {
+    /*
+     * The one that would silently lose work. Geocoding a photo whose coordinates are already on
+     * disk stages nothing in `edits`, so if that did not count as pending the Save button would
+     * never offer to write it.
+     */
+    const session = createSession([entry('a.jpg', { existing: GREENWICH })], CLOCK);
+    const named = assignPlaces(session, new Map([['a.jpg', PLACE]]));
+
+    assert.equal(hasPendingChanges(named), true);
+    assert.deepEqual(pendingPhotos(named).map((one) => one.ref.name), ['a.jpg']);
+  });
+
+  it('is one undo step whatever it named', () => {
+    const session = createSession([entry('a.jpg'), entry('b.jpg')], CLOCK);
+    const named = assignPlaces(session, new Map([['a.jpg', PLACE], ['b.jpg', PLACE]]));
+
+    assert.deepEqual(undoAction(named), { kind: 'geocode', count: 2 });
+    assert.equal(hasPendingChanges(undo(named)), false);
+  });
+
+  it('stores an empty answer as a staged clear, not as an absence', () => {
+    // "The service had nothing here" and "not looked up yet" are different states, and only the
+    // first should stop it being asked again by itself.
+    const session = createSession([entry('a.jpg')], CLOCK);
+    const named = assignPlaces(session, new Map([['a.jpg', {}]]));
+
+    assert.equal(placeOf(named, 'a.jpg'), null);
+    assert.equal(named.places.has('a.jpg'), true);
+  });
+
+  it('survives undo and redo alongside the coordinates', () => {
+    // Places live in their own map, so the history has to carry both — a snapshot that restored
+    // only `edits` would leave place names from a future that was undone.
+    const placed = assignLocation(createSession([entry('a.jpg')], CLOCK), ['a.jpg'], GREENWICH);
+    const named = assignPlaces(placed, new Map([['a.jpg', PLACE]]));
+
+    const back = undo(named);
+    assert.equal(placeOf(back, 'a.jpg'), undefined);
+    assert.deepEqual(locationOf(back, 'a.jpg'), { kind: 'pending', coordinates: GREENWICH });
+
+    const forward = redo(back);
+    assert.deepEqual(placeOf(forward, 'a.jpg'), PLACE);
+  });
+
+  it('is settled by a save, so a named photo stops being listed as unsaved', () => {
+    const session = assignPlaces(
+      createSession([entry('a.jpg', { existing: GREENWICH })], CLOCK),
+      new Map([['a.jpg', PLACE]]),
+    );
+    const saved = markSaved(session, ['a.jpg']);
+
+    assert.equal(hasPendingChanges(saved), false);
+    assert.equal(placeOf(saved, 'a.jpg'), undefined);
+  });
+
+  it('skips photos that could not be read', () => {
+    const session = createSession([failedEntry(ref('broken.jpg'), 'unreadable')], CLOCK);
+    assert.equal(assignPlaces(session, new Map([['broken.jpg', PLACE]])), session);
   });
 });

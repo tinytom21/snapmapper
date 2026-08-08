@@ -12,6 +12,7 @@ import {
   applySync,
   applyTrack,
   assignLocation,
+  assignPlaces,
   canRedo,
   canUndo,
   clearLocation,
@@ -53,6 +54,8 @@ import {
 
 import { PlatformReport } from './PlatformReport.tsx';
 import { ReviewBar } from './ReviewBar.tsx';
+import { locatedGroups, placesByPhoto } from './PlacePanel.tsx';
+import { geocodeGroups, type GeocodeProgress } from './nominatim.ts';
 import { Sidebar } from './Sidebar.tsx';
 import { PhotoMap, type MapPin } from './PhotoMap.tsx';
 import { PhotoPreview } from './PhotoPreview.tsx';
@@ -175,6 +178,10 @@ export function App() {
    * looks perfectly reasonable as a pin and obviously wrong beside its own picture.
    */
   const [reviewing, setReviewing] = useState<string | null>(null);
+  /** Reverse geocoding, which is the only thing in the app that needs the network. */
+  const [geocoding, setGeocoding] = useState<GeocodeProgress | null>(null);
+  const [lastGeocode, setLastGeocode] = useState<{ named: number; failed: number } | null>(null);
+  const geocodeAbort = useRef<AbortController | null>(null);
   const [lastSearch, setLastSearch] = useState<TrackSearchOutcome | null>(null);
 
   const setView = useCallback((next: ViewMode) => {
@@ -709,6 +716,41 @@ export function App() {
     void searchTracks(trackFolder, session);
   }, [session, trackFolder, track, searchTracks]);
 
+  /**
+   * Look up place names for what is on the map, and stage them.
+   *
+   * Grouped by rounded position *before* anything is sent, so a fifty-photo walk around a park is
+   * three or four requests rather than fifty — which is both much faster and the difference
+   * between using a free service and abusing it.
+   */
+  const geocode = useCallback(async (scope: 'all' | 'selected') => {
+    if (!session) return;
+
+    const groups = locatedGroups(session, scope === 'selected');
+    if (groups.length === 0) return;
+
+    const controller = new AbortController();
+    geocodeAbort.current = controller;
+    setGeocoding({ done: 0, total: groups.length, fromCache: 0 });
+    setLastGeocode(null);
+
+    try {
+      const { places, failed } = await geocodeGroups(groups, {
+        signal: controller.signal,
+        onProgress: setGeocoding,
+      });
+
+      const found = placesByPhoto(groups, places);
+      setSession((current) => (current ? assignPlaces(current, found) : current));
+      setLastGeocode({ named: found.size, failed });
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setGeocoding(null);
+      geocodeAbort.current = null;
+    }
+  }, [session]);
+
   const readOriginal = useCallback(
     (entry: PhotoEntry) => store.read(entry.ref),
     [],
@@ -1029,6 +1071,12 @@ export function App() {
                   onSync={(sync: ClockSync) => setSession(applySync(session, sync))}
                   onClearSync={() => setSession(clearSync(session))}
                   onScanReference={scanReference}
+                  places={{
+                    progress: geocoding,
+                    lastRun: lastGeocode,
+                    onGeocode: (scope) => void geocode(scope),
+                    onStop: () => geocodeAbort.current?.abort(),
+                  }}
                   track={{
                     track,
                     trackFile,
