@@ -176,11 +176,33 @@ Two conclusions, and the second is the important one:
   measurable difference*. So `readHead` and the header stub are about disk and memory on a phone,
   not about ExifTool — do not expect them to show up in a timing.
 
-**The next lever is batching, and it is much bigger than anything above.** The wrapper mounts its
-input with `fileSystem.addFile(path, data)` and pushes the path onto an argument list — a list, and
-it already mounts a second file when given an ExifTool config. So several photographs could share
-one invocation and amortise the second each currently costs. It needs reaching past
-`@uswriting/exiftool`'s public API, which is why it is not done yet.
+**Batching is the next lever, it is worth 8–14x, and it is proved.**
+`npm run batch-read --workspace spike` drives zeroperl directly and reads N header stubs in one
+invocation:
+
+| files in one invocation | total | per photo |
+|---|---|---|
+| 1 | 354–592 ms | 354–592 ms |
+| 5 | 619 ms | 124 ms |
+| 10 | 750 ms | 75 ms |
+| 28 | 1196 ms | **43 ms** |
+
+Every batch returned **one record per file**, with ExifTool reporting "N image files read". A
+200-photo card goes from ~70–120 s to **~9 s**, and roughly six times those figures on a phone.
+
+**Error isolation survives batching**, which was the question that decided whether it was safe at
+all. With a corrupt file in the middle of five: five records out, the good four intact, and stderr
+naming the culprit — `Error: File format error - /broken.jpg`. The exit code is 1 and
+`success` is false, so a batch reader **must not treat a non-zero exit as total failure** — the same
+lesson as the existing "the wrapper reports `success: false` for a bare warning". Map results by
+`SourceFile`, never by index.
+
+**What stands in the way of shipping it:** the ExifTool Perl script is a template literal inside
+`@uswriting/exiftool`'s bundle and is not exported, so a batch runner has to obtain it. The spike
+scrapes it out of the bundle text, which is fine for a measurement and not fine to ship. The route
+is a **build-time extraction** — the same shape as `vite-plugin-zeroperl.ts`, which already serves
+the WASM out of the dependency — so the script stays *derived* rather than vendored and an upgrade
+flows through. It must fail loudly at build time if the bundle shape changes.
 
 **Beware measuring this badly.** The first attempt ran each variant in its own block and reported a
 mean of five, and produced impossibilities — tags-and-thumbnail faster than tags alone, a 101KB

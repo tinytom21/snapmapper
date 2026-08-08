@@ -13,7 +13,8 @@
     "piexif": "node src/piexif-write.mjs",
     "splice": "node src/splice-write.mjs",
     "browser": "node src/serve-browser.mjs",
-    "load-cost": "node src/load-cost.mjs"
+    "load-cost": "node src/load-cost.mjs",
+    "batch-read": "node src/batch-read.mjs"
   },
   "dependencies": {
     "@uswriting/exiftool": "latest",

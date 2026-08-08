@@ -105,8 +105,13 @@ Ordered by what would change the tool most.
 2. **Video.** Wanted eventually, not now. ExifTool writes GPS to MP4/MOV.
 3. **Code-split the ~1.5MB bundle.** Fine on a desktop, worth it on mobile data. It is precached, so
    it is paid once per version rather than per visit.
-4. **Batch metadata reads.** The big one for speed — see the loading section in CLAUDE.md. The cost
-   is per ExifTool invocation, and the wrapper's virtual filesystem takes any number of files.
+4. **Batch metadata reads — measured at 8–14x and half-built.** `npm run batch-read --workspace
+   spike` proves it: 43 ms per photo in a batch of 28 against 354–592 ms alone, one record per
+   file, and a corrupt file in the batch does not take the others down. A 200-photo card: ~9 s
+   instead of ~70–120 s. What remains is a route to the ExifTool script that is not "scrape the
+   dependency's bundle" — build-time extraction, like `vite-plugin-zeroperl.ts` does for the WASM —
+   then `readManyTags` in core and a loader that feeds it. See CLAUDE.md for the numbers and the
+   two traps (non-zero exit is not total failure; map by `SourceFile`, never by index).
 
 Deferred by the plan rather than by us: ARW via XMP sidecars, reverse geocoding into IPTC, video.
 
