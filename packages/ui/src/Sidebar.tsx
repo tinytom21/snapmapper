@@ -15,6 +15,7 @@ import { useState } from 'react';
 import { Accordion, type AccordionSection } from './Accordion.tsx';
 import { ClockPanel, describeClock } from './ClockPanel.tsx';
 import { PhotoList } from './PhotoList.tsx';
+import { OfflineMap } from './OfflineMap.tsx';
 import { PlatformReport, describePlatformBriefly } from './PlatformReport.tsx';
 import { PlacePanel, describePlaces, type PlacePanelProps } from './PlacePanel.tsx';
 import { TrackPanel, describeTrack, type TrackPanelProps } from './TrackPanel.tsx';
@@ -123,7 +124,9 @@ export function Sidebar(props: SidebarProps) {
       id: 'device',
       title: 'This device',
       state: describePlatformBriefly(),
-      content: <PlatformReport />,
+      // The offline map cache lives here rather than in its own section: it is a fact about
+      // storage on this device, which is exactly what this section is for.
+      content: <><OfflineMap /><PlatformReport /></>,
     },
   ];
 

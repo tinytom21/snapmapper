@@ -77,11 +77,10 @@ each is pinned by a test:
 - **No `skipWaiting()`.** A new version activates on the next launch, not mid-session; swapping
   assets under a running page is how staged edits that have not reached disk get lost.
 
-**Map tiles cannot be cached from the service worker.** MapLibre fetches them inside a worker it
-creates from a `blob:` URL, and those requests never reach it — measured, with zero tile requests
-arriving and none in the page's resource timing. A tile-caching branch was written and removed
-rather than shipped looking plausible and never filling. `maplibregl.addProtocol` runs handlers on
-the main thread and would fix it.
+**Map tiles cannot be cached from the service worker** — and now they do not need to be.
+MapLibre fetches them inside a worker it creates from a `blob:` URL, and those requests never reach
+it (measured: zero tile requests arriving). `maplibregl.addProtocol` runs handlers on the **main
+thread**, which is the way through; see `offline-tiles.ts`.
 
 The remaining gap is the *first* load, which must be over HTTPS from somewhere: a static host is
 the answer. `preview:lan` uses a self-signed certificate, and browsers refuse to register a
@@ -263,6 +262,41 @@ it could not recognise for that reason.
 Note `decodeEntities` in `gpx.ts`, found by testing the writer against the reader: a hand-rolled XML
 reader decodes nothing for free, so a track named `Dad & I` read back as the literal `&amp;`.
 `&amp;` must be decoded **last**, or `&amp;lt;` becomes `<` and the reader invents markup.
+
+### Offline map tiles, through addProtocol rather than the service worker
+
+`offline-tiles.ts`. Ground you have looked at online works with no connection. There is no
+"download this area" button, deliberately — it would have to be pressed *before* losing signal,
+which is the same "remember to start the logger" problem that made Timeline worth supporting.
+
+- **The style is fetched on the main thread and rewritten**, every remote URL becoming
+  `snapmapper-tiles://https://...`, and the object handed to MapLibre. A handler only fires for its
+  own scheme, so the document has to name it. Glyphs and sprites are redirected too — a vector map
+  with no glyphs renders every road and town **silently unlabelled**, which reads as a styling bug
+  rather than a missing download.
+- **Recursion and rewriting are separate decisions**, and conflating them is how the first version
+  failed: it gated recursion on the URL keys, stopped at `sources` — a container, not a URL — and
+  never reached the `tiles` array inside. The result cached the fonts and nothing else while
+  looking entirely correct. `sources` is deliberately *not* a URL key, or a source's own
+  `attribution` would be rewritten and the OSM credit link broken.
+- **Never run a tile template through `new URL().toString()`.** `{` and `}` are in the WHATWG path
+  percent-encode set, so `{z}/{x}/{y}.pbf` comes back `%7Bz%7D/...` and every request 404s with
+  nothing naming the cause. Absolute URLs are left untouched; relative ones have their braces put
+  back after resolution.
+- **Cache Storage, in its own cache name**, so clearing map tiles cannot touch the app shell or the
+  24MB WASM. Cache-first, because a tile for a fixed z/x/y does not change on any timescale that
+  matters and network-first would defeat the point.
+- **Stats are summed from the responses, not from `navigator.storage.estimate()`** — that covers
+  everything the origin has stored, so a "clear map tiles" button would offer to free ten times
+  what it frees.
+
+**Verified live**: a real 23KB vector tile and a 76KB glyph range fetched and cached, and a second
+pass served entirely from cache with **zero network calls**.
+
+**Not verifiable in the harness: that MapLibre actually routes through it.** The Browser pane does
+not composite, so the map never finishes loading and never requests a tile — a plain style URL does
+not reach `load` either. The rewrite is unit-tested, the handler is proved above, and the last link
+needs a real device.
 
 ### Place names, and the one field that is not what it looks like
 

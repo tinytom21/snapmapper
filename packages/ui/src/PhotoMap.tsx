@@ -26,6 +26,7 @@ import type { Feature, LineString } from 'geojson';
 
 import { boundsOf, selectionFocus } from './map-focus.ts';
 import { trackLine, type LinePoint } from './track-line.ts';
+import { offlineStyle, registerTileProtocol } from './offline-tiles.ts';
 import {
   ATTRIBUTION,
   RASTER_FALLBACK,
@@ -92,11 +93,36 @@ export function PhotoMap({
   useEffect(() => {
     if (!container.current || map.current) return;
 
-    const instance = new maplibregl.Map({
-      container: container.current,
-      style: tileChoiceFrom(window.location.search) === 'raster'
+    /*
+     * Built asynchronously, because the style has to be fetched and rewritten before the map is
+     * constructed — see `offline-tiles.ts`. Handing MapLibre the plain URL and swapping the style
+     * afterwards would work, but it loads the whole style twice and flashes an unstyled map on the
+     * slow connections this feature is for.
+     */
+    let cancelled = false;
+    let built: MapLibreMap | null = null;
+
+    registerTileProtocol(maplibregl);
+
+    void (async () => {
+      const wanted = tileChoiceFrom(window.location.search) === 'raster'
         ? RASTER_FALLBACK
-        : VECTOR_STYLE_URL,
+        : await offlineStyle(VECTOR_STYLE_URL);
+      if (cancelled || !container.current) return;
+      built = create(wanted);
+    })();
+
+    return () => {
+      cancelled = true;
+      built?.remove();
+      map.current = null;
+      markers.current.clear();
+    };
+
+    function create(style: unknown): MapLibreMap {
+    const instance = new maplibregl.Map({
+      container: container.current as HTMLDivElement,
+      style: style as maplibregl.StyleSpecification,
       center: [-0.0015, 51.4778],
       zoom: 3,
       /*
@@ -158,12 +184,8 @@ export function PhotoMap({
     });
 
     map.current = instance;
-
-    return () => {
-      instance.remove();
-      map.current = null;
-      markers.current.clear();
-    };
+    return instance;
+    }
   }, []);
 
   useEffect(() => {
