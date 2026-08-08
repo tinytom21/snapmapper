@@ -544,11 +544,30 @@ export function App() {
         return;
       }
 
-      // Only the winners are fully parsed. The search read nothing but their `<time>` elements.
+      /*
+       * Only the winners are parsed, and only the part of them that covers the photographs.
+       *
+       * The window matters most for monthly files: one holds a quarter of a million points, of
+       * which a shoot uses a few hundred. Without it the map draws a month of travel across the
+       * whole county and the day you want is invisible inside it — and `parseGpx` would allocate
+       * every point on the way to throwing them away.
+       */
       const loaded = await Promise.all(found.chosen.map(async (name) =>
-        readTrackFile(await store.readTrack(folder, name)).track));
+        readTrackFile(await store.readTrack(folder, name), found.window).track));
 
-      setTrack(mergeTracks(loaded));
+      const merged = mergeTracks(loaded.filter((one) => one.points.length > 0));
+      if (merged.points.length === 0) {
+        // Files that overlapped on span but hold nothing in the window. Rare, but a track with no
+        // points would then be reported as loaded and place nothing.
+        setLastSearch({
+          kind: 'nothing',
+          files: [],
+          considered: found.considered,
+        });
+        return;
+      }
+
+      setTrack(merged);
       setTrackFile(found.chosen.join(', '));
       setLastSearch({ kind: 'loaded', files: found.chosen, considered: found.considered });
     } catch (cause) {

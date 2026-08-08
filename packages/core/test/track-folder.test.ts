@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import { SELECTION_PAD_MS, chooseTracks, photoSpan } from '../src/track-folder.ts';
-import { gpxSpan, mergeTracks, parseGpx } from '../src/gpx.ts';
+import { gpxSpan, mergeSpans, mergeTracks, parseGpx } from '../src/gpx.ts';
 
 const HOUR = 3_600_000;
 
@@ -171,5 +171,107 @@ describe('merging the chosen tracks', () => {
 
   it('returns the single track untouched when there is only one', () => {
     assert.equal(mergeTracks([first]), first);
+  });
+});
+
+describe('a month in one file', () => {
+  /*
+   * The shape a permanent logger tends to end up with, because a file per day does not scale
+   * nicely over years. Selection needs nothing new — span overlap does not care how long a file
+   * is — but everything about *size* changes, and this is where that is pinned.
+   */
+  function month(year: number, monthIndex: number, stepMinutes = 30): string {
+    const points: string[] = [];
+    const start = Date.UTC(year, monthIndex, 1);
+    const end = Date.UTC(year, monthIndex + 1, 1);
+
+    for (let time = start; time < end; time += stepMinutes * 60_000) {
+      const fraction = (time - start) / (end - start);
+      points.push(
+        `<trkpt lat="${(51 + fraction).toFixed(6)}" lon="${(-1 + fraction).toFixed(6)}">`
+        + `<time>${new Date(time).toISOString()}</time></trkpt>`,
+      );
+    }
+
+    return `<gpx><trk><name>${year}-${monthIndex + 1}</name><trkseg>`
+      + points.join('') + '</trkseg></trk></gpx>';
+  }
+
+  const JULY = month(2024, 6);
+
+  /** A candidate from a real document, which is where a monthly span comes from in practice. */
+  function scanned(name: string, xml: string) {
+    const span = gpxSpan(xml);
+    return { name, ...(span ? { span } : {}) };
+  }
+
+  it('is chosen for a shoot inside it, exactly as a daily file would be', () => {
+    const choice = chooseTracks(
+      [scanned('2024-06.gpx', month(2024, 5)), scanned('2024-07.gpx', JULY)],
+      { from: at('2024-07-15T13:00:00Z'), to: at('2024-07-15T15:00:00Z') },
+    );
+    assert.deepEqual(choice.chosen.map((one) => one.name), ['2024-07.gpx']);
+  });
+
+  it('takes both months when a shoot crosses the turn of the month', () => {
+    // The month boundary is the midnight case again, one scale up — and it needs no more code.
+    const choice = chooseTracks(
+      [scanned('2024-07.gpx', JULY), scanned('2024-08.gpx', month(2024, 7))],
+      { from: at('2024-07-31T23:50:00Z'), to: at('2024-08-01T00:10:00Z') },
+    );
+    assert.deepEqual(choice.chosen.map((one) => one.name), ['2024-07.gpx', '2024-08.gpx']);
+  });
+
+  it('parses only the window, not the month', () => {
+    /*
+     * The reason `parseGpx` takes a window rather than the caller filtering afterwards: the points
+     * outside it are never allocated. On a real monthly file that is a quarter of a million objects
+     * not created, on a phone, to place one afternoon.
+     */
+    const whole = parseGpx(JULY);
+    const window = {
+      from: at('2024-07-15T06:00:00Z'),
+      to: at('2024-07-15T20:00:00Z'),
+    };
+    const clipped = parseGpx(JULY, window);
+
+    assert.ok(whole.points.length > 1400, `only ${whole.points.length} points in a month`);
+    assert.equal(clipped.points.length, 29);
+    assert.ok(clipped.points.every((p) => p.time >= window.from && p.time <= window.to));
+  });
+
+  it('does not treat a window that excludes everything as a broken file', () => {
+    // A file chosen on span overlap may still hold nothing in the load window. That is an ordinary
+    // answer for the folder search, not a reason to throw at the user.
+    const empty = parseGpx(JULY, { from: at('2023-01-01T00:00:00Z'), to: at('2023-01-02T00:00:00Z') });
+    assert.deepEqual(empty.points, []);
+  });
+
+  it('still refuses a file that genuinely has no usable points', () => {
+    assert.throws(
+      () => parseGpx('<gpx><trkpt lat="51" lon="-1"/></gpx>', { from: 0, to: 9e15 }),
+      /none of them carry a time/,
+    );
+  });
+
+  it('reads a big span from the two ends alone', () => {
+    /*
+     * What `spanOf` does for a file too big to want all of. The ends are scanned separately and
+     * merged so that a `<time>` severed by the slice cannot be misread as something else.
+     */
+    const head = JULY.slice(0, 4000);
+    const tail = JULY.slice(-4000);
+    const edges = mergeSpans([gpxSpan(head), gpxSpan(tail)]);
+    const whole = gpxSpan(JULY);
+
+    assert.deepEqual(edges, whole);
+  });
+
+  it('merges spans while ignoring the ends that had none', () => {
+    assert.equal(mergeSpans([undefined, undefined]), undefined);
+    assert.deepEqual(
+      mergeSpans([{ from: 10, to: 20 }, undefined, { from: 5, to: 15 }]),
+      { from: 5, to: 20 },
+    );
   });
 });

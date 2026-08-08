@@ -191,6 +191,13 @@ export interface BrowserFileStore extends FileStore {
   listTracks(folder: TrackFolder): Promise<readonly TrackFileRef[]>;
   /** The text of one track file. */
   readTrack(folder: TrackFolder, name: string): Promise<string>;
+  /**
+   * The first and last `bytes` of a track file, decoded as text.
+   *
+   * For reading the span of a file too big to want all of. A month of logging is tens of
+   * megabytes and its span is in the first and last few kilobytes of it.
+   */
+  readTrackEnds(folder: TrackFolder, name: string, bytes: number): Promise<[string, string]>;
 
   /** The remembered output folder, so copies are asked about once ever rather than once a visit. */
   restoreOutputFolder(): Promise<SaveDestination | undefined>;
@@ -451,6 +458,32 @@ export function createBrowserFileStore(): BrowserFileStore {
     async readTrack(folder: TrackFolder, name: string): Promise<string> {
       const handle = await folder.directory.getFileHandle(name);
       return (await handle.getFile()).text();
+    },
+
+    async readTrackEnds(
+      folder: TrackFolder,
+      name: string,
+      bytes: number,
+    ): Promise<[string, string]> {
+      const handle = await folder.directory.getFileHandle(name);
+      const file = await handle.getFile();
+
+      if (file.size <= bytes * 2) {
+        const whole = await file.text();
+        return [whole, ''];
+      }
+
+      /*
+       * `Blob.slice` is a view, not a copy — only the sliced bytes are read from disk. This is the
+       * difference between touching 256KB and 30MB for a file the logger appends to all month.
+       *
+       * A slice will usually cut through the middle of a tag at both joins. That is harmless here:
+       * `gpxSpan` matches whole `<time>…</time>` elements, so a severed one simply does not match.
+       */
+      return Promise.all([
+        file.slice(0, bytes).text(),
+        file.slice(file.size - bytes).text(),
+      ]);
     },
 
     async restoreOutputFolder(): Promise<SaveDestination | undefined> {

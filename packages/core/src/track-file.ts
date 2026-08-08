@@ -12,7 +12,7 @@
  */
 
 import { parseGoogleTimeline, type TimelineSummary } from './google-timeline.ts';
-import { parseGpx, type GpxTrack } from './gpx.ts';
+import { clipTrack, parseGpx, type GpxTrack, type TimeWindow } from './gpx.ts';
 
 export type TrackFileKind = 'gpx' | 'google-timeline';
 
@@ -23,15 +23,26 @@ export interface TrackFile {
   readonly summary?: TimelineSummary;
 }
 
-export function readTrackFile(text: string): TrackFile {
+/**
+ * Read a track file, optionally keeping only the part covering a window.
+ *
+ * The window exists for files that hold far more than one shoot — a month of logging, or a Timeline
+ * export covering years. Trimming is not merely an optimisation there: an untrimmed month drawn on
+ * the map is a scribble over the whole county, and the day you actually want is invisible in it.
+ */
+export function readTrackFile(text: string, window?: TimeWindow): TrackFile {
   // Leading whitespace, a byte-order mark, or an XML declaration all come before the `<`.
   const start = text.replace(/^﻿/, '').trimStart();
 
-  if (start.startsWith('<')) return { track: parseGpx(start), kind: 'gpx' };
+  if (start.startsWith('<')) return { track: parseGpx(start, window), kind: 'gpx' };
 
   if (start.startsWith('{') || start.startsWith('[')) {
     const { track, summary } = parseGoogleTimeline(start);
-    return { track, kind: 'google-timeline', summary };
+    return {
+      track: window ? clipTrack(track, window) : track,
+      kind: 'google-timeline',
+      summary,
+    };
   }
 
   throw new Error(

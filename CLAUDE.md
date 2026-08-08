@@ -40,7 +40,7 @@ http://localhost:5173/ (see HANDOFF.md; `localhost` is required for a secure con
 - `packages/core` is complete for the MVP: `gps`, `time`, `jpeg` (the splice), `exif-tags`,
   `exiftool` (the write path), `exiftool-wasm`, `session` (staged edits + undo), `storage`,
   `gpx` (track parsing and time matching), `google-timeline`, `track-file` and `track-folder`
-  (Timeline import and choosing a day's track). **252 tests, `tsc` clean.**
+  (Timeline import and choosing a day's track). **259 tests, `tsc` clean.**
 - `packages/ui` is React 19 + MapLibre 5 on Vite 7, with a `FileStore` over the File System
   Access API. **140 tests** covering save orchestration, partial failure, QR scan scaling, the
   palette, the track line and the track-folder span cache.
@@ -254,6 +254,37 @@ photographs answer themselves.
   or a day of appends leaves a trail of dead keys against a few-megabyte quota.
 - **The auto-search is keyed on `session.photos`, not on the session.** Sessions are immutable, so
   every click makes a new one — keying on that restarted the folder search on every selection.
+
+### One file per month is the harder case, and the one in use
+
+A file per day does not scale over years, so the logger is set to one file per month. Selection
+needed **no change at all** — span overlap does not care how long a file is, and the turn of the
+month is the midnight case one scale up. Size is what changes, in two places:
+
+- **A large file's span is read from its two ends**, not from all of it. `FULL_SCAN_LIMIT` is 2MB;
+  above that, 128KB from each end is scanned separately and `mergeSpans` combines them — separately
+  so that a `<time>` severed by the slice cannot be misread. `Blob.slice` is a view, so only those
+  bytes leave the disk. **Measured: 15 ms to search 75MB across three monthly files.**
+- **This is what saves the *current* month.** The file being appended to changes every few minutes,
+  so its cache entry is invalid every single time you look — the span cache alone does nothing for
+  it. Measured: 4 ms to re-read it after an append, and the new span is picked up, so a shoot late
+  on the 31st still finds it.
+- **The chosen files are parsed through a window**, `photos ± 6h`. `parseGpx` takes it directly and
+  never allocates the points outside — measured on a 25MB month: **526 ms and 5,041 points, against
+  744 ms and 259,200 without.** The parse time is dominated by scanning the text either way; what
+  the window really buys is the quarter of a million objects not created, and a map showing the
+  day's walk rather than a month of travel scribbled over the whole county.
+- **An empty result is only an error when no window was given.** A file chosen on span overlap may
+  hold nothing in the load window, which is an ordinary answer for the folder search; `parseGpx`
+  would otherwise throw "no track points" at the user for a perfectly good file. `timedAnywhere`
+  tracks points found *before* windowing, because "did this file have any trkpt" and "did any
+  survive the window" are different questions — the tag-fallthrough depends on the first, or a
+  windowed-out monthly file would fall through to reading its route points instead.
+
+If the load ever feels slow on a phone, the next lever is byte-ranging the *load* as well as the
+span: the file is chronological, so a binary search over slices would find the window's offsets in
+about nine probes. It is not done, because it assumes an ordering nothing enforces and 526 ms is
+not yet a problem worth that risk.
 
 ### Folders are remembered in IndexedDB, and permission is not
 

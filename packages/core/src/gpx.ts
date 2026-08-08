@@ -80,6 +80,12 @@ export type TrackMatch =
   /** No fix close enough. `gapSeconds` is how far off the nearest one was, or Infinity. */
   | { readonly kind: 'none'; readonly gapSeconds: number };
 
+/** A half-open-ish range of instants, in epoch milliseconds. Both ends inclusive. */
+export interface TimeWindow {
+  readonly from: number;
+  readonly to: number;
+}
+
 const MS_PER_SECOND = 1000;
 
 // --- Parsing -----------------------------------------------------------------
@@ -100,13 +106,22 @@ const POINT_TAGS = ['trkpt', 'rtept', 'wpt'] as const;
  * times" and "not a GPX file" call for completely different responses, and a silent empty result
  * would present as the matching being broken.
  */
-export function parseGpx(xml: string): GpxTrack {
+export function parseGpx(xml: string, window?: TimeWindow): GpxTrack {
   if (!/<gpx[\s>]/i.test(xml)) {
     throw new Error('That does not look like a GPX file — no <gpx> element.');
   }
 
   const points: TrackPoint[] = [];
   let untimed = 0;
+  /*
+   * Points this tag produced *before* the window was applied.
+   *
+   * Kept separately because two decisions below depend on "did this file have any trkpt at all",
+   * which is not the same question as "did any survive the window". Without it, a monthly file
+   * windowed down to nothing would fall through to reading its route points instead, and would
+   * then be reported as containing no track at all.
+   */
+  let timedAnywhere = 0;
 
   for (const tag of POINT_TAGS) {
     // A point is `<trkpt lat=".." lon="..">…</trkpt>` or the same self-closed. Attributes come in
@@ -137,6 +152,16 @@ export function parseGpx(xml: string): GpxTrack {
         continue;
       }
 
+      /*
+       * Discarded before it becomes an object, which is the whole point of the window.
+       *
+       * A monthly track file holds a quarter of a million points and a shoot uses a few hundred of
+       * them. Filtering afterwards would still allocate every one, and on a phone that is the
+       * difference between a pause and a stall.
+       */
+      timedAnywhere += 1;
+      if (window && (time < window.from || time > window.to)) continue;
+
       const elevation = Number(element(body, 'ele'));
       points.push({
         time,
@@ -148,10 +173,17 @@ export function parseGpx(xml: string): GpxTrack {
 
     // Stop at the first element type that produced anything. A file with both a route and the
     // track it was planned from would otherwise interleave the two into one incoherent path.
-    if (points.length > 0) break;
+    if (timedAnywhere > 0) break;
   }
 
-  if (points.length === 0) {
+  /*
+   * An empty result is only an error when nothing was asked *for*.
+   *
+   * With a window, "this month's file holds nothing from that afternoon" is an ordinary answer —
+   * the folder search hands several files to be clipped and expects some to come back empty.
+   * Without one, an empty track means the file is not usable and the user needs telling why.
+   */
+  if (points.length === 0 && !(window && timedAnywhere > 0)) {
     throw new Error(
       untimed > 0
         ? `The track has ${untimed} point(s) but none of them carry a time, so nothing can be `
@@ -324,7 +356,7 @@ function round(value: number, decimals: number): number {
  * Min and max rather than first and last: `<metadata><time>` at the head of a file is when the
  * file was *written*, which for a logger that flushes at midnight can be after everything in it.
  */
-export function gpxSpan(xml: string): { readonly from: number; readonly to: number } | undefined {
+export function gpxSpan(xml: string): TimeWindow | undefined {
   let from = Infinity;
   let to = -Infinity;
 
@@ -336,6 +368,44 @@ export function gpxSpan(xml: string): { readonly from: number; readonly to: numb
   }
 
   return Number.isFinite(from) ? { from, to } : undefined;
+}
+
+/**
+ * The union of some spans, ignoring the ones that are not there.
+ *
+ * For reading a huge file's span from its two ends rather than the whole of it: each end is
+ * scanned separately and the results combined. Scanning a joined string instead would risk a
+ * `<time>` element straddling the join and being read as something it is not.
+ */
+export function mergeSpans(
+  spans: readonly (TimeWindow | undefined)[],
+): TimeWindow | undefined {
+  let from = Infinity;
+  let to = -Infinity;
+
+  for (const span of spans) {
+    if (!span) continue;
+    if (span.from < from) from = span.from;
+    if (span.to > to) to = span.to;
+  }
+
+  return Number.isFinite(from) ? { from, to } : undefined;
+}
+
+/**
+ * Drop everything outside a window. For a track that is already parsed.
+ *
+ * `parseGpx` takes a window directly and never allocates the points at all, which is much better
+ * where it applies. This is for a Google Timeline export, where the JSON is fully in memory by the
+ * time anything can be filtered anyway.
+ */
+export function clipTrack(track: GpxTrack, window: TimeWindow): GpxTrack {
+  const points = track.points.filter(
+    (point) => point.time >= window.from && point.time <= window.to,
+  );
+  if (points.length === track.points.length) return track;
+
+  return { ...track, points };
 }
 
 /**
