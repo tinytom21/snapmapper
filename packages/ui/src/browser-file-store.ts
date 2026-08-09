@@ -266,16 +266,25 @@ export function createBrowserFileStore(): BrowserFileStore {
         picked = await globalThis.showOpenFilePicker!({
           multiple: true,
           id: 'photos',
+          /*
+           * JPEG only, deliberately.
+           *
+           * A raw photograph cannot be *saved* from a picked selection at all: its location goes
+           * into a sidecar written beside the file, and `showOpenFilePicker` gives no access to a
+           * file's parent. Offering raw here meant it could be chosen, placed by hand, and only
+           * then refused — so the picker now does not offer it, and "Open whole folder…" is the
+           * route for raw.
+           *
+           * `excludeAcceptAllOption` is what makes that real rather than a suggestion: without it
+           * the dialog still shows an "All files" entry, and raw could be selected through it.
+           * The warning in `describePicked` stays as a backstop for anything that gets through
+           * regardless — a drag-and-drop, or a browser that ignores the hint.
+           */
           types: [{
-            description: 'Photos',
-            accept: {
-              'image/jpeg': ['.jpg', '.jpeg'],
-              // Raw is offered here too, though a raw photograph can only be *saved* from a folder:
-              // its sidecar has to be written beside it, and the file picker gives no access to a
-              // file's parent. Refusing to list them would be worse — you could not even look.
-              'image/x-sony-arw': ['.arw'],
-            },
+            description: 'JPEG photos',
+            accept: { 'image/jpeg': ['.jpg', '.jpeg'] },
           }],
+          excludeAcceptAllOption: true,
         });
       } catch (error) {
         if (error instanceof DOMException && error.name === 'AbortError') return undefined;

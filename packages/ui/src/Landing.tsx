@@ -121,6 +121,23 @@ export function Landing({
           Then: picking the photos you want is the quick way, and the right one for a camera card.
           Opening a folder reads every photo in it — fine for a small one.
         </p>
+
+        {/*
+          Which route takes which format, said where the choice is made.
+
+          It is not a detail: raw can only be *saved* from a folder, because its sidecar has to be
+          written next to the file and the file picker gives no access to a parent. Somebody who
+          shoots raw and reaches for the obvious button would otherwise get as far as placing
+          photographs before finding out.
+        */}
+        <p className="landing-formats">
+          <span><strong>JPEG</strong> — either way in.</span>
+          <span>
+            <strong>Raw (.ARW)</strong> — <em>Open a whole folder</em> only. Its location is written
+            to an <code>.xmp</code> sidecar beside the file, which needs the folder; the raw itself
+            is never altered.
+          </span>
+        </p>
       </div>
 
       <ol className="landing-steps">

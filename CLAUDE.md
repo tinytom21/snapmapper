@@ -482,7 +482,10 @@ All three match native ExifTool over the whole file. The thumbnail is the small 
 **Batching works unchanged**: eight files in one invocation with the ARW among them, 1053 ms, every
 record correct.
 
-**`PHOTO_PATTERN` in `browser-file-store.ts` must include `arw`.** It was `/\.jpe?g$/i`, and that
+**The file picker offers JPEG only**, with `excludeAcceptAllOption` so raw cannot be chosen
+through the dialog's "All files" entry either. Raw picked there could be placed by hand and only
+then refused, which is the wrong moment to find out; `describePicked` still warns at import as a
+backstop. **`PHOTO_PATTERN` in `browser-file-store.ts` must include `arw`.** It was `/\.jpe?g$/i`, and that
 alone would have shipped the whole feature inert: raw can only be *saved* from a folder, so a folder
 listing that hides ARW hides the only route raw has.
 
@@ -640,8 +643,10 @@ time. To read a code that never needed the card.
 Nothing about the measurement was ever coupled to a session — the code encodes an instant, the
 camera records it against its own clock, and the difference is read out of the photograph later.
 Only the *drawing* was coupled, and only by where it happened to sit. `QrClock.tsx` is that drawing,
-used by both `Landing` and `ClockPanel`. The panel keeps its copy for the case where you forgot, and
-says so.
+used by both `Landing` and `ClockPanel`. The panel keeps its copy for the case where you forgot, but no longer leads with it: by the time
+anybody opens that panel the photograph has almost certainly been taken and the card is in the
+reader, so **Read clock from photo** is the primary action, and the code itself sits behind
+*Didn't photograph the code?* beside the manual entry.
 
 **Its button is the first of the three on the landing screen**, because that is the order the work
 happens in: once you have reached for `Select photos…` the card is out of the camera and the moment

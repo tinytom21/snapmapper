@@ -86,63 +86,75 @@ export function ClockPanel({
 
       <SyncStatus session={session} onClearSync={onClearSync} />
 
+      {/*
+        Reading the photograph is the *default* now, and this panel used to assume the opposite.
+        It opened with "Photograph this code with the camera" and hid the button behind a toggle —
+        which made sense when the code lived only here, and stopped making sense the moment it
+        moved to the start screen. By the time anybody reaches this panel the photograph has almost
+        certainly been taken and the card is in the reader; the only thing left to do is point at
+        the frame. So that is the step this leads with, and the code itself is now the fallback.
+      */}
+      <p className="note">
+        Select the photo you took of the code on the start screen, then press the button.
+        The exact time is read out of the image, so nothing is typed and nothing can be misread.
+      </p>
+
       <div className="row">
-        <button type="button" onClick={() => setShowClock((shown) => !shown)}>
-          {showClock ? 'Hide clock' : 'Sync from a photo…'}
+        <button
+          type="button"
+          className="primary"
+          disabled={!reference || busy || scanning}
+          onClick={() => reference && scan(reference)}
+        >
+          {scanning ? 'Reading…' : 'Read clock from photo'}
         </button>
       </div>
 
-      {showClock && (
-        <div className="sync">
-          <ol className="steps">
-            <li>Photograph this code with the camera.</li>
-            <li>
-              Bring that photo in with <strong>{addPhotosLabel}</strong>.
-            </li>
-            <li>Select that one photo, then press <strong>Read clock from photo</strong>.</li>
-          </ol>
+      <p className="note">
+        {selected.length === 0
+          ? 'Select that one photo in the list above.'
+          : selected.length > 1
+            ? `${selected.length} photos selected — select exactly one.`
+            : `Reference: ${reference?.ref.name}`}
+      </p>
 
-          {/*
-            Reaching this panel means the card is already out of the camera, so step one costs a
-            round trip of the card. The same code is on the start screen, where it does not — worth
-            saying once, here, rather than leaving it to be discovered.
-          */}
-          <p className="note">
-            The card has to go back in the camera for step one. Next time, the same code is on the
-            start screen before you take it out.
-          </p>
+      {scanError && <p className="note error">{scanError}</p>}
 
-          <QrClock />
+      {/*
+        The fallback, for somebody who did not photograph the code on the way in. It costs a round
+        trip of the card — out of the reader, into the camera, and back — which is exactly why it is
+        no longer the path this panel presents first.
+      */}
+      <details className="manual">
+        <summary>Didn’t photograph the code?</summary>
 
-          <div className="row">
-            <button
-              type="button"
-              className="primary"
-              disabled={!reference || busy || scanning}
-              onClick={() => reference && scan(reference)}
-            >
-              {scanning ? 'Reading…' : 'Read clock from photo'}
-            </button>
-          </div>
+        <p className="note">
+          You can still do it now, though the card has to go back into the camera. Next time, the
+          same code is on the start screen before you take it out.
+        </p>
 
-          <p className="note">
-            {selected.length === 0
-              ? 'Select the photo of this code in the list.'
-              : selected.length > 1
-                ? `${selected.length} photos selected — select exactly one.`
-                : `Reference: ${reference?.ref.name}`}
-          </p>
+        <ol className="steps">
+          <li>Photograph this code with the camera.</li>
+          <li>Put the card back and bring that photo in with <strong>{addPhotosLabel}</strong>.</li>
+          <li>Select that one photo, then press <strong>Read clock from photo</strong> above.</li>
+        </ol>
 
-          {scanError && <p className="note error">{scanError}</p>}
+        {/* Mounted only when open, so a closed panel is not redrawing a QR four times a second. */}
+        {showClock
+          ? <QrClock />
+          : (
+            <div className="row">
+              <button type="button" onClick={() => setShowClock(true)}>Show the code</button>
+            </div>
+          )}
+      </details>
 
-          <ManualSync
-            session={session}
-            reference={reference}
-            onSync={onSync}
-            disabled={busy}
-          />
-        </div>
-      )}
+      <ManualSync
+        session={session}
+        reference={reference}
+        onSync={onSync}
+        disabled={busy}
+      />
 
       <ZoneField timeZone={session.clock.timeZone} onChange={onTimeZone} />
 

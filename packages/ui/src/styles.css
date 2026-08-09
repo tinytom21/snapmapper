@@ -776,6 +776,21 @@ button.feature:hover:not(:disabled) {
 
 .landing-hint { font-size: 0.85rem; opacity: 0.6; margin: 0 auto; max-width: 30rem; }
 
+/* What each way in accepts. Two short lines rather than a sentence, so the formats are the thing
+   the eye lands on rather than something buried mid-paragraph. */
+.landing-formats {
+  display: grid;
+  gap: 0.3rem;
+  justify-items: start;
+  text-align: left;
+  max-width: 34rem;
+  margin: 0.9rem auto 0;
+  font-size: 0.85rem;
+  color: var(--dim);
+}
+.landing-formats em { font-style: normal; font-weight: 600; }
+.landing-formats code { font-family: ui-monospace, monospace; }
+
 /* Photographing the clock code, offered on the way in — see `ClockSyncOffer`.
    Quiet while shut, because most sessions do not need it; a bordered card once open, because then
    it is a thing you are pointing a camera at and it should be the only thing on screen. */
