@@ -2,6 +2,7 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import basicSsl from '@vitejs/plugin-basic-ssl';
 
+import { exifToolScript } from './vite-plugin-exiftool-script.ts';
 import { serviceWorker } from './vite-plugin-service-worker.ts';
 import { zeroperlWasm } from './vite-plugin-zeroperl.ts';
 
@@ -40,7 +41,9 @@ export default defineConfig(({ mode }) => {
      * `--mode` flag would also drag in the LAN certificate arrangement.
      */
     base: process.env.SNAPMAPPER_BASE ?? '/',
-    plugins: [react(), zeroperlWasm(), serviceWorker(), ...(lan ? [basicSsl()] : [])],
+    plugins: [
+      react(), zeroperlWasm(), exifToolScript(), serviceWorker(), ...(lan ? [basicSsl()] : []),
+    ],
     server: lan ? { host: true, port: 5173 } : { host: 'localhost', port: 5173 },
     // @snapmapper/core is consumed as TypeScript source, so Vite must transpile it rather
     // than treat it as a pre-built dependency.

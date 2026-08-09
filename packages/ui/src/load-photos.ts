@@ -16,22 +16,31 @@
  * what `readTagsAndThumbnail` is for. Pushing sixty-eight times the bytes changed nothing, so the
  * header stub and `readHead` below are about disk and memory rather than about ExifTool.
  *
- * The next lever is much larger and is not taken here: the WASM wrapper mounts its input into a
- * virtual filesystem that accepts any number of files, so several photographs could share one
- * invocation and amortise the second that each currently costs. It needs reaching past the
- * package's public API, so it is its own piece of work.
+ * **And the larger lever, now taken: several photographs share one invocation.** Measured at 43 ms
+ * per photo in a batch of 28 against 354–592 ms alone — 8–14x, and a 200-photo card in about nine
+ * seconds rather than something over a minute. `batch-runner.ts` drives zeroperl directly for it,
+ * and `readManyTags` in core does the matching.
+ *
+ * Batching is strictly an optimisation over the one-at-a-time path, which is still here and still
+ * correct. It is used when the runner can be built, per batch when that batch produced usable
+ * records, and per photograph whenever either falls through — see `loadBatch`.
  */
 
 import {
   entryFromTags,
   failedEntry,
+  readManyTags,
   readTagsAndThumbnail,
+  type BatchFile,
+  type BatchRunner,
   type FileStore,
   type MetadataBackend,
   type PhotoEntry,
   type PhotoRef,
 } from '@snapmapper/core';
 import { buildHeaderStub, findScanStart } from '@snapmapper/core';
+
+import { createBatchRunner } from './batch-runner.ts';
 
 export interface LoadProgress {
   readonly done: number;
@@ -65,33 +74,58 @@ export interface LoadedPhotos {
   readonly thumbnails: Map<string, Uint8Array>;
 }
 
+/**
+ * How many photographs share one invocation.
+ *
+ * The measured curve keeps improving out to 28 files — 75 ms each at ten, 43 ms at twenty-eight —
+ * but the per-photo gain flattens while the memory does not, and the cost of a batch that fails
+ * wholesale is a retry of everything in it. Sixteen keeps the great majority of the win and holds
+ * about 1.6MB of header stubs at a time, which is comfortable on a phone.
+ *
+ * It also bounds how coarse progress can get: a batch reports as one step, so this is the largest
+ * jump the bar can make.
+ */
+const BATCH_SIZE = 16;
+
 export async function loadPhotos(
   refs: readonly PhotoRef[],
   store: FileStore,
   backend: MetadataBackend,
   onProgress?: (progress: LoadProgress) => void,
+  /**
+   * The batch runner to use, when the caller already has one — and how a test supplies a fake.
+   *
+   * Omitted, one is built on demand and reused for the life of the page. Passed `null`, batching
+   * is off and every photograph goes through the original one-at-a-time path, which is what the
+   * tests of that path rely on.
+   */
+  batchRunner?: BatchRunner | null,
 ): Promise<LoadedPhotos> {
   const entries: PhotoEntry[] = [];
   const thumbnails = new Map<string, Uint8Array>();
 
-  for (const [index, ref] of refs.entries()) {
-    onProgress?.({ done: index, total: refs.length, current: ref.name });
+  /*
+   * One photograph does not need an interpreter booted to read it.
+   *
+   * Building the runner means instantiating the 24MB WASM into a *second* zeroperl instance — the
+   * wrapper keeps its own for writing — so for a handful of files the setup costs more than the
+   * batching saves. Above that it is repaid many times over on the first batch.
+   */
+  const runner = batchRunner === undefined
+    ? (refs.length > 2 ? await createBatchRunner() : undefined)
+    : (batchRunner ?? undefined);
 
-    try {
-      const stub = headerOnly(await readForMetadata(store, ref));
+  for (let start = 0; start < refs.length; start += BATCH_SIZE) {
+    const chunk = refs.slice(start, start + BATCH_SIZE);
+    onProgress?.({ done: start, total: refs.length, current: chunk[0]?.name ?? '' });
 
-      /*
-       * One invocation for both. The thumbnail is the camera's own embedded ~6KB JPEG, so it
-       * costs a fraction of the call it now shares rather than a second call of its own — and
-       * decoding a 24MP image to make one would cost far more than either.
-       */
-      const { tags, thumbnail } = await readTagsAndThumbnail(backend, stub, ref.name, WANTED);
-      entries.push(entryFromTags(ref, tags));
-      if (thumbnail && thumbnail.byteLength > 0) thumbnails.set(ref.name, thumbnail);
-    } catch (error) {
-      // A photo that cannot be read still belongs in the list, marked unusable, so the
-      // user can see it rather than wonder why it vanished.
-      entries.push(failedEntry(ref, error instanceof Error ? error.message : String(error)));
+    const loaded = await loadBatch(chunk, store, backend, runner);
+    for (const [index, result] of loaded.entries()) {
+      const ref = chunk[index] as PhotoRef;
+      entries.push(result.entry);
+      if (result.thumbnail && result.thumbnail.byteLength > 0) {
+        thumbnails.set(ref.name, result.thumbnail);
+      }
     }
 
     // Yield so the browser can paint the progress it was just given.
@@ -100,6 +134,101 @@ export async function loadPhotos(
 
   onProgress?.({ done: refs.length, total: refs.length, current: '' });
   return { entries, thumbnails };
+}
+
+interface LoadedOne {
+  readonly entry: PhotoEntry;
+  readonly thumbnail: Uint8Array | undefined;
+}
+
+/**
+ * Read one batch, falling back a photograph at a time wherever batching did not answer.
+ *
+ * The fallback is per **photograph**, not per batch, and that is the point of `readManyTags`
+ * returning a parallel array: one corrupt file in a batch of sixteen returns fifteen good records
+ * and one failure, so only that one is retried alone. Retrying the whole batch would throw away
+ * the win precisely when a card has a few bad frames on it — which is when a card usually has any.
+ *
+ * A retry that fails again is reported as a failed entry, which is what the one-at-a-time path
+ * would have done. So a photograph is only ever marked unreadable after being read on its own.
+ */
+async function loadBatch(
+  refs: readonly PhotoRef[],
+  store: FileStore,
+  backend: MetadataBackend,
+  runner: BatchRunner | undefined,
+): Promise<LoadedOne[]> {
+  const stubs: (Uint8Array | undefined)[] = [];
+  for (const ref of refs) {
+    try {
+      stubs.push(headerOnly(await readForMetadata(store, ref)));
+    } catch {
+      // Could not be read off disk at all. `readOne` will try again and report properly.
+      stubs.push(undefined);
+    }
+  }
+
+  let batched: Awaited<ReturnType<typeof readManyTags>> | undefined;
+  if (runner) {
+    const files: BatchFile[] = [];
+    const positions: number[] = [];
+    for (const [index, bytes] of stubs.entries()) {
+      if (!bytes) continue;
+      files.push({ name: refs[index]?.name ?? `photo-${index}`, bytes });
+      positions.push(index);
+    }
+
+    try {
+      const results = await readManyTags(runner, files, WANTED);
+      // Spread back to the full width, so indexes line up with `refs` again.
+      const spread: typeof results = new Array(refs.length);
+      for (const [slot, position] of positions.entries()) {
+        spread[position] = results[slot] as (typeof results)[number];
+      }
+      batched = spread;
+    } catch {
+      // The runner itself failed — a dead interpreter, an out-of-memory. Everything falls through.
+    }
+  }
+
+  const out: LoadedOne[] = [];
+  for (const [index, ref] of refs.entries()) {
+    const result = batched?.[index];
+    if (result?.ok) {
+      out.push({ entry: entryFromTags(ref, result.tags), thumbnail: result.thumbnail });
+      continue;
+    }
+    out.push(await readOne(ref, stubs[index], store, backend));
+  }
+
+  return out;
+}
+
+/** The original path: one photograph, one invocation, tags and thumbnail together. */
+async function readOne(
+  ref: PhotoRef,
+  stub: Uint8Array | undefined,
+  store: FileStore,
+  backend: MetadataBackend,
+): Promise<LoadedOne> {
+  try {
+    const bytes = stub ?? headerOnly(await readForMetadata(store, ref));
+
+    /*
+     * One invocation for both. The thumbnail is the camera's own embedded ~6KB JPEG, so it
+     * costs a fraction of the call it now shares rather than a second call of its own — and
+     * decoding a 24MP image to make one would cost far more than either.
+     */
+    const { tags, thumbnail } = await readTagsAndThumbnail(backend, bytes, ref.name, WANTED);
+    return { entry: entryFromTags(ref, tags), thumbnail };
+  } catch (error) {
+    // A photo that cannot be read still belongs in the list, marked unusable, so the
+    // user can see it rather than wonder why it vanished.
+    return {
+      entry: failedEntry(ref, error instanceof Error ? error.message : String(error)),
+      thumbnail: undefined,
+    };
+  }
 }
 
 /**

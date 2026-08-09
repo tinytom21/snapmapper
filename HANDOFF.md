@@ -16,13 +16,13 @@ Nothing is half-finished. The tree is clean and every change is deployed.
 
 | Path | State |
 |---|---|
-| `packages/core` | Platform-agnostic logic. **292 tests, `tsc` clean.** `gps`, `time`, `jpeg` (the splice), `exif-tags`, `exiftool` (write path), `exiftool-wasm`, `session` (staged edits, undo, named actions), `clock-sync`, `gpx` (track parsing and matching), `google-timeline` + `track-file` (Timeline import), `verify-write`, `storage`. |
-| `packages/ui` | React 19 + MapLibre 5 on Vite 7. **155 tests.** The only platform-specific file is `browser-file-store.ts`, behind `FileStore`. |
+| `packages/core` | Platform-agnostic logic. **303 tests, `tsc` clean.** `gps`, `time`, `jpeg` (the splice), `exif-tags`, `exiftool` (write path), `exiftool-wasm`, `session` (staged edits, undo, named actions), `clock-sync`, `gpx` (track parsing and matching), `google-timeline` + `track-file` (Timeline import), `exiftool-batch` (batched reads), `verify-write`, `storage`. |
+| `packages/ui` | React 19 + MapLibre 5 on Vite 7. **172 tests.** `browser-file-store.ts` is the only file behind `FileStore`; `batch-runner.ts` is the only other one tied to the build, since it takes the ExifTool script from a Vite virtual module. |
 | `packages/shells` | Does not exist and is not needed. There is no native shell and no reason for one. |
 | `spike/` | Phase 0, done. Still where the write path is checked against a **native** ExifTool: `npm run splice --workspace spike` → 184 checks. |
 | `docs/PLAN.md` | Historical. Useful for intent, wrong in places. |
 
-**447 tests, `tsc` clean, production build succeeds.**
+**475 tests, `tsc` clean, production build succeeds.**
 
 ```bash
 npm test && npm run typecheck
@@ -56,7 +56,7 @@ was found:
 
 ## Deploying
 
-**Push to `main` and it ships.** `.github/workflows/deploy.yml` typechecks, runs all 447 tests,
+**Push to `main` and it ships.** `.github/workflows/deploy.yml` typechecks, runs all 475 tests,
 builds and publishes to GitHub Pages; a failing test blocks the deploy. About two minutes.
 
 The base path comes from the repository name, so renaming the repo needs no edit. A Pages project
@@ -89,6 +89,11 @@ a *"A new version is ready"* banner rather than leaving it a mystery.
   measured drift and the session zone, so the two features are only useful together. Both a GPX
   from a logger app and a **Google Timeline export** are accepted, sniffed by content. Timeline is
   inferred rather than logged, so the panel reports what each track is made of; see CLAUDE.md.
+- **Metadata is read in batches**, sixteen photographs to one ExifTool invocation. Measured in the
+  browser at **13.4x** — 350 ms for sixteen against 4701 ms one at a time — and proved equivalent to
+  the old path against real A6400 files by `npm run batch-verify --workspace spike` (93 checks, 0
+  failures). The ExifTool script is extracted from `@uswriting/exiftool`'s bundle at build time
+  rather than vendored. Three traps and a per-photograph fallback; see CLAUDE.md before touching it.
 - **The logger's folder is remembered per device**, and the right file for a shoot is found by the
   times inside the files — so a permanent logger plus a card of photos needs no track picking at
   all. Midnight falls out of it rather than being special-cased, and so does the turn of the month.
@@ -105,13 +110,6 @@ Ordered by what would change the tool most.
 2. **Video.** Wanted eventually, not now. ExifTool writes GPS to MP4/MOV.
 3. **Code-split the ~1.5MB bundle.** Fine on a desktop, worth it on mobile data. It is precached, so
    it is paid once per version rather than per visit.
-4. **Batch metadata reads — measured at 8–14x and half-built.** `npm run batch-read --workspace
-   spike` proves it: 43 ms per photo in a batch of 28 against 354–592 ms alone, one record per
-   file, and a corrupt file in the batch does not take the others down. A 200-photo card: ~9 s
-   instead of ~70–120 s. What remains is a route to the ExifTool script that is not "scrape the
-   dependency's bundle" — build-time extraction, like `vite-plugin-zeroperl.ts` does for the WASM —
-   then `readManyTags` in core and a loader that feeds it. See CLAUDE.md for the numbers and the
-   two traps (non-zero exit is not total failure; map by `SourceFile`, never by index).
 
 Deferred by the plan rather than by us: ARW via XMP sidecars, reverse geocoding into IPTC, video.
 

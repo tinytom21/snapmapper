@@ -41,9 +41,9 @@ http://localhost:5173/ (see HANDOFF.md; `localhost` is required for a secure con
   `exiftool` (the write path), `exiftool-wasm`, `session` (staged edits + undo), `storage`,
   `gpx` (track parsing and time matching), `google-timeline`, `track-file` and `track-folder`
   (Timeline import and choosing a day's track), `place` (names into IPTC/XMP).
-  **292 tests, `tsc` clean.**
+  **303 tests, `tsc` clean.**
 - `packages/ui` is React 19 + MapLibre 5 on Vite 7, with a `FileStore` over the File System
-  Access API. **147 tests** covering save orchestration, partial failure, QR scan scaling, the
+  Access API. **172 tests** covering save orchestration, partial failure, QR scan scaling, the
   palette, the track line, the track-folder span cache and the crash backup.
   Thumbnails come from the camera's own embedded ~6KB JPEG, and shift-click selects a range.
   Placement is select-then-click on the map, and only that — see below.
@@ -176,7 +176,7 @@ Two conclusions, and the second is the important one:
   measurable difference*. So `readHead` and the header stub are about disk and memory on a phone,
   not about ExifTool — do not expect them to show up in a timing.
 
-**Batching is the next lever, it is worth 8–14x, and it is proved.**
+**Batching was the next lever, it is worth 8–14x, and it has shipped.**
 `npm run batch-read --workspace spike` drives zeroperl directly and reads N header stubs in one
 invocation:
 
@@ -197,12 +197,64 @@ naming the culprit — `Error: File format error - /broken.jpg`. The exit code i
 lesson as the existing "the wrapper reports `success: false` for a bare warning". Map results by
 `SourceFile`, never by index.
 
-**What stands in the way of shipping it:** the ExifTool Perl script is a template literal inside
-`@uswriting/exiftool`'s bundle and is not exported, so a batch runner has to obtain it. The spike
-scrapes it out of the bundle text, which is fine for a measurement and not fine to ship. The route
-is a **build-time extraction** — the same shape as `vite-plugin-zeroperl.ts`, which already serves
-the WASM out of the dependency — so the script stays *derived* rather than vendored and an upgrade
-flows through. It must fail loudly at build time if the bundle shape changes.
+**Measured again in a browser, on the shipped path: 350 ms for 16 files against 4701 ms one at a
+time — 13.4x, with identical answers.**
+
+#### The ExifTool script is extracted from the dependency at build time
+
+The thing that stood in the way. `@uswriting/exiftool` takes one file per call, and underneath it
+is doing something simple enough to do differently — mount the input, append the path to an
+**argument list**, run `/exiftool` — except that `/exiftool` is a 100KB Perl script held as a
+template literal assigned to a minified binding, and it is not exported.
+
+`exiftool-script.ts` extracts it and `vite-plugin-exiftool-script.ts` serves it as
+`virtual:exiftool-script`. **Derived, never vendored**: a committed copy would freeze at today's
+version, so `npm update` would move the wrapper and leave the script behind — reading with one
+ExifTool and writing with another, which nothing would report. Same shape as
+`vite-plugin-zeroperl.ts`, which already serves the WASM out of the dependency.
+
+- **Every failure is a loud build failure.** No fallback to a stale copy, no silent empty string.
+  The extractor asserts the result is ≥60KB, starts with Perl's preamble, and contains
+  `Image::ExifTool` — because the failure worth guarding against is not "throws" but "returns
+  something plausible and truncated", which would still be tens of kilobytes of real Perl.
+- **A virtual module, not an asset at the site root.** A module cannot 404 at the moment a user
+  opens photographs, and the service worker already covers hashed chunks — a root-level file would
+  have needed its own case, and one nobody would notice was missing until a phone was offline. It
+  is reached through a dynamic import, so the Perl lands in its own **101KB chunk (31.7KB gzipped)**
+  fetched at the same instant as a WASM binary 240 times larger.
+- **Unescape in one left-to-right pass, not a chain of `replaceAll`.** Chained, a literal backslash
+  followed by a literal backtick comes out right *by luck* — the `` \` `` pass leaves a `\\` for the
+  later pass to eat — and stops working the moment somebody reorders the chain. Perl is backslashes
+  all the way down, and a mangled one changes what a regular expression matches while the script
+  still runs.
+
+#### The three traps, all measured
+
+- **A non-zero exit is not a total failure.** ExifTool exits 1 when *any* file in the batch failed
+  while returning good records for all the others.
+- **Match by `SourceFile`, never by index.** A failed file means fewer records than files, so
+  position *n* out is not file *n* in — and matching by index there attaches every photograph after
+  the failure to the wrong metadata. No symptom at all: a few pictures land somewhere plausible and
+  wrong, which reads as the camera clock being off.
+- **A record is not a successful read.** Given a file that is not a JPEG, ExifTool emits
+  `{"SourceFile": "/1_broken.jpg"}` — a record with *nothing* in it — alongside its stderr error.
+  The single-file path never sees this, because the wrapper treats any stderr as a failure and
+  throws. Read as success it lists as a photograph that merely has no date, so the user places it by
+  hand and the *write* is what fails. `readManyTags` therefore judges on content, not on exit code.
+
+**The fallback is per photograph, not per batch.** One unreadable frame in sixteen is retried alone;
+the other fifteen keep their batched result. Retrying the whole batch would throw the win away
+exactly when a card has a few bad frames, which is when a card usually has any. A photograph is only
+ever marked unreadable after being read on its own — so batching cannot cost a photograph, only time.
+
+**Writing is untouched**, still one file at a time through the wrapper. Saving is a deliberate act
+the user is already waiting on, the write path took a great deal of measurement to get right, and
+there is nothing to gain by putting it on new machinery.
+
+`spike/src/batch-verify.mjs` is the proof it is safe: it drives the real `readManyTags` and the real
+extractor over the seven A6400 fixtures, duplicated and with a corrupt file in the middle so the
+output is shorter than the input. **93 checks, 0 failures** — every tag and every thumbnail
+byte-identical to the one-at-a-time path, and the corrupt file refused rather than reported empty.
 
 **Beware measuring this badly.** The first attempt ran each variant in its own block and reported a
 mean of five, and produced impossibilities — tags-and-thumbnail faster than tags alone, a 101KB

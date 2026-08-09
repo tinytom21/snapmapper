@@ -15,6 +15,7 @@
     "icons": "node scripts/make-icons.mjs"
   },
   "dependencies": {
+    "@6over3/zeroperl-ts": "1.0.10",
     "@snapmapper/core": "*",
     "@uswriting/exiftool": "^1.0.9",
     "jsqr": "^1.4.0",

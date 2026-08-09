@@ -6,6 +6,7 @@ export * from './track-file.ts';
 export * from './track-folder.ts';
 export * from './jpeg.ts';
 export * from './exiftool.ts';
+export * from './exiftool-batch.ts';
 export * from './exiftool-wasm.ts';
 export * from './session.ts';
 export * from './clock-sync.ts';

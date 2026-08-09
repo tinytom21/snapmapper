@@ -427,6 +427,17 @@ describe('loadPhotos', () => {
   });
 
   it('reports progress, ending complete', async () => {
+    /*
+     * Per batch rather than per photograph, since batching landed.
+     *
+     * Sixteen files share one ExifTool invocation and there is nothing to report from inside it,
+     * so the bar advances in steps of up to sixteen. That is a fair trade at the speed batching
+     * brought: the two hundred photographs that took over a minute — the wait this progress
+     * reporting exists for — now take about nine seconds across thirteen steps.
+     *
+     * What must hold is that it starts at nothing, never goes backwards, and ends complete. A bar
+     * that finishes at 198 of 200 is the thing users read as a hang.
+     */
     const { store } = fakeStore();
     const seen: number[] = [];
 
@@ -434,7 +445,9 @@ describe('loadPhotos', () => {
       seen.push(progress.done);
     });
 
-    assert.deepEqual(seen, [0, 1, 2]);
+    assert.equal(seen.at(0), 0);
+    assert.equal(seen.at(-1), 2);
+    assert.deepEqual(seen, [...seen].sort((a, b) => a - b), 'progress went backwards');
   });
 
   it('handles an empty folder without complaint', async () => {

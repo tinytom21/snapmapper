@@ -17,6 +17,8 @@
     "src/**/*.tsx",
     "test/**/*.ts",
     "vite.config.ts",
-    "vite-plugin-zeroperl.ts"
+    "vite-plugin-zeroperl.ts",
+    "vite-plugin-exiftool-script.ts",
+    "exiftool-script.ts"
   ]
 }
