@@ -239,11 +239,17 @@ describe('pickPhotos', () => {
 });
 
 describe('countFolder', () => {
-  it('counts JPEGs and ignores everything else', async () => {
+  it('counts photographs, raw included, and ignores everything else', async () => {
+    /*
+     * ARW counts, and that changed when sidecars shipped. A raw photograph can only be *saved*
+     * from a folder — its sidecar has to be written beside it, and the file picker gives no access
+     * to a parent — so a folder listing that hid ARW would hide the only route raw has, and the
+     * whole feature would have been inert while every test passed.
+     */
     const { directory } = fakeDirectory(['a.jpg', 'b.JPEG', 'notes.txt', 'c.jpg', 'raw.ARW']);
     const folder: BrowserFolder = { id: 'f', displayName: '100MSDCF', directory };
 
-    assert.equal(await createBrowserFileStore().countFolder(folder), 3);
+    assert.equal(await createBrowserFileStore().countFolder(folder), 4);
   });
 
   it('reads no file contents, so it stays fast on a thousand photos', async () => {

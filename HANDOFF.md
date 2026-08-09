@@ -94,7 +94,7 @@ a *"A new version is ready"* banner rather than leaving it a mystery.
   the old path against real A6400 files by `npm run batch-verify --workspace spike` (93 checks, 0
   failures). The ExifTool script is extracted from `@uswriting/exiftool`'s bundle at build time
   rather than vendored. Three traps and a per-photograph fallback; see CLAUDE.md before touching it.
-- **Raw is written as an XMP sidecar**, never into the ARW — `DSC01234.ARW` gets `DSC01234.xmp` beside it, the Adobe convention Lightroom reads. The raw file is never read, copied or opened for writing, so there is nothing to corrupt. Proved against native ExifTool by `npm run xmp --workspace spike`. Raw needs **folder mode**: the sidecar must sit beside the file and the picker gives no access to a parent.
+- **Raw is written as an XMP sidecar**, never into the ARW — `DSC01234.ARW` gets `DSC01234.xmp` beside it, the Adobe convention Lightroom reads. The raw file is never read, copied or opened for writing, so there is nothing to corrupt. Proved against native ExifTool by `npm run xmp --workspace spike`; reading an ARW is proved by `npm run arw --workspace spike` against a real 24.9MB file, and batching handles it unchanged. Raw needs **folder mode**: the sidecar must sit beside the file and the picker gives no access to a parent.
 - **The logger's folder is remembered per device**, and the right file for a shoot is found by the
   times inside the files — so a permanent logger plus a card of photos needs no track picking at
   all. Midnight falls out of it rather than being special-cased, and so does the turn of the month.
@@ -105,9 +105,8 @@ a *"A new version is ready"* banner rather than leaving it a mystery.
 
 Ordered by what would change the tool most.
 
-1. **ARW: verify the read path.** Writing is done and proved (`npm run xmp --workspace spike`, plus a browser run). What is unverified is reading a real ARW: no fixture exists, ARW is TIFF so `buildHeaderStub` does not apply, and the Sony preview may sit past the 1MB head the loader reads. Drop one ARW into `spike/fixtures/` and settle it.
-2. **Video.** Wanted eventually, not now. ExifTool writes GPS to MP4/MOV.
-3. **Code-split the ~1.5MB bundle.** Fine on a desktop, worth it on mobile data. It is precached, so
+1. **Video.** Wanted eventually, not now. ExifTool writes GPS to MP4/MOV.
+2. **Code-split the ~1.5MB bundle.** Fine on a desktop, worth it on mobile data. It is precached, so
    it is paid once per version rather than per visit.
 
 Deferred by the plan rather than by us: video.

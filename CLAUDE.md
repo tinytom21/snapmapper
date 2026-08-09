@@ -466,10 +466,25 @@ wrecks Sony ARW writing GPS, and that is why exiv2 is banned here.
 the same path was run in a browser: a 902-byte sidecar reading back with the hemisphere intact,
 `photoshop:City`, `Iptc4xmpCore:CountryCode` and `exif:GPSLatitude` in their proper namespaces.
 
-**Not yet verified: reading metadata *out* of an ARW**, because there is no ARW in `spike/fixtures/`.
-The date, any existing coordinates and the thumbnail all come from `readTagsAndThumbnail` over a
-1MB head, and ARW is TIFF rather than JPEG — `buildHeaderStub` does not apply, and a Sony preview
-may live past that head. Drop one real ARW into `spike/fixtures/` and this can be settled.
+**Reading an ARW is settled, against a real 24.9MB ILCE-6400 file** — `npm run arw --workspace
+spike`. The worry was that ARW is TIFF rather than JPEG, so `buildHeaderStub` does not apply and
+`headerOnly` simply hands over whatever it was given, leaving the 1MB head doing all the work
+against a format whose IFDs may point anywhere in the file. It holds comfortably:
+
+| head | date | model | coordinates | thumbnail |
+|---|---|---|---|---|
+| 256KB | ✓ | ✓ | ✓ | 8KB |
+| **1MB — what ships** | ✓ | ✓ | ✓ | **8KB** |
+| whole 24.9MB file | ✓ | ✓ | ✓ | 8KB |
+
+All three match native ExifTool over the whole file. The thumbnail is the small 8KB one, not the
+432KB `PreviewImage` — which is the right choice anyway, and the same one the JPEG path makes.
+**Batching works unchanged**: eight files in one invocation with the ARW among them, 1053 ms, every
+record correct.
+
+**`PHOTO_PATTERN` in `browser-file-store.ts` must include `arw`.** It was `/\.jpe?g$/i`, and that
+alone would have shipped the whole feature inert: raw can only be *saved* from a folder, so a folder
+listing that hides ARW hides the only route raw has.
 
 ### Three small things that carry their weight
 

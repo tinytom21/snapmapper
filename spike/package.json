@@ -16,7 +16,8 @@
     "load-cost": "node src/load-cost.mjs",
     "batch-read": "node src/batch-read.mjs",
     "batch-verify": "node src/batch-verify.mjs",
-    "xmp": "node src/xmp-sidecar.mjs"
+    "xmp": "node src/xmp-sidecar.mjs",
+    "arw": "node src/arw-read.mjs"
   },
   "dependencies": {
     "@uswriting/exiftool": "latest",

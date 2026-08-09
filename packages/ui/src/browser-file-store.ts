@@ -108,7 +108,15 @@ export type SaveDestination =
  */
 export const LARGE_FOLDER_THRESHOLD = 200;
 
-const JPEG_PATTERN = /\.jpe?g$/i;
+/**
+ * Files a folder listing offers as photographs.
+ *
+ * Raw belongs here as well as JPEG, and leaving it out is how the sidecar feature would have
+ * shipped inert: a raw photograph can only be *saved* from a folder — its sidecar has to be written
+ * beside it, and the file picker gives no access to a parent — so a folder listing that hides ARW
+ * hides the only route raw has. Verified against a real 24.9MB ILCE-6400 ARW.
+ */
+const PHOTO_PATTERN = /\.(jpe?g|arw)$/i;
 
 export function isFileSystemAccessSupported(): boolean {
   return typeof globalThis.showDirectoryPicker === 'function'
@@ -337,7 +345,7 @@ export function createBrowserFileStore(): BrowserFileStore {
       let count = 0;
       // Enumeration only — no metadata is read, so this is fast even for thousands of files.
       for await (const [name, handle] of directory.entries()) {
-        if (handle.kind === 'file' && JPEG_PATTERN.test(name)) count += 1;
+        if (handle.kind === 'file' && PHOTO_PATTERN.test(name)) count += 1;
       }
       return count;
     },
@@ -352,7 +360,7 @@ export function createBrowserFileStore(): BrowserFileStore {
       const refs: PhotoRef[] = [];
 
       for await (const [name, handle] of directory.entries()) {
-        if (handle.kind !== 'file' || !JPEG_PATTERN.test(name)) continue;
+        if (handle.kind !== 'file' || !PHOTO_PATTERN.test(name)) continue;
         refs.push(await refFromHandle(handle, folder as BrowserFolder, `${folder.id}/${name}`));
       }
 
