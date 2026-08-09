@@ -568,6 +568,30 @@ The true instant comes from a QR code the app displays and the user photographs.
 its error correction means a misread cannot silently yield a plausible wrong time — it either
 decodes exactly or not at all.
 
+**The code is on the landing screen, and that is about where the card is.** It has to be
+photographed *by the camera*, and at the start of a session the camera is the thing holding the
+card — so that is the one moment when photographing it is free. Living only in the sidebar panel
+meant it could not be reached until photographs were open, which is to say until the card was out,
+and the real workflow became: unmount the card, plug it into the phone, pick some photos so the
+panel exists at all, unmount again, put it back in the camera, photograph the screen, mount a third
+time. To read a code that never needed the card.
+
+Nothing about the measurement was ever coupled to a session — the code encodes an instant, the
+camera records it against its own clock, and the difference is read out of the photograph later.
+Only the *drawing* was coupled, and only by where it happened to sit. `QrClock.tsx` is that drawing,
+used by both `Landing` and `ClockPanel`. The panel keeps its copy for the case where you forgot, and
+says so.
+
+**`QRCode.toCanvas` writes an inline `width` and `height`, so strip them.** An inline style beats
+any stylesheet, so every responsive rule aimed at that canvas silently did nothing — a
+`.qr canvas { width: 220px }` in the mobile block asked for 220 and got 260 for as long as it
+existed. Invisible until 320px, where `max-width: 100%` (which *does* win, because max-width beats
+width) shrank the box while the inline height stayed put and the code came out squashed. The
+component removes the attribute after each draw so the stylesheet means what it says; the bitmap's
+own resolution comes from the width *attribute* and is untouched. Verified by decoding the rendered
+canvas with the real jsQR at 320px and 375px: square, in bounds, and parsing back to an instant a
+tenth of a second old.
+
 ### Every save is verified by reading the file back
 
 `verify-write.ts` re-reads each written file and checks the coordinates landed *and* that

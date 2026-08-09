@@ -16,19 +16,17 @@
  * resulting seconds.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
-import QRCode from 'qrcode';
+import { useEffect, useMemo, useState } from 'react';
 
 import {
-  SYNC_QR_REFRESH_MS,
-  encodeSyncPayload,
   isValidTimeZone,
-  syncUncertaintySeconds,
   type ClockSync,
   type NaiveDateTime,
   type PhotoEntry,
   type Session,
 } from '@snapmapper/core';
+
+import { QrClock } from './QrClock.tsx';
 
 export interface ClockPanelProps {
   readonly session: Session;
@@ -104,6 +102,16 @@ export function ClockPanel({
             <li>Select that one photo, then press <strong>Read clock from photo</strong>.</li>
           </ol>
 
+          {/*
+            Reaching this panel means the card is already out of the camera, so step one costs a
+            round trip of the card. The same code is on the start screen, where it does not — worth
+            saying once, here, rather than leaving it to be discovered.
+          */}
+          <p className="note">
+            The card has to go back in the camera for step one. Next time, the same code is on the
+            start screen before you take it out.
+          </p>
+
           <QrClock />
 
           <div className="row">
@@ -167,59 +175,6 @@ export function describeClock(session: Session): string {
     : describeOffset(session.clock.offsetSeconds).replace('Clock runs ', '');
 
   return `${session.clock.timeZone}, ${drift}${session.sync ? ' (measured)' : ''}`;
-}
-
-/** The live code. Redrawn on a fixed interval so the decoded instant is bounded. */
-function QrClock() {
-  const canvas = useRef<HTMLCanvasElement>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [shown, setShown] = useState<Date>(() => new Date());
-
-  useEffect(() => {
-    let cancelled = false;
-
-    const draw = () => {
-      const target = canvas.current;
-      if (!target || cancelled) return;
-
-      const now = new Date();
-      QRCode.toCanvas(target, encodeSyncPayload(now), {
-        width: 260,
-        margin: 2,
-        // Maximum error correction: this code is going to be photographed off a glossy
-        // screen at an angle, which is the hardest case a QR faces.
-        errorCorrectionLevel: 'H',
-        color: { dark: '#000000ff', light: '#ffffffff' },
-      }).then(
-        () => { if (!cancelled) setShown(now); },
-        (cause: unknown) => {
-          if (!cancelled) setError(cause instanceof Error ? cause.message : String(cause));
-        },
-      );
-    };
-
-    draw();
-    const timer = setInterval(draw, SYNC_QR_REFRESH_MS);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, []);
-
-  return (
-    <div className="qr">
-      <canvas ref={canvas} />
-      {error
-        ? <p className="note error">Could not draw the code: {error}</p>
-        : (
-          <p className="note">
-            {shown.toISOString().replace('T', ' ').slice(0, 19)}Z — redrawn every{' '}
-            {SYNC_QR_REFRESH_MS} ms, so the reading is good to about{' '}
-            {syncUncertaintySeconds('qr')} s.
-          </p>
-        )}
-    </div>
-  );
 }
 
 /** Type in a time read from some other clock in a photograph. */

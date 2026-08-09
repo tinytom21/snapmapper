@@ -12,8 +12,55 @@
  * opening a whole card would run for the best part of an hour before you could touch anything.
  */
 
+import { useState } from 'react';
+
 import { OUTPUT_FOLDER_NAME } from './browser-file-store.ts';
+import { QrClock } from './QrClock.tsx';
 import { Wordmark } from './Wordmark.tsx';
+
+/**
+ * Photograph the clock code before the card comes out.
+ *
+ * This is here because of where the *camera* is. The code has to be photographed by the camera, and
+ * at the start of a session the camera is the thing holding the card — so this is the one moment
+ * when photographing it costs nothing at all. Reaching it from the sidebar instead meant the card
+ * had to be unmounted, plugged into the phone, some photos picked so the panel existed, then the
+ * card unmounted again, returned to the camera, the screen photographed, and the card mounted a
+ * second time. All to read a code that never needed the card.
+ *
+ * Collapsed by default, because the landing screen's job is to start you and most sessions do not
+ * need this — a clock is set once and drifts slowly. Open, it is the only thing on screen worth
+ * looking at, which is right for something you are about to point a camera at.
+ */
+function ClockSyncOffer() {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className={`landing-sync ${open ? 'open' : ''}`}>
+      <button type="button" className="link" onClick={() => setOpen((was) => !was)}>
+        {open ? 'Hide the clock code' : 'Camera clock out of step? Photograph this first…'}
+      </button>
+
+      {open && (
+        <div className="landing-sync-body">
+          <p className="note">
+            <strong>Do this while the card is still in the camera.</strong> Photograph the code
+            below, then carry on as normal — the photo of it comes in with the rest, and Snapmapper
+            reads the exact time out of the image. Nothing is typed and nothing can be misread.
+          </p>
+
+          <QrClock />
+
+          <p className="note">
+            Later, in <strong>Camera clock</strong>, select that one photo and press{' '}
+            <strong>Read clock from photo</strong>. It only needs doing again if you change the
+            camera&rsquo;s clock.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function Landing({
   canPickFiles,
@@ -60,6 +107,8 @@ export function Landing({
           Picking the photos you want is the quick way, and the right one for a camera card.
           Opening a folder reads every photo in it — fine for a small one.
         </p>
+
+        <ClockSyncOffer />
       </div>
 
       <ol className="landing-steps">

@@ -753,6 +753,19 @@ button.big { padding: 0.7rem 1.2rem; font-size: 1rem; border-radius: 8px; }
 
 .landing-hint { font-size: 0.85rem; opacity: 0.6; margin: 0 auto; max-width: 30rem; }
 
+/* Photographing the clock code, offered on the way in — see `ClockSyncOffer`.
+   Quiet while shut, because most sessions do not need it; a bordered card once open, because then
+   it is a thing you are pointing a camera at and it should be the only thing on screen. */
+.landing-sync { margin: 1.1rem auto 0; max-width: 32rem; }
+.landing-sync.open {
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+  padding: 0.9rem 1rem 1rem;
+}
+.landing-sync-body { margin-top: 0.7rem; display: grid; gap: 0.7rem; }
+.landing-sync .note { margin: 0; text-align: left; }
+
 /* Numbered by the counter rather than by list markers, so the number can sit in its own column
    and the text can wrap under itself rather than under the number. */
 .landing-steps {
@@ -1103,5 +1116,16 @@ button.big { padding: 0.7rem 1.2rem; font-size: 1rem; border-radius: 8px; }
 
   .row button { padding: 0.5rem 0.75rem; font-size: 0.9rem; }
   .banner { padding: 0.6rem; }
-  .qr canvas { width: 220px; height: auto; }
+  /*
+   * No `.qr canvas { width }` here, and it is not an omission.
+   *
+   * `QRCode.toCanvas` writes an **inline** `width` and `height` from its own option, so a
+   * stylesheet rule for width loses to it and does nothing — measured: the rule that used to sit
+   * here asked for 220px and the canvas stayed 260px on a 375px screen. It had never worked.
+   *
+   * Nothing is lost by dropping it. This is the one element on screen whose job is to be read by a
+   * camera, so larger is better, and 260px plus its quiet zone fits a 375px phone with room to
+   * spare. `max-width: 100%` on the base rule is the real guard, and that one *does* apply —
+   * max-width beats width, inline or not.
+   */
 }
