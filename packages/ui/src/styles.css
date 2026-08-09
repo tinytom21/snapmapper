@@ -475,18 +475,30 @@ label.check input[type='checkbox'] {
 /* --- Choosing a view ----------------------------------------------------- */
 
 .views { align-items: center; gap: 0.25rem; }
-.views button { padding: 0.25rem 0.6rem; font-size: 0.82rem; }
+
+/* Square, because there is no text to set the width — a text button's side padding around an
+   18px glyph gives a lopsided box that reads as misaligned rather than as a button. */
+.views button.icon-only {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  width: 2rem;
+  height: 2rem;
+}
+/* 20px, not 18. The fine grid's gaps are 1.5 units of a 24 viewBox, so they land at 1.13 device
+   pixels at 18px and blur into their cells on a 1x desktop; 20px takes them to 1.25 and the nine
+   cells stay nine. A phone at 3x never had the problem. */
+.view-icon {
+  width: 20px;
+  height: 20px;
+  display: block;
+}
 .views button.chosen {
   border-color: var(--accent);
   background: var(--accent-wash);
   color: var(--accent);
   font-weight: 650;
-}
-.views-divider {
-  width: 1px;
-  align-self: stretch;
-  margin: 0 0.3rem;
-  background: var(--line);
 }
 
 /* --- The grid: photographs and tick boxes, nothing else ------------------
@@ -1050,7 +1062,11 @@ button.big { padding: 0.7rem 1.2rem; font-size: 1rem; border-radius: 8px; }
    * silently overrode it — the control appeared to work and nothing moved, on exactly the device it
    * was for. The same trap applies to `--tile-min`.
    */
-  .views button { padding: 0.45rem 0.7rem; font-size: 0.88rem; }
+  /* A finger-sized target. Note this must stay at least as specific as the base rule it replaces —
+     `.views button { padding }` would lose to `.views button.icon-only` and silently do nothing,
+     which is the trap described just above. */
+  .views button.icon-only { width: 2.5rem; height: 2.5rem; }
+  .views .view-icon { width: 22px; height: 22px; }
   /* Thumb-sized targets over the photograph. */
   .tile input[type='checkbox'] { width: 26px; height: 26px; }
   .tile-zoom { padding: 4px 7px; font-size: 0.85rem; }

@@ -839,6 +839,22 @@ One stored value rather than a view plus a size, so a size that applies to a vie
 it cannot exist. `loadViewMode` falls back on anything unrecognised — including `largest`, which is
 what the previous version wrote and what real browsers are still holding.
 
+**The switcher is three icons, and that is one button per mode.** It was four text buttons —
+`List`, `Grid`, then `Small` and `Large` appearing beside them once you were in the grid, because
+those two words meant nothing on their own and needed `Grid` next to them to be read at all. That
+also made the row change length as you used it. Drawn, the size *is* the label: nine squares against
+four needs no caption, so the separate `Grid` button had nothing left to do. `ViewIcons.tsx`, and
+each icon is a small diagram of the layout it selects — the rare case where a symbol beats its
+own name.
+
+**The tiles are filled, and that is arithmetic rather than taste.** Outlined first, like the
+wordmark, and it does not survive the sums: a stroke is centred on its path, so a 1.5 stroke takes
+0.75 from each side of a gap, and the fine grid's nine 5-unit cells sit on gaps of exactly 1.5 —
+neighbouring strokes *meet*, and the icon renders as one solid mesh. Filled cells give the gap you
+drew. The icon is 20px rather than 18 for the same reason at the other end: 1.5 units of a 24
+viewBox is 1.13 device pixels at 18px, which blurs on a 1x desktop while being invisible on a 3x
+phone.
+
 **The grid keeps one non-photographic mark**, and it is deliberate: a dot when a photo has a
 location, amber when that location is staged. Whether a frame is already placed is the single fact a
 picture cannot tell you, and the one you are working out while placing things. Everything else went.

@@ -19,12 +19,29 @@ import {
   type PhotoEntry,
   type Session,
 } from '@snapmapper/core';
+import { GridLargeIcon, GridSmallIcon, ListIcon } from './ViewIcons.tsx';
 import {
   LIST_THUMB_WIDTH,
   gridMinWidth,
   isGrid,
   type ViewMode,
 } from './view-mode.ts';
+
+/**
+ * The three views, in the order they escalate: most detail to most photographs.
+ *
+ * A table rather than three hand-written buttons, so a mode cannot end up with an icon and no
+ * name — which for an icon-only control is the difference between a button and a mystery.
+ */
+const VIEW_BUTTONS: readonly {
+  readonly mode: ViewMode;
+  readonly label: string;
+  readonly Glyph: () => React.ReactElement;
+}[] = [
+  { mode: 'list', label: 'List, with dates and coordinates', Glyph: ListIcon },
+  { mode: 'grid-small', label: 'Small grid', Glyph: GridSmallIcon },
+  { mode: 'grid-large', label: 'Large grid', Glyph: GridLargeIcon },
+];
 
 export interface PhotoListProps {
   readonly session: Session;
@@ -73,48 +90,33 @@ export function PhotoList(props: PhotoListProps) {
    */
   return (
     <>
-      <div className="row views">
-        <button
-          type="button"
-          className={view === 'list' ? 'chosen' : ''}
-          aria-pressed={view === 'list'}
-          onClick={() => props.onView('list')}
-        >
-          List
-        </button>
-        <button
-          type="button"
-          className={grid ? 'chosen' : ''}
-          aria-pressed={grid}
-          // Always lands on large: the point of leaving the list is to see the photographs, so the
-          // bigger tiles are the ones worth arriving at.
-          onClick={() => props.onView('grid-large')}
-        >
-          Grid
-        </button>
+      {/*
+        One button per view, which is three rather than the four it used to take.
 
-        {/* The size choice belongs to the grid, so it appears with it and not before. */}
-        {grid && (
-          <>
-            <span className="views-divider" aria-hidden="true" />
-            <button
-              type="button"
-              className={view === 'grid-small' ? 'chosen' : ''}
-              aria-pressed={view === 'grid-small'}
-              onClick={() => props.onView('grid-small')}
-            >
-              Small
-            </button>
-            <button
-              type="button"
-              className={view === 'grid-large' ? 'chosen' : ''}
-              aria-pressed={view === 'grid-large'}
-              onClick={() => props.onView('grid-large')}
-            >
-              Large
-            </button>
-          </>
-        )}
+        With words, `Small` and `Large` had to stay hidden until you were already in the grid —
+        they meant nothing on their own, so they needed `Grid` next to them to be read at all. That
+        also meant the row changed length as you used it, shifting everything below it.
+
+        Drawn, the size *is* the label: nine squares against four needs no `Grid` to explain it. So
+        the separate Grid button had nothing left to do, and the three modes are now three
+        buttons — always the same three, in the same places.
+      */}
+      <div className="row views" role="group" aria-label="How to show the photos">
+        {VIEW_BUTTONS.map(({ mode, label, Glyph }) => (
+          <button
+            key={mode}
+            type="button"
+            className={`icon-only ${view === mode ? 'chosen' : ''}`}
+            aria-pressed={view === mode}
+            // The name the icon no longer carries. `title` for a mouse, `aria-label` for everything
+            // else — an icon button with neither is a button nobody can name.
+            aria-label={label}
+            title={label}
+            onClick={() => props.onView(mode)}
+          >
+            <Glyph />
+          </button>
+        ))}
       </div>
 
       <div className="row">
