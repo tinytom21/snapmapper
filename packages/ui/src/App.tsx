@@ -22,6 +22,7 @@ import {
   filterByAccuracy,
   hasPendingChanges,
   instantOf,
+  isRawFile,
   isValidTimeZone,
   mergeTracks,
   locationOf,
@@ -1266,8 +1267,28 @@ function RestoreBanner({
 function describePicked(picked: {
   skippedDuplicates: readonly string[];
   readOnly: readonly string[];
+  refs?: readonly PhotoRef[];
 }): string | null {
   const parts: string[] = [];
+
+  /*
+   * Raw picked through the file picker can be looked at but never saved, and saying so *now* is
+   * the whole point of this branch.
+   *
+   * A raw photograph's location goes into a sidecar written beside it, and `showOpenFilePicker`
+   * gives no access to a file's parent — so the refusal is certain from the moment the file is
+   * chosen. It used to surface at Save, after the photographs had been placed by hand, which is
+   * the worst possible moment to learn that none of it can be written.
+   */
+  const raw = (picked.refs ?? []).filter((ref) => isRawFile(ref.name));
+  if (raw.length > 0) {
+    parts.push(
+      `${raw.length} raw file(s) can be viewed here but not saved `
+      + `(${raw.slice(0, 3).map((ref) => ref.name).join(', ')}). A raw photograph's location goes `
+      + 'into an XMP sidecar written next to it, and picking individual files gives no access to '
+      + 'their folder. Use “Open whole folder…” to geotag raw.',
+    );
+  }
 
   if (picked.skippedDuplicates.length > 0) {
     // Not cosmetic: photos are keyed by filename, so two files with the same name would be
