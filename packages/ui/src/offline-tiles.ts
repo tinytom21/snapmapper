@@ -23,6 +23,33 @@
  * `snapmapper-tiles://https://…`, and the rewritten object is handed to MapLibre. That covers
  * tiles, **glyphs and sprites** — and the glyphs matter as much as the tiles, because a vector map
  * with no glyphs renders every road and town silently unlabelled.
+ *
+ * ## A handler must answer in the shape the request asked for
+ *
+ * This took the map out completely once, so it is worth stating plainly. `RequestParameters.type`
+ * says what MapLibre intends to do with the bytes, and the handler has to match it. MapLibre's own
+ * fetch is the specification:
+ *
+ * ```
+ * "arrayBuffer" === type || "image" === type ? response.arrayBuffer()
+ *   : "json" === type ? response.json()
+ *   : response.text()
+ * ```
+ *
+ * So `image` wants an **ArrayBuffer**, not an `ImageBitmap` — it makes its own Blob from it — and
+ * `json` wants an **already-parsed object**. Returning an ArrayBuffer for a `json` request is the
+ * bug that broke this: Liberty's vector source is `{"type":"vector","url":"…/planet"}`, a TileJSON
+ * document fetched as `json`, so it never initialised and the map lost every road, label and
+ * building while still drawing its background. No error reaches the console — the source simply
+ * never has any data — which is why it reads as "the map no longer works" rather than as a fault.
+ *
+ * ## And a TileJSON's own tile URLs have to be rewritten too
+ *
+ * A source given as a `url` keeps its tile templates *inside* that TileJSON, not in the style. So
+ * returning the document untouched would route the metadata through the cache and every actual
+ * tile around it — the caching would appear to work and cache nothing but a few kilobytes of JSON.
+ * `prepareJson` therefore runs the same rewrite over anything fetched as `json`, which is why the
+ * style, a TileJSON and a sprite index all go through one path.
  */
 
 /** The scheme MapLibre routes to us. Arbitrary, but it must not collide with a real one. */
@@ -117,19 +144,25 @@ const URL_KEYS = new Set(['tiles', 'url', 'glyphs', 'sprite']);
  */
 export async function offlineStyle(styleUrl: string): Promise<unknown> {
   try {
-    const { data } = await loadTile(styleUrl);
-    const style: unknown = JSON.parse(new TextDecoder().decode(data));
-
-    /*
-     * Relative URLs are resolved against the style's own address, and that address is about to
-     * stop being a real one. So they are made absolute here, before the rewrite, or a style using
-     * `"sprite": "/sprites/liberty"` would resolve against `snapmapper-tiles://…` and fetch
-     * nothing.
-     */
-    return redirectStyle(absolutise(style, styleUrl));
+    const { data } = await loadTile(styleUrl, 'json');
+    return data;
   } catch {
     return styleUrl;
   }
+}
+
+/**
+ * Resolve and redirect every URL in a document fetched as JSON.
+ *
+ * One function for the style, a TileJSON and a sprite index, because they need exactly the same
+ * treatment and there is no benefit in knowing which one this is.
+ *
+ * Relative URLs are made absolute **before** the rewrite, against the document's real address —
+ * which is about to stop being a real one. A style using `"sprite": "/sprites/liberty"` would
+ * otherwise resolve against `snapmapper-tiles://…` and fetch nothing.
+ */
+function prepareJson(document: unknown, realBase: string): unknown {
+  return redirectStyle(absolutise(document, realBase));
 }
 
 /**
@@ -194,13 +227,14 @@ function caches_(): CacheStorage | undefined {
  */
 export async function loadTile(
   url: string,
+  type?: ResourceKind,
   signal?: AbortSignal,
-): Promise<{ data: ArrayBuffer }> {
+): Promise<{ data: ArrayBuffer | unknown }> {
   const store = caches_();
   const cache = store ? await store.open(TILE_CACHE) : undefined;
 
   const hit = await cache?.match(url);
-  if (hit) return { data: await hit.arrayBuffer() };
+  if (hit) return { data: await shape(hit, type, url) };
 
   const response = await fetch(url, { ...(signal ? { signal } : {}) });
   if (!response.ok) {
@@ -218,7 +252,30 @@ export async function loadTile(
     }
   }
 
-  return { data: await response.arrayBuffer() };
+  return { data: await shape(response, type, url) };
+}
+
+/**
+ * What MapLibre intends to do with the bytes, from `RequestParameters.type`.
+ *
+ * `'string'` is in MapLibre's union too, but nothing in a style reaches this handler as text, and
+ * the default below covers it correctly anyway.
+ */
+export type ResourceKind = 'string' | 'json' | 'arrayBuffer' | 'image';
+
+/**
+ * Turn a response into the shape the request asked for.
+ *
+ * `image` deliberately shares the `arrayBuffer` case: MapLibre wraps the bytes in a Blob and makes
+ * its own object URL, so handing it a decoded `ImageBitmap` would be both more work and wrong.
+ */
+async function shape(
+  response: Response,
+  type: ResourceKind | undefined,
+  realBase: string,
+): Promise<ArrayBuffer | unknown> {
+  if (type === 'json') return prepareJson(await response.json(), realBase);
+  return response.arrayBuffer();
 }
 
 /**
@@ -230,14 +287,19 @@ export async function loadTile(
 export function registerTileProtocol(maplibre: {
   addProtocol: (
     scheme: string,
-    handler: (params: { url: string }, abort?: AbortController) => Promise<{ data: ArrayBuffer }>,
+    handler: (
+      params: { url: string; type?: ResourceKind },
+      abort?: AbortController,
+    ) => Promise<{ data: ArrayBuffer | unknown }>,
   ) => void;
 }): void {
   if (registered) return;
   registered = true;
 
+  // `params.type` is not optional in practice — passing it on is what keeps a TileJSON a document
+  // rather than a pile of bytes. See the note at the top of this file.
   maplibre.addProtocol(TILE_PROTOCOL, (params, abort) =>
-    loadTile(realUrl(params.url), abort?.signal));
+    loadTile(realUrl(params.url), params.type, abort?.signal));
 }
 
 let registered = false;

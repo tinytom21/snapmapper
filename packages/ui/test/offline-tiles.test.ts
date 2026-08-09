@@ -11,6 +11,7 @@ import { describe, it } from 'node:test';
 
 import {
   TILE_PROTOCOL,
+  loadTile,
   prefixUrl,
   realUrl,
   redirectStyle,
@@ -103,5 +104,97 @@ describe('rewriting a style document', () => {
   it('leaves a style that has nothing remote in it unchanged', () => {
     const local = { version: 8, sources: {}, layers: [] };
     assert.deepEqual(redirectStyle(local), local);
+  });
+});
+
+describe('answering in the shape the request asked for', () => {
+  /*
+   * This is the bug that took the whole map out, so it is pinned rather than described.
+   *
+   * MapLibre's `RequestParameters.type` says what it will do with the bytes, and its own fetch is
+   * the specification: `arrayBuffer` and `image` both get an ArrayBuffer, `json` gets an
+   * already-parsed object. The handler ignored `type` and always returned bytes.
+   *
+   * Liberty's vector source is `{"type":"vector","url":"…/planet"}` — a TileJSON fetched as
+   * `json`. MapLibre does the equivalent of `Object.assign({}, data)` on it and reads `.tiles`.
+   * Given an ArrayBuffer that yields `{}`: **no tiles, no zoom range, and no exception**. The
+   * source silently never had any data, so every road, label and building vanished with nothing in
+   * the console — which is why it read as "the map no longer works" rather than as an error.
+   */
+  const TILE_JSON = {
+    tiles: ['https://tiles.example/planet/{z}/{x}/{y}.pbf'],
+    minzoom: 0,
+    maxzoom: 14,
+    attribution: '<a href="https://osm.org">OSM</a>',
+  };
+
+  function stubFetch(body: unknown, bytes?: Uint8Array) {
+    const original = globalThis.fetch;
+    globalThis.fetch = (async () => ({
+      ok: true,
+      status: 200,
+      async json() { return structuredClone(body); },
+      async arrayBuffer() { return (bytes ?? new Uint8Array([1, 2, 3])).buffer; },
+      clone() { return this; },
+    })) as unknown as typeof fetch;
+    return () => { globalThis.fetch = original; };
+  }
+
+  it('returns a parsed object for a json request, never bytes', async () => {
+    const restore = stubFetch(TILE_JSON);
+    try {
+      const { data } = await loadTile('https://tiles.example/planet', 'json');
+
+      assert.equal(data instanceof ArrayBuffer, false, 'a TileJSON must not arrive as bytes');
+      // The decisive check: what MapLibre actually does with it.
+      assert.equal(Object.assign({}, data as { tiles?: string[] }).tiles?.length, 1);
+    } finally {
+      restore();
+    }
+  });
+
+  it('redirects the tile URLs inside a TileJSON', async () => {
+    /*
+     * The second, silent half of the same bug. A source given as a `url` keeps its tile templates
+     * *inside* the TileJSON, so leaving that document alone would route its metadata through the
+     * cache and every actual tile around it — caching a few kilobytes of JSON and nothing else,
+     * while looking entirely correct.
+     */
+    const restore = stubFetch(TILE_JSON);
+    try {
+      const { data } = await loadTile('https://tiles.example/planet', 'json');
+      const tiles = (data as { tiles: string[] }).tiles;
+
+      assert.ok(tiles[0]?.startsWith(`${TILE_PROTOCOL}://`));
+      // And the braces still survive, or every tile request 404s for no stated reason.
+      assert.match(tiles[0] ?? '', /\{z\}\/\{x\}\/\{y\}\.pbf$/);
+    } finally {
+      restore();
+    }
+  });
+
+  it('leaves a TileJSON attribution alone', async () => {
+    const restore = stubFetch(TILE_JSON);
+    try {
+      const { data } = await loadTile('https://tiles.example/planet', 'json');
+      assert.equal((data as { attribution: string }).attribution, TILE_JSON.attribution);
+    } finally {
+      restore();
+    }
+  });
+
+  it('returns bytes for a tile, a glyph range and an image', async () => {
+    // `image` shares the arrayBuffer case deliberately: MapLibre wraps the bytes in a Blob and
+    // makes its own object URL, so a decoded ImageBitmap would be both more work and wrong.
+    const restore = stubFetch(undefined, new Uint8Array([9, 8, 7, 6]));
+    try {
+      for (const kind of ['arrayBuffer', 'image', undefined] as const) {
+        const { data } = await loadTile('https://tiles.example/1/2/3.pbf', kind);
+        assert.ok(data instanceof ArrayBuffer, `${String(kind)} should be bytes`);
+        assert.equal((data as ArrayBuffer).byteLength, 4);
+      }
+    } finally {
+      restore();
+    }
   });
 });

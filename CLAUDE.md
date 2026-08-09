@@ -43,7 +43,7 @@ http://localhost:5173/ (see HANDOFF.md; `localhost` is required for a secure con
   (Timeline import and choosing a day's track), `place` (names into IPTC/XMP).
   **303 tests, `tsc` clean.**
 - `packages/ui` is React 19 + MapLibre 5 on Vite 7, with a `FileStore` over the File System
-  Access API. **172 tests** covering save orchestration, partial failure, QR scan scaling, the
+  Access API. **176 tests** covering save orchestration, partial failure, QR scan scaling, the
   palette, the track line, the track-folder span cache and the crash backup.
   Thumbnails come from the camera's own embedded ~6KB JPEG, and shift-click selects a range.
   Placement is select-then-click on the map, and only that — see below.
@@ -364,13 +364,30 @@ which is the same "remember to start the logger" problem that made Timeline wort
   everything the origin has stored, so a "clear map tiles" button would offer to free ten times
   what it frees.
 
-**Verified live**: a real 23KB vector tile and a 76KB glyph range fetched and cached, and a second
-pass served entirely from cache with **zero network calls**.
+- **A handler must answer in the shape the request asked for**, and getting this wrong took the
+  whole map out. `RequestParameters.type` says what MapLibre will do with the bytes, and its own
+  fetch is the specification: `arrayBuffer` **and** `image` both want an ArrayBuffer — it makes its
+  own Blob from the image bytes — while `json` wants an **already-parsed object**. The first
+  version ignored `type` and always returned bytes. Liberty's vector source is
+  `{"type":"vector","url":"…/planet"}`, a TileJSON fetched as `json`, and MapLibre does the
+  equivalent of `Object.assign({}, data)` on it: given an ArrayBuffer that yields `{}` — **no
+  tiles, no zoom range, and no exception**. Every road, label and building vanished with nothing in
+  the console, which is why it reported as "the map no longer works" rather than as an error.
+- **A TileJSON's own tile URLs have to be rewritten too.** A source given as a `url` keeps its tile
+  templates *inside* that document, not in the style, so returning it untouched routes the metadata
+  through the cache and every actual tile around it — caching a few kilobytes of JSON and nothing
+  else, while looking entirely correct. `prepareJson` runs the same rewrite over anything fetched
+  as `json`, so the style, a TileJSON and a sprite index share one path.
 
-**Not verifiable in the harness: that MapLibre actually routes through it.** The Browser pane does
-not composite, so the map never finishes loading and never requests a tile — a plain style URL does
-not reach `load` either. The rewrite is unit-tested, the handler is proved above, and the last link
-needs a real device.
+**Verified live**: the real Liberty style and its TileJSON fetched through the handler — the
+TileJSON arriving as a parsed object with 16 vector layers, its tiles redirected, braces intact and
+its attribution untouched — plus a real 784KB vector tile as an ArrayBuffer.
+
+**Still not verifiable in the harness: that MapLibre actually routes through it.** The Browser pane
+does not composite, so the map never finishes loading and never requests a tile — measured again
+here, with a real `Map` instance sitting at `isStyleLoaded() === false` and zero requests made. That
+gap is exactly how the `json` bug shipped, so **the three shapes are now pinned by tests** that were
+confirmed to fail against the old handler.
 
 ### Place names, and the one field that is not what it looks like
 
