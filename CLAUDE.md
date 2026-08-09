@@ -582,20 +582,30 @@ Only the *drawing* was coupled, and only by where it happened to sit. `QrClock.t
 used by both `Landing` and `ClockPanel`. The panel keeps its copy for the case where you forgot, and
 says so.
 
-**It is an unnumbered step above the numbered ones, with a real button.** It arrived as a
-link under the hero and the verdict was that it "is not obvious" — correct, because a link-styled
-control among real buttons reads as a footnote. Its place in the *order* is the thing that makes it
-make sense, so it belongs in the steps list; but it is optional, and a reader counting steps to
-judge how much work this is deserves the answer three. So it sits first and outside the numbering:
-`counter-increment: none` on that item, and a dashed outline where the others have a filled disc.
-Without that declaration the three real steps silently read 2, 3, 4.
+**Its button is the first of the three on the landing screen**, because that is the order the work
+happens in: once you have reached for `Select photos…` the card is out of the camera and the moment
+has gone. It took two goes to get there — first a link under the hero, then a button down in the
+steps list — and both were reported as not obvious enough for something used every shoot.
 
-**The code must not be nested inside the step's description.** `.landing-steps span` is dimmed to
+**`button.feature`, not a second `primary`.** Two filled accent buttons side by side is no emphasis
+at all: the eye gets two equal claims and resolves neither. So the clock takes the accent's outline
+and wash while `Select photos…` keeps the fill — still the loudest thing on the row after the
+primary, and honest about which is the application's main action. Its border is 2px against the
+primary's 1px, and `button.feature.big` subtracts that pixel from the padding so the two keep the
+same height; measured at 48px for all three.
+
+Contrast, measured off the rendered buttons: **6.88:1 dark, 6.13:1 light** — clear of AA, though
+below the 9:1 the filled accent manages, which is the price of an outline treatment.
+
+**The unnumbered step in the list stays, and carries no button.** It is what says the clock comes
+*first*; `counter-increment: none` keeps it outside the count so the three real steps still read
+1, 2, 3, and without that declaration they silently become 2, 3, 4. A second button doing the same
+job further down the page would only raise the question of whether the two differ.
+
+**The code must not be nested inside a step's description.** `.landing-steps span` is dimmed to
 0.75 so a description sits quieter than its heading, and `opacity` compounds down the tree — a
 child cannot undo an ancestor's. Nested there the code rendered at 0.75 against the page, measured,
 which is the wrong thing to do to the one element on screen whose job is to be read by a camera.
-It is a sibling in the same grid column instead, which needs an explicit `grid-column: 2` because
-the marker's `::before` spans only two rows.
 
 **`QRCode.toCanvas` writes an inline `width` and `height`, so strip them.** An inline style beats
 any stylesheet, so every responsive rule aimed at that canvas silently did nothing — a

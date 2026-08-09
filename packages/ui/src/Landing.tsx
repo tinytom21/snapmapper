@@ -83,7 +83,25 @@ export function Landing({
           files themselves.
         </p>
 
+        {/*
+          The clock code is first, and it is first because that is the order the work happens in:
+          it has to be photographed while the card is still in the camera, so once you have reached
+          for `Select photos…` the moment has gone and the card has to go back.
+
+          It is styled `feature` rather than `primary` deliberately. Two filled accent buttons side
+          by side is no emphasis at all, and `Select photos…` is still the thing the application is
+          for — so this one takes the accent outline and the wash, which is the loudest a control
+          gets here without claiming to be the main action.
+        */}
         <div className="landing-actions">
+          <button
+            type="button"
+            className="feature big"
+            aria-expanded={showClock}
+            onClick={() => setShowClock((was) => !was)}
+          >
+            {showClock ? 'Hide the clock code' : 'Sync the camera clock…'}
+          </button>
           {canPickFiles && (
             <button type="button" className="primary big" onClick={onPickPhotos} disabled={busy}>
               Select photos…
@@ -95,8 +113,12 @@ export function Landing({
             </button>
           )}
         </div>
+
+        {showClock && <ClockSyncPanel />}
+
         <p className="landing-hint">
-          Picking the photos you want is the quick way, and the right one for a camera card.
+          Sync the clock <strong>before the card leaves the camera</strong>, if it has drifted.
+          Then: picking the photos you want is the quick way, and the right one for a camera card.
           Opening a folder reads every photo in it — fine for a small one.
         </p>
       </div>
@@ -111,36 +133,16 @@ export function Landing({
           place in the sequence and stays outside the numbering, which is what an unnumbered marker
           in the same column says without a word.
 
-          It was a link under the hero and the report was that it "is not obvious", which it was
-          not: a link-styled control among real buttons reads as a footnote. It is a button now,
-          and it is where the order it belongs in is visible.
+          It carries no button of its own. The control is the first one in the hero, where it is
+          hard to miss; a second button doing the same thing further down the page would only raise
+          the question of whether they differ.
         */}
         <li className="optional">
           <strong>Sync the camera clock <em>— optional</em></strong>
           <span>
-            Only if the camera&rsquo;s clock is off. Do it now, while the card is still in the
-            camera, and it will not need doing again until you change that clock.
+            Only if the camera&rsquo;s clock is off, and only once — but it has to happen while the
+            card is still in the camera, which is why it is up there rather than down here.
           </span>
-
-          {/*
-            Outside the description, not inside it.
-
-            `.landing-steps span` is dimmed to 0.75 so a description sits quieter than its heading,
-            and `opacity` compounds down the tree — a child cannot undo an ancestor's. Nested in
-            there the code rendered at 0.75 against the page, measured, which is the wrong thing to
-            do to the one element on screen whose job is to be read by a camera rather than by a
-            person.
-          */}
-          <div className="landing-step-do">
-            <button
-              type="button"
-              aria-expanded={showClock}
-              onClick={() => setShowClock((was) => !was)}
-            >
-              {showClock ? 'Hide the clock code' : 'Show the clock code…'}
-            </button>
-            {showClock && <ClockSyncPanel />}
-          </div>
         </li>
 
         <li>

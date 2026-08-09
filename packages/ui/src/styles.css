@@ -751,6 +751,29 @@ code { font-family: ui-monospace, monospace; font-size: 0.95em; }
 }
 button.big { padding: 0.7rem 1.2rem; font-size: 1rem; border-radius: 8px; }
 
+/*
+ * The loudest a control gets here without being the primary one.
+ *
+ * The clock sync is first in the row because that is the order the work happens in, and it has to
+ * be hard to miss — reported twice as not obvious. But `Select photos…` is still what the
+ * application is for, and two filled accent buttons beside each other is no emphasis at all: the
+ * eye gets two equal claims and resolves neither. So this takes the accent's outline and wash while
+ * the primary keeps the fill.
+ *
+ * The border is 2px against the primary's 1px, and the box is nudged in by the extra pixel so the
+ * two buttons still sit on the same baseline and the same height.
+ */
+button.feature {
+  border: 2px solid var(--accent);
+  background: var(--accent-wash);
+  color: var(--accent);
+  font-weight: 650;
+}
+button.feature.big { padding: calc(0.7rem - 1px) calc(1.2rem - 1px); }
+button.feature:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
 .landing-hint { font-size: 0.85rem; opacity: 0.6; margin: 0 auto; max-width: 30rem; }
 
 /* Photographing the clock code, offered on the way in — see `ClockSyncOffer`.
@@ -814,11 +837,9 @@ button.big { padding: 0.7rem 1.2rem; font-size: 1rem; border-radius: 8px; }
 }
 .landing-steps li.optional em { font-style: normal; opacity: 0.6; font-weight: 400; }
 
-/* The button and the code, in the description's column but outside the description.
-   `grid-column: 2` is required: `::before` spans only two rows, so a third child would otherwise
-   fall into the marker's column. Full opacity here is the point — see the note in `Landing.tsx`. */
-.landing-step-do { grid-column: 2; margin-top: 0.55rem; }
-.landing-step-do .landing-sync { margin: 0.7rem 0 0; max-width: none; }
+/* The code panel sits under the hero actions, where its button is. Centred like the rest of the
+   hero, and never wider than the text it sits under. */
+.landing-hero .landing-sync { margin: 1.1rem auto 0.2rem; }
 
 .landing-privacy {
   margin: 2rem 0 0;
@@ -1137,9 +1158,6 @@ button.big { padding: 0.7rem 1.2rem; font-size: 1rem; border-radius: 8px; }
 
   .row button { padding: 0.5rem 0.75rem; font-size: 0.9rem; }
   .banner { padding: 0.6rem; }
-  /* Not a `.row button`, so it misses the rule above and came out 35px tall — under a comfortable
-     touch target on the screen this step exists for. */
-  .landing-step-do button { padding: 0.6rem 1rem; font-size: 0.95rem; }
   /*
    * No `.qr canvas { width }` here, and it is not an omission.
    *
