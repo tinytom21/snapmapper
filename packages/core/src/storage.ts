@@ -80,6 +80,23 @@ export interface FileStore {
    * see one. Not every platform can — see `MTIME_LIMITATION` in the browser store.
    */
   writeAtomic(ref: PhotoRef, bytes: Uint8Array): Promise<WrittenFile>;
+
+  /**
+   * Write a file *beside* a photograph, under a name of our choosing.
+   *
+   * This exists for the XMP sidecar of a raw file, and "beside" is the whole requirement rather
+   * than a convenience: Lightroom looks for `DSC01234.xmp` in the same folder as `DSC01234.ARW`, so
+   * a sidecar in the `geotagged` output folder — with no raw file next to it — would be a file
+   * nothing ever reads.
+   *
+   * That is also why it is separate from `writeAtomic` rather than an extra argument to it.
+   * `writeAtomic` honours the copy destination, which is right for a JPEG and wrong here: the raw
+   * is never copied, because it is never written to at all.
+   *
+   * Optional, because a store that cannot reach a photograph's folder cannot implement it — the
+   * file picker gives no access to a file's parent by design. Callers must handle its absence.
+   */
+  writeSidecar?(ref: PhotoRef, name: string, bytes: Uint8Array): Promise<WrittenFile>;
 }
 
 /**

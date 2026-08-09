@@ -258,7 +258,16 @@ export function createBrowserFileStore(): BrowserFileStore {
         picked = await globalThis.showOpenFilePicker!({
           multiple: true,
           id: 'photos',
-          types: [{ description: 'JPEG photos', accept: { 'image/jpeg': ['.jpg', '.jpeg'] } }],
+          types: [{
+            description: 'Photos',
+            accept: {
+              'image/jpeg': ['.jpg', '.jpeg'],
+              // Raw is offered here too, though a raw photograph can only be *saved* from a folder:
+              // its sidecar has to be written beside it, and the file picker gives no access to a
+              // file's parent. Refusing to list them would be worse — you could not even look.
+              'image/x-sony-arw': ['.arw'],
+            },
+          }],
         });
       } catch (error) {
         if (error instanceof DOMException && error.name === 'AbortError') return undefined;
@@ -520,6 +529,44 @@ export function createBrowserFileStore(): BrowserFileStore {
       // the slice, never the Blob itself — see the note in core's exiftool.ts about per-syscall
       // slicing, which is a ~69x penalty on a phone.
       return new Uint8Array(await file.slice(0, maxBytes).arrayBuffer());
+    },
+
+    /**
+     * The sidecar goes next to the photograph, whatever the save destination is.
+     *
+     * Raw files are never copied and never written to, so there is nothing in the `geotagged`
+     * folder for a sidecar to sit beside — and a sidecar away from its raw file is one no reader
+     * will ever look for.
+     *
+     * Needs the photograph's *folder*, which only exists when a folder was opened.
+     * `showOpenFilePicker` gives no access to a file's parent by design, so in that mode this
+     * refuses with an explanation rather than quietly putting the file somewhere useless.
+     */
+    async writeSidecar(ref: PhotoRef, name: string, bytes: Uint8Array): Promise<WrittenFile> {
+      const directory = (ref.folder as Partial<BrowserFolder>).directory;
+      if (!directory) {
+        throw new FileWriteError(
+          ref,
+          'a sidecar has to be written next to the raw file, and picking individual files gives '
+          + 'no access to their folder. Use "Open whole folder…" to geotag raw photographs.',
+        );
+      }
+
+      let output: FileSystemFileHandle;
+      try {
+        output = await directory.getFileHandle(name, { create: true });
+      } catch (error) {
+        throw new FileWriteError(ref, describe(error), { cause: error });
+      }
+
+      await writeBytes(ref, output, bytes);
+
+      return {
+        location: `${ref.folder.displayName}/${name}`,
+        // The raw file itself was not touched, which is the entire point of a sidecar.
+        replacedOriginal: false,
+        read: async () => new Uint8Array(await (await output.getFile()).arrayBuffer()),
+      };
     },
 
     async writeAtomic(ref: PhotoRef, bytes: Uint8Array): Promise<WrittenFile> {

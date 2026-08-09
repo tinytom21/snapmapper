@@ -16,13 +16,13 @@ Nothing is half-finished. The tree is clean and every change is deployed.
 
 | Path | State |
 |---|---|
-| `packages/core` | Platform-agnostic logic. **303 tests, `tsc` clean.** `gps`, `time`, `jpeg` (the splice), `exif-tags`, `exiftool` (write path), `exiftool-wasm`, `session` (staged edits, undo, named actions), `clock-sync`, `gpx` (track parsing and matching), `google-timeline` + `track-file` (Timeline import), `exiftool-batch` (batched reads), `verify-write`, `storage`. |
+| `packages/core` | Platform-agnostic logic. **324 tests, `tsc` clean.** `gps`, `time`, `jpeg` (the splice), `exif-tags`, `exiftool` (write path), `exiftool-wasm`, `session` (staged edits, undo, named actions), `clock-sync`, `gpx` (track parsing and matching), `google-timeline` + `track-file` (Timeline import), `exiftool-batch` (batched reads), `verify-write`, `storage`. |
 | `packages/ui` | React 19 + MapLibre 5 on Vite 7. **176 tests.** `browser-file-store.ts` is the only file behind `FileStore`; `batch-runner.ts` is the only other one tied to the build, since it takes the ExifTool script from a Vite virtual module. |
 | `packages/shells` | Does not exist and is not needed. There is no native shell and no reason for one. |
 | `spike/` | Phase 0, done. Still where the write path is checked against a **native** ExifTool: `npm run splice --workspace spike` → 184 checks. |
 | `docs/PLAN.md` | Historical. Useful for intent, wrong in places. |
 
-**479 tests, `tsc` clean, production build succeeds.**
+**500 tests, `tsc` clean, production build succeeds.**
 
 ```bash
 npm test && npm run typecheck
@@ -56,7 +56,7 @@ was found:
 
 ## Deploying
 
-**Push to `main` and it ships.** `.github/workflows/deploy.yml` typechecks, runs all 479 tests,
+**Push to `main` and it ships.** `.github/workflows/deploy.yml` typechecks, runs all 500 tests,
 builds and publishes to GitHub Pages; a failing test blocks the deploy. About two minutes.
 
 The base path comes from the repository name, so renaming the repo needs no edit. A Pages project
@@ -94,6 +94,7 @@ a *"A new version is ready"* banner rather than leaving it a mystery.
   the old path against real A6400 files by `npm run batch-verify --workspace spike` (93 checks, 0
   failures). The ExifTool script is extracted from `@uswriting/exiftool`'s bundle at build time
   rather than vendored. Three traps and a per-photograph fallback; see CLAUDE.md before touching it.
+- **Raw is written as an XMP sidecar**, never into the ARW — `DSC01234.ARW` gets `DSC01234.xmp` beside it, the Adobe convention Lightroom reads. The raw file is never read, copied or opened for writing, so there is nothing to corrupt. Proved against native ExifTool by `npm run xmp --workspace spike`. Raw needs **folder mode**: the sidecar must sit beside the file and the picker gives no access to a parent.
 - **The logger's folder is remembered per device**, and the right file for a shoot is found by the
   times inside the files — so a permanent logger plus a card of photos needs no track picking at
   all. Midnight falls out of it rather than being special-cased, and so does the turn of the month.
@@ -104,14 +105,12 @@ a *"A new version is ready"* banner rather than leaving it a mystery.
 
 Ordered by what would change the tool most.
 
-1. **ARW via XMP sidecars.** Raw is shot occasionally, so this is wanted. Sidecars rather than
-   rewriting the ARW: never touching the raw file means never risking it, and sidecars are what
-   raw editors read anyway.
+1. **ARW: verify the read path.** Writing is done and proved (`npm run xmp --workspace spike`, plus a browser run). What is unverified is reading a real ARW: no fixture exists, ARW is TIFF so `buildHeaderStub` does not apply, and the Sony preview may sit past the 1MB head the loader reads. Drop one ARW into `spike/fixtures/` and settle it.
 2. **Video.** Wanted eventually, not now. ExifTool writes GPS to MP4/MOV.
 3. **Code-split the ~1.5MB bundle.** Fine on a desktop, worth it on mobile data. It is precached, so
    it is paid once per version rather than per visit.
 
-Deferred by the plan rather than by us: ARW via XMP sidecars, reverse geocoding into IPTC, video.
+Deferred by the plan rather than by us: video.
 
 ## The write path, if you touch it
 

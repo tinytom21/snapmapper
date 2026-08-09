@@ -59,6 +59,15 @@ export interface BatchRun {
    */
   readonly paths: readonly string[];
   readonly exitCode: number | undefined;
+  /**
+   * Files ExifTool wrote, by the path they were asked for under.
+   *
+   * Only populated when `run` was given `outputs`. This exists for the XMP sidecar, which ExifTool
+   * produces as a *file* rather than on stdout — and which the wrapper's own write path cannot
+   * make, because it always names its output `<uuid>.tmp` and the extension is what decides the
+   * format. Absent for an ordinary read.
+   */
+  readonly produced?: ReadonlyMap<string, Uint8Array>;
 }
 
 /**
@@ -68,7 +77,16 @@ export interface BatchRun {
  * which is where a mistake is invisible — can be tested without booting a Perl interpreter.
  */
 export interface BatchRunner {
-  run(files: readonly BatchFile[], args: readonly string[]): Promise<BatchRun>;
+  /**
+   * `outputs` names paths to read back out of the virtual filesystem after the run, for the case
+   * where ExifTool's answer is a file rather than stdout. `files` may be empty: a sidecar is built
+   * from tags alone and needs nothing mounted.
+   */
+  run(
+    files: readonly BatchFile[],
+    args: readonly string[],
+    outputs?: readonly string[],
+  ): Promise<BatchRun>;
 }
 
 /** One photograph's outcome. Parallel to the input, so a caller never has to match anything up. */

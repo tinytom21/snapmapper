@@ -18,14 +18,23 @@ import {
   buildClearPlaceTags,
   buildGeotagTags,
   buildPlaceTags,
+  buildSidecarTags,
   instantOf,
+  isRawFile,
   pendingPhotos,
+  readTags,
+  sidecarName,
   verifyWrittenLocation,
   writeMetadataSpliced,
+  writeXmpSidecar,
+  FileWriteError,
+  type BatchRunner,
+  type Coordinates,
   type ExpectedLocation,
   type FileStore,
   type MetadataBackend,
   type PhotoEntry,
+  type Place,
   type Session,
   type WriteVerification,
   type WrittenFile,
@@ -61,6 +70,16 @@ export interface SaveOptions {
    * irreplaceable files that is worth paying for every time.
    */
   readonly verify?: boolean;
+
+  /**
+   * Needed only to save a **raw** photograph, whose location goes into an XMP sidecar.
+   *
+   * ExifTool creates a sidecar as a *file*, and the wrapper's write path cannot ask for one: it
+   * always names its output `<uuid>.tmp`, and the extension is what decides the format. The batch
+   * runner can name its own output and read it back, so that is the route. Absent, raw files fail
+   * with a message saying so rather than being silently skipped.
+   */
+  readonly runner?: BatchRunner | undefined;
 }
 
 export interface SaveProgress {
@@ -95,7 +114,7 @@ export async function saveSession(
     const started = performance.now();
     try {
       const { warnings, verification, location } = await writeOne(
-        session, entry, store, backend, verify,
+        session, entry, store, backend, verify, options.runner,
       );
       const elapsedMs = performance.now() - started;
 
@@ -145,6 +164,7 @@ async function writeOne(
   store: FileStore,
   backend: MetadataBackend,
   verify: boolean,
+  runner: BatchRunner | undefined,
 ): Promise<{
   warnings: readonly string[];
   verification: WriteVerification | undefined;
@@ -156,6 +176,17 @@ async function writeOne(
   // `edits` at all, and returning here would silently drop the work.
   if (staged === undefined && place === undefined) {
     return { warnings: [], verification: undefined, location: undefined };
+  }
+
+  /*
+   * A raw file takes an entirely different route, and never gets read or written.
+   *
+   * The sidecar is built from the tags alone — no source file — so this costs one invocation and
+   * no I/O whatever the size of the ARW. It is also the only write path here that cannot damage
+   * anything, because the file it produces did not exist a moment ago.
+   */
+  if (isRawFile(entry.ref.name)) {
+    return writeSidecarFor(session, entry, store, backend, verify, runner, staged, place);
   }
 
   // One bulk read into bytes. Handing a Blob to the backend is the ~69x mistake.
@@ -204,6 +235,121 @@ async function writeOne(
       ? await verifyOne(entry, onDisk, backend, staged === undefined ? 'unchanged' : staged)
       : undefined,
   };
+}
+
+/**
+ * Save a raw photograph's location as an XMP sidecar beside it.
+ *
+ * Deliberately not merged into `writeOne`'s body. Almost nothing is shared: no file is read, no
+ * bytes are spliced, the destination is the photograph's own folder rather than the copy folder,
+ * the tag set is XMP-only, and the verification asks a different question. Threading all of that
+ * through the JPEG path as conditionals would make the one write path that has been carefully
+ * measured harder to read, for no gain.
+ */
+async function writeSidecarFor(
+  session: Session,
+  entry: PhotoEntry,
+  store: FileStore,
+  backend: MetadataBackend,
+  verify: boolean,
+  runner: BatchRunner | undefined,
+  staged: Coordinates | null | undefined,
+  place: Place | null | undefined,
+): Promise<{
+  warnings: readonly string[];
+  verification: WriteVerification | undefined;
+  location: string | undefined;
+}> {
+  if (!store.writeSidecar) {
+    throw new FileWriteError(entry.ref, 'this store cannot write beside a photograph');
+  }
+  if (!runner) {
+    throw new FileWriteError(
+      entry.ref,
+      'the metadata engine needed for raw sidecars did not load; reload and try again',
+    );
+  }
+
+  /*
+   * Clearing a raw photograph's location means deleting its sidecar, which is not implemented — so
+   * it refuses rather than writing a sidecar asserting 0,0 or an empty one that readers would treat
+   * as authoritative. Removing the file is the correct behaviour and belongs with a confirmation.
+   */
+  if (staged === null) {
+    throw new FileWriteError(
+      entry.ref,
+      `clearing a raw photograph's location means deleting ${sidecarName(entry.ref.name)}; `
+      + 'do that in the file manager for now',
+    );
+  }
+
+  const coordinates = staged ?? entry.existing;
+  if (!coordinates) {
+    throw new FileWriteError(entry.ref, 'no coordinates to write');
+  }
+
+  const bytes = await writeXmpSidecar(
+    runner,
+    buildSidecarTags(coordinates, place ?? undefined),
+  );
+
+  const name = sidecarName(entry.ref.name);
+  const onDisk = await store.writeSidecar(entry.ref, name, bytes);
+
+  return {
+    warnings: [],
+    location: onDisk.location,
+    verification: verify ? await verifySidecar(entry, onDisk, backend, coordinates) : undefined,
+  };
+}
+
+/**
+ * Read the sidecar back off disk and check the coordinates survived.
+ *
+ * A separate check from `verifyOne`, because the question is different. `verifyWrittenLocation`
+ * reads `Composite:GPSLatitude`, which an XMP file does not have — the value *is*
+ * `XMP:GPSLatitude`, so there is nothing for ExifTool to compose it from and the comparison would
+ * fail on a perfectly good sidecar.
+ *
+ * The structural-warning half of the usual verification has no counterpart here and needs none.
+ * That half exists to catch maker notes wrecked by a rewrite; nothing was rewritten, and the file
+ * is a few hundred bytes of XML that did not exist before.
+ */
+async function verifySidecar(
+  entry: PhotoEntry,
+  onDisk: WrittenFile,
+  backend: MetadataBackend,
+  expected: Coordinates,
+): Promise<WriteVerification> {
+  const after = await onDisk.read();
+  const problems: string[] = [];
+
+  try {
+    const tags = await readTags(backend, after, sidecarName(entry.ref.name), [
+      'XMP:GPSLatitude', 'XMP:GPSLongitude',
+    ]);
+
+    const latitude = Number(tags['XMP:GPSLatitude']);
+    const longitude = Number(tags['XMP:GPSLongitude']);
+
+    // The same tolerance the JPEG path uses: a rounding difference is not a wrong answer.
+    if (!closeEnough(latitude, expected.latitude) || !closeEnough(longitude, expected.longitude)) {
+      problems.push(
+        `reads back as ${latitude}, ${longitude} rather than `
+        + `${expected.latitude}, ${expected.longitude}`,
+      );
+    }
+  } catch (error) {
+    problems.push(error instanceof Error ? error.message : String(error));
+  }
+
+  return { ok: problems.length === 0, problems, warnings: [] };
+}
+
+const VERIFY_TOLERANCE = 1e-6;
+
+function closeEnough(got: number, want: number): boolean {
+  return Number.isFinite(got) && Math.abs(got - want) < VERIFY_TOLERANCE;
 }
 
 /**

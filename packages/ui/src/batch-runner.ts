@@ -45,6 +45,8 @@ interface ZeroperlModule {
 interface VirtualFileSystem {
   addFile(path: string, contents: string | Uint8Array): void;
   removeFile(path: string): void;
+  /** Reads a node back, which is how a file ExifTool *wrote* is collected. */
+  lookup(path: string): { type: string; content?: Uint8Array | Blob } | null;
 }
 
 interface PerlInterpreter {
@@ -117,15 +119,23 @@ class ZeroperlBatchRunner implements BatchRunner {
     this.#script = script;
   }
 
-  async run(files: readonly BatchFile[], args: readonly string[]): Promise<BatchRun> {
-    const mine = this.#queue.then(() => this.#runExclusive(files, args));
+  async run(
+    files: readonly BatchFile[],
+    args: readonly string[],
+    outputs?: readonly string[],
+  ): Promise<BatchRun> {
+    const mine = this.#queue.then(() => this.#runExclusive(files, args, outputs));
     // Swallowed on the queue only; `mine` still rejects for the caller. Without this a single
     // failed batch would poison every later one.
     this.#queue = mine.catch(() => undefined);
     return mine;
   }
 
-  async #runExclusive(files: readonly BatchFile[], args: readonly string[]): Promise<BatchRun> {
+  async #runExclusive(
+    files: readonly BatchFile[],
+    args: readonly string[],
+    outputs?: readonly string[],
+  ): Promise<BatchRun> {
     const { perl, files: fs } = await this.#start();
 
     /*
@@ -142,6 +152,17 @@ class ZeroperlBatchRunner implements BatchRunner {
     this.#err = '';
     await perl.reset();
 
+    /*
+     * Clear any output path before the run, not only after it.
+     *
+     * ExifTool refuses to overwrite an existing `-o` target, so a leftover from an earlier run
+     * would make every later sidecar fail — and the failure would be a bare non-zero exit with the
+     * *previous* photograph's file still sitting there, which reads as a stale success.
+     */
+    for (const path of outputs ?? []) {
+      try { fs.removeFile(path); } catch { /* not there, which is the normal case */ }
+    }
+
     try {
       for (const [index, file] of files.entries()) {
         fs.addFile(paths[index] as string, file.bytes);
@@ -149,6 +170,14 @@ class ZeroperlBatchRunner implements BatchRunner {
 
       const result = await perl.runFile('/exiftool', [...args, ...paths]);
       perl.flush();
+
+      const produced = new Map<string, Uint8Array>();
+      for (const path of outputs ?? []) {
+        const node = fs.lookup(path);
+        if (node?.type === 'file' && node.content instanceof Uint8Array) {
+          produced.set(path, node.content);
+        }
+      }
 
       /*
        * `exitCode` is reported, not judged. ExifTool exits 1 when *any* file in the batch failed
@@ -161,9 +190,10 @@ class ZeroperlBatchRunner implements BatchRunner {
         stderr: this.#err,
         paths,
         exitCode: result.exitCode,
+        ...(outputs?.length ? { produced } : {}),
       };
     } finally {
-      for (const path of paths) {
+      for (const path of [...paths, ...(outputs ?? [])]) {
         try { fs.removeFile(path); } catch { /* never mounted, or already gone */ }
       }
     }

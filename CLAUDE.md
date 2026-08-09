@@ -425,6 +425,52 @@ and a clear leaves nothing behind.
 **It is the only feature that needs the network**, and the panel says so before the button —
 including that it sends coordinates and never photographs.
 
+### Raw goes in a sidecar, and the raw file is never opened for writing
+
+`raw.ts` and `xmp-sidecar.ts`. The ARW is never read, copied or written — the sidecar is built from
+the tags alone, so it costs one ExifTool invocation and no I/O whatever the size of the file it
+describes. A file created from nothing cannot be corrupted, which is the whole argument: exiv2
+wrecks Sony ARW writing GPS, and that is why exiv2 is banned here.
+
+- **`DSC01234.ARW` → `DSC01234.xmp`, the extension replaced.** The Adobe convention, which is what
+  Lightroom, Bridge, Camera Raw, Capture One and GeoSetter look for. The other live convention
+  appends (`DSC01234.ARW.xmp`) and is what darktable, RawTherapee and digiKam default to; they are
+  mutually exclusive and the user chose Lightroom. Its price is `sidecarCollision`: a RAW+JPEG pair
+  shares one basename and therefore one sidecar, which is what Lightroom expects and still worth
+  being able to notice.
+- **XMP has no `GPSLatitudeRef`.** The hemisphere is inside the value — `33,52.128S`. Passing the
+  EXIF ref tags earns `Sorry, XMP:GPSLatitudeRef doesn't exist or isn't writable`, and `classify`
+  treats unrecognised stderr as fatal, so it would fail every sidecar write. Give ExifTool signed
+  decimals under `-n` and it writes the letter itself.
+- **The wrapper's write path cannot make one.** `writeMetadata` always appends an input file and
+  always names its output `<uuid>.tmp` — and the *extension* is what tells ExifTool to produce an
+  XMP. So this goes through the batch runner, which names its own output and reads the produced file
+  back out of the virtual filesystem. `BatchRunner.run` gained an `outputs` argument for it.
+- **Clear the output path before the run, not only after.** ExifTool refuses to overwrite an
+  existing `-o` target, so a leftover would fail every later sidecar while the *previous*
+  photograph's file sat there looking like a result.
+- **Judged on the document, not the exit code.** A tag ExifTool declines still produces a file, and
+  a sidecar quietly missing its coordinates is worse than a failed write — it leaves something
+  plausible on disk and reports success.
+- **The sidecar goes beside the raw file, never into `geotagged/`.** Nothing copies the ARW, so a
+  sidecar in the output folder would sit alone where no reader will look. That needs the
+  photograph's folder, so **raw can only be saved in folder mode** — `showOpenFilePicker` gives no
+  access to a parent, and `writeSidecar` refuses with that explanation rather than writing somewhere
+  useless.
+- **Verified differently from a JPEG.** `verifyWrittenLocation` reads `Composite:GPSLatitude`, which
+  an XMP does not have — the value *is* `XMP:GPSLatitude`, so there is nothing to compose it from
+  and the check would fail on a perfectly good sidecar. `verifySidecar` compares the XMP tags. The
+  structural-warning half has no counterpart and needs none: nothing was rewritten.
+
+`npm run xmp --workspace spike` proves it against **native ExifTool** — 10 checks, 0 failures — and
+the same path was run in a browser: a 902-byte sidecar reading back with the hemisphere intact,
+`photoshop:City`, `Iptc4xmpCore:CountryCode` and `exif:GPSLatitude` in their proper namespaces.
+
+**Not yet verified: reading metadata *out* of an ARW**, because there is no ARW in `spike/fixtures/`.
+The date, any existing coordinates and the thumbnail all come from `readTagsAndThumbnail` over a
+1MB head, and ARW is TIFF rather than JPEG — `buildHeaderStub` does not apply, and a Sony preview
+may live past that head. Drop one real ARW into `spike/fixtures/` and this can be settled.
+
 ### Three small things that carry their weight
 
 - **Unplaced.** `unplacedPhotos` and one button. A match that places 38 of 45 leaves seven

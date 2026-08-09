@@ -97,6 +97,7 @@ import {
   toThumbnailUrls,
   type LoadProgress,
 } from './load-photos.ts';
+import { createBatchRunner } from './batch-runner.ts';
 import { saveSession, type SaveOutcome, type SaveProgress } from './save.ts';
 import { loadViewMode, saveViewMode, type ViewMode } from './view-mode.ts';
 
@@ -420,6 +421,8 @@ export function App() {
     try {
       const { outcomes: results, savedNames } = await saveSession(
         session, store, await getBackend(), setSaving,
+        // Only raw photographs need it, and it is the same instance the loader already built.
+        { runner: await createBatchRunner() },
       );
       setOutcomes(results);
       setSession((current) => (current ? markSaved(current, savedNames) : current));
