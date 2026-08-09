@@ -32,32 +32,22 @@ import { Wordmark } from './Wordmark.tsx';
  * need this — a clock is set once and drifts slowly. Open, it is the only thing on screen worth
  * looking at, which is right for something you are about to point a camera at.
  */
-function ClockSyncOffer() {
-  const [open, setOpen] = useState(false);
-
+function ClockSyncPanel() {
   return (
-    <div className={`landing-sync ${open ? 'open' : ''}`}>
-      <button type="button" className="link" onClick={() => setOpen((was) => !was)}>
-        {open ? 'Hide the clock code' : 'Camera clock out of step? Photograph this first…'}
-      </button>
+    <div className="landing-sync open">
+      <p className="note">
+        <strong>Do this while the card is still in the camera.</strong> Photograph the code below,
+        then carry on as normal — the photo of it comes in with the rest, and Snapmapper reads the
+        exact time out of the image. Nothing is typed and nothing can be misread.
+      </p>
 
-      {open && (
-        <div className="landing-sync-body">
-          <p className="note">
-            <strong>Do this while the card is still in the camera.</strong> Photograph the code
-            below, then carry on as normal — the photo of it comes in with the rest, and Snapmapper
-            reads the exact time out of the image. Nothing is typed and nothing can be misread.
-          </p>
+      <QrClock />
 
-          <QrClock />
-
-          <p className="note">
-            Later, in <strong>Camera clock</strong>, select that one photo and press{' '}
-            <strong>Read clock from photo</strong>. It only needs doing again if you change the
-            camera&rsquo;s clock.
-          </p>
-        </div>
-      )}
+      <p className="note">
+        Later, in <strong>Camera clock</strong>, select that one photo and press{' '}
+        <strong>Read clock from photo</strong>. It only needs doing again if you change the
+        camera&rsquo;s clock.
+      </p>
     </div>
   );
 }
@@ -75,6 +65,8 @@ export function Landing({
   readonly onPickPhotos: () => void;
   readonly onPickFolder: () => void;
 }) {
+  const [showClock, setShowClock] = useState(false);
+
   return (
     <div className="landing">
       <div className="landing-hero">
@@ -107,11 +99,50 @@ export function Landing({
           Picking the photos you want is the quick way, and the right one for a camera card.
           Opening a folder reads every photo in it — fine for a small one.
         </p>
-
-        <ClockSyncOffer />
       </div>
 
       <ol className="landing-steps">
+        {/*
+          The clock code sits *above* the numbered steps and is deliberately not one of them.
+
+          It genuinely comes first — it has to be photographed while the card is still in the
+          camera, which is before anything else can happen — but it is optional, and a reader
+          counting steps to judge how much work this is deserves the answer "three". So it keeps its
+          place in the sequence and stays outside the numbering, which is what an unnumbered marker
+          in the same column says without a word.
+
+          It was a link under the hero and the report was that it "is not obvious", which it was
+          not: a link-styled control among real buttons reads as a footnote. It is a button now,
+          and it is where the order it belongs in is visible.
+        */}
+        <li className="optional">
+          <strong>Sync the camera clock <em>— optional</em></strong>
+          <span>
+            Only if the camera&rsquo;s clock is off. Do it now, while the card is still in the
+            camera, and it will not need doing again until you change that clock.
+          </span>
+
+          {/*
+            Outside the description, not inside it.
+
+            `.landing-steps span` is dimmed to 0.75 so a description sits quieter than its heading,
+            and `opacity` compounds down the tree — a child cannot undo an ancestor's. Nested in
+            there the code rendered at 0.75 against the page, measured, which is the wrong thing to
+            do to the one element on screen whose job is to be read by a camera rather than by a
+            person.
+          */}
+          <div className="landing-step-do">
+            <button
+              type="button"
+              aria-expanded={showClock}
+              onClick={() => setShowClock((was) => !was)}
+            >
+              {showClock ? 'Hide the clock code' : 'Show the clock code…'}
+            </button>
+            {showClock && <ClockSyncPanel />}
+          </div>
+        </li>
+
         <li>
           <strong>Pick your photos</strong>
           <span>Straight off the camera card, if you like. Nothing is copied anywhere yet.</span>
