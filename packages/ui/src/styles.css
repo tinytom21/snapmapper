@@ -135,6 +135,26 @@ header {
 
 header h1 { margin: 0 0.5rem 0 0; font-weight: 400; font-size: 1rem; }
 
+/*
+ * The mark is the way home, so it has to be a real button — not a heading somebody discovers is
+ * clickable. Stripped of every button affordance except the ones that matter: a pointer, a hover
+ * lift, and a focus ring, because it is keyboard-reachable like anything else.
+ */
+button.home {
+  display: flex;
+  align-items: center;
+  background: none;
+  border: 0;
+  padding: 0.15rem;
+  margin: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+button.home:hover { opacity: 0.75; background: none; }
+
+
 /* --- The mark and the wordmark -------------------------------------------
    Weight carries it rather than colour: Snap at 700 against mapper at 400. A second colour would
    have meant a second accent, and the palette allows one. */
@@ -1050,7 +1070,15 @@ button.stacked .sub {
   .spacer { display: none; }
   header button { padding: 0.5rem 0.8rem; }
 
-  header.working h1 { display: none; }
+  /*
+   * The mark stays at every width now, and no longer hides once photos are open.
+   *
+   * It used to be `display: none` here, because the full wordmark plus the labelled buttons needed
+   * 436px of a 375px screen. The answer was never to remove the way home — it is to draw less of
+   * it: below the breakpoint `App` renders the pin alone, which is the part people recognise, and
+   * drops the word.
+   */
+  header.working h1 { margin-right: 0.35rem; }
 
   /*
    * On a genuinely small phone, Redo gives up its label first.

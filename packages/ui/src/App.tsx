@@ -61,7 +61,7 @@ import { Sidebar } from './Sidebar.tsx';
 import { PhotoMap, type MapPin } from './PhotoMap.tsx';
 import { PhotoPreview } from './PhotoPreview.tsx';
 import { ActionMenu } from './ActionMenu.tsx';
-import { Wordmark } from './Wordmark.tsx';
+import { Mark, Wordmark } from './Wordmark.tsx';
 import { describeAction, explainAction } from './describe-action.ts';
 import { Landing } from './Landing.tsx';
 import { UPDATE_READY_EVENT, activateUpdate } from './register-sw.ts';
@@ -207,6 +207,53 @@ export function App() {
     store.setDestination(next);
     setDestinationState(next);
   }, []);
+
+  /**
+   * Back to the start screen, ending the session.
+   *
+   * **It asks first when anything is staged.** Placements live in memory until Save, so this is
+   * one of the few controls in the app that can destroy work — and it sits in the corner where
+   * every interface in the world puts a harmless "go home", which is precisely why it needs the
+   * guard. Nothing warns when there is nothing to lose.
+   *
+   * The photographs are untouched: this closes the session, it does not delete anything. What goes
+   * is the session, the folder, the loaded track and the last set of results.
+   *
+   * Three things deliberately survive, because they are settings rather than session state: the
+   * view mode, the remembered track folder, and the save destination. Being asked for the logger's
+   * folder again because you tapped the logo would be the opposite of remembering it.
+   *
+   * Thumbnail URLs are revoked here rather than left to the unmount effect — three hundred blobs
+   * held for the life of the page is a real leak on a phone.
+   */
+  const goHome = useCallback(() => {
+    if (session && hasPendingChanges(session)) {
+      const staged = pendingPhotos(session).length;
+      const sure = window.confirm(
+        `${staged} photo(s) have changes that have not been saved. `
+        + 'Starting again will discard them. Continue?',
+      );
+      if (!sure) return;
+    }
+
+    setThumbnails((previous) => {
+      revokeThumbnailUrls(previous);
+      return new Map();
+    });
+    setSession(null);
+    setFolder(null);
+    setTrack(null);
+    setTrackFile(null);
+    setOutcomes(null);
+    setError(null);
+    setNotice(null);
+    setPreview(null);
+    setReviewing(null);
+    setLastSearch(null);
+    setLastGeocode(null);
+    setMenuOpen(false);
+    setPane('photos');
+  }, [session]);
 
   /**
    * The WASM backend, loaded once and lazily.
@@ -822,7 +869,37 @@ export function App() {
         and it is still on the landing screen, the browser tab and the home-screen icon.
       */}
       <header className={narrow && session ? 'working' : ''}>
-        <h1><Wordmark /></h1>
+        {/*
+          The mark is always in the top left, and it is always the way back.
+
+          It used to vanish once photos were open on a phone, because the full wordmark plus the
+          labelled buttons needed 436px of a 375px screen. The fix is not to hide it but to shrink
+          it: below the breakpoint only the pin is drawn, which is the part people recognise, and
+          the word is dropped instead. `header.working h1` no longer hides anything.
+
+          Going home discards a session, so it asks first when there is anything staged — the whole
+          premise of this app is that unsaved work lives in memory until Save, and a stray tap on
+          the logo is exactly the sort of thing that should not be able to throw fifty placements
+          away.
+        */}
+        <h1>
+          {/*
+            `aria-label` rather than a visually-hidden span. The wordmark renders the word
+            "Snapmapper" as real text, so a hidden label *beside* it is announced twice —
+            "Snapmapper, Snapmapper — start again". A label on the button replaces the content
+            rather than adding to it, and covers the narrow case where only the pin is drawn and
+            there is no text at all.
+          */}
+          <button
+            type="button"
+            className="home"
+            onClick={goHome}
+            title="Start again"
+            aria-label="Snapmapper — start again"
+          >
+            {narrow && session ? <Mark size={26} /> : <Wordmark />}
+          </button>
+        </h1>
         {/*
           A horizontally scrolling row rather than a wrapping one. Wrapping put four buttons and a
           folder name onto three lines on a phone, which cost more height than the photo list got.

@@ -923,11 +923,28 @@ offers the name of a different step. A test walks a three-step history down and 
 Labels are one word or a word and a count: measured at 375px, "clock offset" left 15px of slack on
 the header row and overflowed a 320px screen outright. A test caps the length for that reason.
 
-**The wordmark is hidden on a phone once photos are open** (`header.working h1`). With it, the two
-labelled buttons plus *More* needed up to 436px of a 375px screen. The app's name is the least
-useful thing on that row while placing photographs, and it is still on the landing screen, the
-browser tab and the home-screen icon. Below 360px Redo drops its label too, and Undo keeps
-its — Undo is the one reached for after a mis-tap, which is the whole reason the labels exist.
+**The mark is in the top left at every width, and it is the way home.** It used to be hidden once
+photos were open on a phone (`header.working h1 { display: none }`), because the full wordmark plus
+the two labelled buttons and *More* needed up to 436px of a 375px screen. Removing the way back was
+the wrong answer to that; drawing less of it is the right one. Below the breakpoint `App` renders the
+**pin alone** — 31px, against a wordmark several times that — and drops the word. Measured at 320px
+and 375px, with and without it: **the header is 56px either way**, every action button in bounds,
+no sideways scroll. The mark costs nothing.
+
+Clicking it ends the session and returns to the landing screen, and **it asks first when anything is
+staged**. Placements live in memory until Save, so this is one of the few controls that can destroy
+work, and it sits exactly where every interface puts a harmless "go home". The view mode, the
+remembered track folder and the save destination all survive it — they are settings, not session
+state, and being asked for the logger's folder again because you tapped the logo would undo the
+point of remembering it.
+
+Note `aria-label` on the button rather than a visually-hidden span beside the wordmark: the wordmark
+renders "Snapmapper" as real text, so a hidden label is announced *twice*. A label on the button
+replaces the content instead of adding to it, and covers the narrow case where only the pin is drawn
+and there is no text at all.
+
+Below 360px Redo drops its label too, and Undo keeps its — Undo is the one reached for after a
+mis-tap, which is the whole reason the labels exist.
 
 ### Overflow by scrolling is not overflow
 
