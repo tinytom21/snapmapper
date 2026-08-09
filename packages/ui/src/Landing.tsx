@@ -35,17 +35,34 @@ import { Wordmark } from './Wordmark.tsx';
 function ClockSyncPanel() {
   return (
     <div className="landing-sync open">
+      {/*
+        Why, before how.
+
+        The old copy opened with the instruction and never said what it was for, so the honest
+        reaction to it was "my clock is probably fine, skip". It usually is not fine: a camera has
+        no radio and no network, so its clock free-runs and drifts — and if the zone was never
+        changed after a flight, or a battery went flat, it can be hours out. That is what makes a
+        photograph land in the wrong town when a track places it, and it is the thing to say first.
+      */}
       <p className="note">
-        <strong>Do this while the card is still in the camera.</strong> Photograph the code below,
-        then carry on as normal — the photo of it comes in with the rest, and Snapmapper reads the
-        exact time out of the image. Nothing is typed and nothing can be misread.
+        <strong>Your camera&rsquo;s clock is almost certainly a little wrong</strong> — it has no
+        radio to set itself by, so it drifts. A few seconds a week is normal; hours if the time
+        zone was never changed after travelling, or if the battery went flat.
+      </p>
+
+      <p className="note">
+        <strong>Photograph this code and that stops mattering.</strong> Snapmapper reads the exact
+        instant back out of the picture, compares it with what the camera recorded, and corrects
+        every photograph you place from a GPS track by the difference. Nothing is typed, and a
+        misread code fails outright rather than producing a plausible wrong time.
       </p>
 
       <QrClock />
 
       <p className="note">
-        Later, in <strong>Camera clock</strong>, select that one photo and press{' '}
-        <strong>Read clock from photo</strong>. It only needs doing again if you change the
+        Take the photograph now, while the card is still in the camera — then carry on as normal.
+        Once your photos are open, choose <strong>Camera clock</strong>, select this one frame and
+        press <strong>Read clock from photo</strong>. It only needs doing again if you change the
         camera&rsquo;s clock.
       </p>
     </div>
@@ -93,75 +110,55 @@ export function Landing({
           for — so this one takes the accent outline and the wash, which is the loudest a control
           gets here without claiming to be the main action.
         */}
+        {/*
+          Each button says what it takes, so the paragraph explaining it can go.
+
+          There were two of those — one contrasting the ways in, one listing the formats — and
+          between them they said the same thing twice in prose nobody reads while looking for a
+          button. A format belongs on the control it applies to: it is answered at the moment the
+          question is asked, and it cannot drift out of step with what the button actually does.
+        */}
         <div className="landing-actions">
           <button
             type="button"
-            className="feature big"
+            className="feature big stacked"
             aria-expanded={showClock}
             onClick={() => setShowClock((was) => !was)}
           >
-            {showClock ? 'Hide the clock code' : 'Sync the camera clock…'}
+            <span>{showClock ? 'Hide the clock code' : 'Sync the camera clock'}</span>
+            <span className="sub">Cameras drift — one photo fixes it</span>
           </button>
           {canPickFiles && (
-            <button type="button" className="primary big" onClick={onPickPhotos} disabled={busy}>
-              Select photos…
+            <button
+              type="button"
+              className="primary big stacked"
+              onClick={onPickPhotos}
+              disabled={busy}
+            >
+              <span>Select photos…</span>
+              <span className="sub">JPEG only</span>
             </button>
           )}
           {canPickFolder && (
-            <button type="button" className="big" onClick={onPickFolder} disabled={busy}>
-              Open a whole folder…
+            <button type="button" className="big stacked" onClick={onPickFolder} disabled={busy}>
+              <span>Open a whole folder…</span>
+              <span className="sub">JPEG and raw</span>
             </button>
           )}
         </div>
 
         {showClock && <ClockSyncPanel />}
 
-        <p className="landing-hint">
-          Sync the clock <strong>before the card leaves the camera</strong>, if it has drifted.
-          Then: picking the photos you want is the quick way, and the right one for a camera card.
-          Opening a folder reads every photo in it — fine for a small one.
-        </p>
-
-        {/*
-          Which route takes which format, said where the choice is made.
-
-          It is not a detail: raw can only be *saved* from a folder, because its sidecar has to be
-          written next to the file and the file picker gives no access to a parent. Somebody who
-          shoots raw and reaches for the obvious button would otherwise get as far as placing
-          photographs before finding out.
-        */}
-        <p className="landing-formats">
-          <span><strong>JPEG</strong> — either way in.</span>
-          <span>
-            <strong>Raw (.ARW)</strong> — <em>Open a whole folder</em> only. Its location is written
-            to an <code>.xmp</code> sidecar beside the file, which needs the folder; the raw itself
-            is never altered.
-          </span>
-        </p>
       </div>
 
+      {/*
+        Three steps, and the clock is not one of them any more.
+
+        It had a button in the hero *and* an unnumbered entry here, which is one mention too many
+        for something optional — and the two had to agree forever. The button carries it; this list
+        is the shape of the job.
+      */}
       <ol className="landing-steps">
-        {/*
-          The clock code sits *above* the numbered steps and is deliberately not one of them.
-
-          It genuinely comes first — it has to be photographed while the card is still in the
-          camera, which is before anything else can happen — but it is optional, and a reader
-          counting steps to judge how much work this is deserves the answer "three". So it keeps its
-          place in the sequence and stays outside the numbering, which is what an unnumbered marker
-          in the same column says without a word.
-
-          It carries no button of its own. The control is the first one in the hero, where it is
-          hard to miss; a second button doing the same thing further down the page would only raise
-          the question of whether they differ.
-        */}
-        <li className="optional">
-          <strong>Sync the camera clock <em>— optional</em></strong>
-          <span>
-            Only if the camera&rsquo;s clock is off, and only once — but it has to happen while the
-            card is still in the camera, which is why it is up there rather than down here.
-          </span>
-        </li>
-
         <li>
           <strong>Pick your photos</strong>
           <span>Straight off the camera card, if you like. Nothing is copied anywhere yet.</span>

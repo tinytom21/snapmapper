@@ -663,10 +663,19 @@ same height; measured at 48px for all three.
 Contrast, measured off the rendered buttons: **6.88:1 dark, 6.13:1 light** — clear of AA, though
 below the 9:1 the filled accent manages, which is the price of an outline treatment.
 
-**The unnumbered step in the list stays, and carries no button.** It is what says the clock comes
-*first*; `counter-increment: none` keeps it outside the count so the three real steps still read
-1, 2, 3, and without that declaration they silently become 2, 3, 4. A second button doing the same
-job further down the page would only raise the question of whether the two differ.
+**Each button carries its own footnote, and that replaced two paragraphs.**
+`Select photos…` says *JPEG only*, `Open a whole folder…` says *JPEG and raw*, and the clock says
+*Cameras drift — one photo fixes it*. Underneath there had been one paragraph contrasting the two
+ways in and another listing the formats, saying the same thing twice in prose nobody reads while
+looking for a button. A format belongs on the control it applies to: answered where the question is
+asked, and unable to drift out of step with what the button does. The unnumbered clock step in the
+list went with them — a button in the hero *and* an entry in the steps is one mention too many for
+something optional, and the two would have had to agree forever.
+
+**A sub-label's opacity is composited, so measure what is painted.** `button.stacked .sub` sits at
+0.85 rather than the 0.75 used for quiet text elsewhere: at 0.75 the accent-outline button's
+sub-label measured **4.60:1** against a naive reading of 6.88, which is AA for body text by a tenth
+at 12px on the loudest control on screen. At 0.85 the worst case is 5.44:1.
 
 **The code must not be nested inside a step's description.** `.landing-steps span` is dimmed to
 0.75 so a description sits quieter than its heading, and `opacity` compounds down the tree — a

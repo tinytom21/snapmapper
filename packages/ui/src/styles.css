@@ -774,22 +774,38 @@ button.feature:hover:not(:disabled) {
   background: color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
-.landing-hint { font-size: 0.85rem; opacity: 0.6; margin: 0 auto; max-width: 30rem; }
-
-/* What each way in accepts. Two short lines rather than a sentence, so the formats are the thing
-   the eye lands on rather than something buried mid-paragraph. */
-.landing-formats {
-  display: grid;
-  gap: 0.3rem;
-  justify-items: start;
-  text-align: left;
-  max-width: 34rem;
-  margin: 0.9rem auto 0;
-  font-size: 0.85rem;
-  color: var(--dim);
+/*
+ * A button that carries its own footnote — the formats it accepts, or why it exists.
+ *
+ * This replaced two paragraphs under the actions that between them explained the same choice
+ * twice. A format belongs on the control it applies to: it is answered where the question is
+ * asked, and it cannot drift out of step with what the button does.
+ *
+ * The sub-label inherits `currentColor` at reduced opacity rather than taking a colour of its own,
+ * so it stays legible on all three treatments — filled accent, accent outline and plain — without
+ * three separate rules, and cannot repeat the white-on-accent contrast failure.
+ */
+button.stacked {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15rem;
+  line-height: 1.25;
 }
-.landing-formats em { font-style: normal; font-weight: 600; }
-.landing-formats code { font-family: ui-monospace, monospace; }
+button.stacked .sub {
+  font-size: 0.76rem;
+  font-weight: 400;
+  /*
+   * 0.85, not the 0.75 used for quiet text elsewhere.
+   *
+   * Opacity is composited against the button, so the contrast actually painted is far below what
+   * the colour pair suggests: measured at 0.75 the accent-outline button's sub-label came out at
+   * **4.60:1** against a naive reading of 6.88. That passes AA for body text by a tenth, at 12px,
+   * on the loudest control on the screen — too little margin for a palette this project measures
+   * rather than eyeballs. At 0.85 the worst case clears 5:1 and it still reads as secondary.
+   */
+  opacity: 0.85;
+}
 
 /* Photographing the clock code, offered on the way in — see `ClockSyncOffer`.
    Quiet while shut, because most sessions do not need it; a bordered card once open, because then
@@ -836,21 +852,6 @@ button.feature:hover:not(:disabled) {
 }
 .landing-steps strong { font-weight: 600; }
 .landing-steps span { font-size: 0.9rem; opacity: 0.75; }
-
-/* The optional pre-step: in the sequence, outside the numbering.
-   `counter-increment: none` is the load-bearing declaration — without it this would consume a
-   number and the three real steps would read 2, 3, 4. An outlined marker rather than a filled one,
-   because filled is what the numbers use and this is deliberately not one of them. */
-.landing-steps li.optional { counter-increment: none; }
-.landing-steps li.optional::before {
-  content: '▣';
-  background: transparent;
-  border: 1px dashed var(--line-strong);
-  color: var(--dim);
-  font-weight: 400;
-  font-size: 1rem;
-}
-.landing-steps li.optional em { font-style: normal; opacity: 0.6; font-weight: 400; }
 
 /* The code panel sits under the hero actions, where its button is. Centred like the rest of the
    hero, and never wider than the text it sits under. */
