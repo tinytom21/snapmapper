@@ -186,6 +186,47 @@ export function Landing({
         lives under `/snapmapper/`, and a root-relative link would 404 there while working
         perfectly on localhost.
       */}
+      {/*
+        Credit where it is owed, which is mostly not where the licences require it.
+
+        Snapmapper is a thin interface over other people's hard work: the entire metadata engine is
+        ExifTool, and the only reason it runs in a browser at all is that somebody built a Perl
+        interpreter for WebAssembly. Saying so is not a legal obligation — the notices file covers
+        that — it is just true, and the names are verifiable rather than guessed: every handle here
+        comes from the package's own `repository` field.
+      */}
+      <section className="landing-credits">
+        <h3>Built on other people&rsquo;s work</h3>
+        <ul>
+          <li>
+            <a href="https://exiftool.org/">ExifTool</a> by <strong>Phil Harvey</strong> — twenty
+            years of knowing what every camera actually writes. It does all the metadata work here;
+            Snapmapper only decides what to ask it.
+          </li>
+          <li>
+            <a href="https://github.com/6over3/zeroperl">zeroperl</a> and{' '}
+            <a href="https://github.com/6over3/exiftool">@uswriting/exiftool</a> by{' '}
+            <strong>6over3</strong> — a Perl interpreter compiled to WebAssembly, which is the only
+            reason real ExifTool runs in a browser with no server behind it.
+          </li>
+          <li>
+            <a href="https://github.com/maplibre/maplibre-gl-js">MapLibre GL JS</a> by the{' '}
+            <strong>MapLibre</strong> community, and{' '}
+            <a href="https://openfreemap.org">OpenFreeMap</a>, which serves the vector tiles free
+            and without an API key.
+          </li>
+          <li>
+            <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors — the
+            map itself, and the place names, both given away.
+          </li>
+          <li>
+            <a href="https://github.com/cozmo/jsQR">jsQR</a> by <strong>cozmo</strong> and{' '}
+            <a href="https://github.com/soldair/node-qrcode">node-qrcode</a> by{' '}
+            <strong>Ryan Day</strong> — between them, the camera-clock trick.
+          </li>
+        </ul>
+      </section>
+
       <p className="landing-licences">
         Open source. <a href="https://github.com/tinytom21/snapmapper">Source code</a> under the
         Artistic License 2.0, and the{' '}

@@ -1225,3 +1225,24 @@ button.stacked .sub {
   color: var(--dim);
 }
 .landing-licences a { color: inherit; }
+
+/* Credit, given because it is owed rather than because a licence demands it. Quiet enough not to
+   compete with the three buttons, readable enough to be worth putting there. */
+.landing-credits {
+  max-width: 34rem;
+  margin: 2.4rem auto 0;
+  text-align: left;
+  font-size: 0.85rem;
+  color: var(--dim);
+}
+.landing-credits h3 {
+  margin: 0 0 0.6rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.8;
+}
+.landing-credits ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 0.5rem; }
+.landing-credits strong { color: var(--fg); font-weight: 600; }
+.landing-credits a { color: var(--accent); }
