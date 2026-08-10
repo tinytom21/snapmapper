@@ -538,6 +538,36 @@ measured on the painted pixels in the light theme, **4.44:1 at 0.85 and 6.13:1 a
 touch target is the **label**, not the tick box: 40px measured, where growing the box to 24px would
 have made a large square sit in a line of 13px text.
 
+### A deleted output folder is repaired, not reported twelve times
+
+Found in use, immediately: the `geotagged` folder was deleted between sessions and the next save
+failed with `NotFoundError` **once per photograph**, with nothing saying what had happened and no
+way out of it from inside the app.
+
+**A `FileSystemDirectoryHandle` does not survive its directory being deleted**, and there is no way
+back to its parent through the API. So the destination now keeps the folder it was *derived* from,
+and `ensureDestination` runs before a save: probe, then remake it in that parent, then in the
+photographs' own folder (folder mode — read from moments ago, certainly alive), and only then give
+up to `copy-pending`, which is a question the destination bar already knows how to ask. It never
+falls back to overwriting the originals; that is the one outcome somebody who asked for copies
+would least want.
+
+Three details:
+
+- **Enumerating is the probe.** `getFileHandle(name)` throws `NotFoundError` whether the folder is
+  missing *or* merely does not contain that file, so it cannot tell them apart. `entries().next()`
+  is lazy, costs nothing on a live folder, and throws on a dead one.
+- **`restoreOutputFolder` probes too, and forgets a dead handle.** `prepareOutput` reads the *name*
+  off the handle and, for a folder already called `geotagged`, returns without touching the disk —
+  so a deleted folder restored as a completely convincing destination on every launch and only
+  failed at the moment of saving.
+- **`listOutputNames` swallows it.** Load time is the wrong moment to raise this, and it produced
+  an alarming red banner about an operation nobody had asked for, over a card just opened. "No
+  earlier copies were found" is both true and useful there.
+
+The folder-called-`geotagged` case has no parent to remake it in — that is the one that ends in
+being asked, and it is the case that actually occurred.
+
 **Known and accepted: choosing *use the copy* is asked again next session.** The original is never
 written, so only changing the copy can erase a disagreement, and that answer deliberately changes
 nothing on disk. It is rare in the workflow this is for — an A6400 has no GPS receiver, so its

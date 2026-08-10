@@ -20,12 +20,12 @@ project needs does not travel through git, the photo fixtures above all.
 | Path | State |
 |---|---|
 | `packages/core` | Platform-agnostic logic. **346 tests, `tsc` clean.** `gps`, `time`, `jpeg` (the splice), `exif-tags`, `exiftool` (write path), `exiftool-wasm`, `session` (staged edits, undo, named actions), `clock-sync`, `gpx` (track parsing and matching), `google-timeline` + `track-file` (Timeline import), `exiftool-batch` (batched reads), `verify-write`, `prior-location` (earlier sessions' work), `storage`. |
-| `packages/ui` | React 19 + MapLibre 5 on Vite 7. **193 tests.** `browser-file-store.ts` is the only file behind `FileStore`; `batch-runner.ts` is the only other one tied to the build, since it takes the ExifTool script from a Vite virtual module. |
+| `packages/ui` | React 19 + MapLibre 5 on Vite 7. **198 tests.** `browser-file-store.ts` is the only file behind `FileStore`; `batch-runner.ts` is the only other one tied to the build, since it takes the ExifTool script from a Vite virtual module. |
 | `packages/shells` | Does not exist and is not needed. There is no native shell and no reason for one. |
 | `spike/` | Phase 0, done. Still where the write path is checked against a **native** ExifTool: `npm run splice --workspace spike` → 184 checks. |
 | `docs/PLAN.md` | Historical. Useful for intent, wrong in places. |
 
-**539 tests, `tsc` clean, production build succeeds.**
+**544 tests, `tsc` clean, production build succeeds.**
 
 ```bash
 npm test && npm run typecheck
@@ -60,7 +60,7 @@ was found:
 
 ## Deploying
 
-**Push to `main` and it ships.** `.github/workflows/deploy.yml` typechecks, runs all 539 tests,
+**Push to `main` and it ships.** `.github/workflows/deploy.yml` typechecks, runs all 544 tests,
 builds and publishes to GitHub Pages; a failing test blocks the deploy. About two minutes.
 
 The base path comes from the repository name, so renaming the repo needs no edit. A Pages project
@@ -80,7 +80,9 @@ a *"A new version is ready"* banner rather than leaving it a mystery.
 - **File modification dates do not matter to the user**, which removed the last argument for a
   native desktop build.
 - **Copies by default**, into a `geotagged` folder. The originals are never opened for writing, which
-  also removes the per-file permission prompt.
+  also removes the per-file permission prompt. **A destination folder deleted between sessions is
+  remade before the next save**, or the question is asked again — a dead directory handle used to
+  fail once per photograph with `NotFoundError` and no way out. See CLAUDE.md.
 - **Every save is verified** by reading the file back — coordinates *and* the absence of a structural
   warning. A wrecked file still reports perfect coordinates; that is how `piexifjs` looked from
   outside.

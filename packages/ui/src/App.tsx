@@ -687,6 +687,30 @@ export function App() {
     if (!session) return;
     setError(null);
     setOutcomes(null);
+
+    /*
+     * Check the destination is still there before writing a single byte.
+     *
+     * A folder chosen last week can be deleted in between — tidying up `geotagged` is an ordinary
+     * thing to do — and the handle does not survive it. Without this the save proceeds and fails
+     * once per photograph with `NotFoundError`, which says nothing about what went wrong and
+     * offers no way out. `ensureDestination` remakes the folder where it can, silently, and
+     * otherwise hands back `copy-pending` so the destination bar asks the question properly.
+     *
+     * `folder?.directory` is offered as the fallback because in folder mode the photographs' own
+     * folder was read from moments ago and is certainly alive.
+     */
+    const ready = await store.ensureDestination(folder?.directory);
+    if (ready !== destination) applyDestination(ready);
+    if (ready.kind === 'copy-pending') {
+      setError(
+        `The ${OUTPUT_FOLDER_NAME} folder is no longer there, and could not be remade where it `
+        + 'was. Choose where the copies should go and save again — nothing has been written and '
+        + 'no work has been lost.',
+      );
+      return;
+    }
+
     setSaving({ done: 0, total: pendingPhotos(session).length, current: '' });
 
     try {
@@ -702,7 +726,7 @@ export function App() {
     } finally {
       setSaving(null);
     }
-  }, [session, getBackend]);
+  }, [session, getBackend, folder, destination, applyDestination]);
 
   /**
    * Read the clock code out of a reference photograph.

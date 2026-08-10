@@ -97,7 +97,24 @@ export type SaveDestination =
    * which would be the opposite of what was asked for.
    */
   | { readonly kind: 'copy-pending' }
-  | { readonly kind: 'copy'; readonly directory: FileSystemDirectoryHandle; readonly label: string };
+  | {
+    readonly kind: 'copy';
+    readonly directory: FileSystemDirectoryHandle;
+    readonly label: string;
+    /**
+     * The folder `directory` was derived from, kept so the output folder can be remade.
+     *
+     * A `FileSystemDirectoryHandle` does not survive its directory being deleted: every operation
+     * on it then throws `NotFoundError`, and there is no way back to its parent through the API.
+     * Somebody who tidies up by deleting `geotagged` between sessions would otherwise be left with
+     * a destination that cannot be written to and cannot be repaired — twelve `NotFoundError`s at
+     * the moment of saving, which is exactly what happened.
+     *
+     * Absent when the chosen folder *is* the output folder, because then there is no parent to
+     * hold; that case recovers by asking instead. See `ensureDestination`.
+     */
+    readonly parent?: FileSystemDirectoryHandle;
+  };
 
 /**
  * Above this many JPEGs, a folder is not opened without asking.
@@ -243,6 +260,29 @@ export interface BrowserFileStore extends FileStore {
    * the original *is* the copy, and its coordinates arrived with the ordinary metadata read.
    */
   listOutputNames(): Promise<ReadonlySet<string>>;
+
+  /**
+   * Check the output folder is still there, and remake it if it is not.
+   *
+   * Called immediately before saving, because a destination chosen last week may not exist today:
+   * deleting `geotagged` is an ordinary bit of tidying, and a `FileSystemDirectoryHandle` does not
+   * survive it. Every operation on the dead handle throws `NotFoundError`, so without this the
+   * failure arrives once per photograph at the moment of writing — twelve identical errors, none
+   * of them saying what to do, and no way out of it from inside the application.
+   *
+   * Recovery, in order of how little it disturbs anyone:
+   *
+   *   1. The folder is fine. Nothing happens.
+   *   2. Remake it inside the folder it was derived from — no prompt, because the grant on that
+   *      folder already covers creating things inside it.
+   *   3. `fallbackParent`, which is how folder mode offers the photographs' own folder: it was
+   *      read from moments ago, so it is certainly alive.
+   *   4. Give up and return to `copy-pending`, which is a question the destination bar knows how
+   *      to ask. Never a silent fall back to overwriting the originals.
+   *
+   * The result is stored, so the interface and the next save both see it.
+   */
+  ensureDestination(fallbackParent?: FileSystemDirectoryHandle): Promise<SaveDestination>;
 
   /**
    * The first bytes of a file in the output folder, by name.
@@ -616,6 +656,22 @@ export function createBrowserFileStore(): BrowserFileStore {
       const remembered = await rememberedFolder('output-folder');
       if (!remembered || remembered.permission !== 'granted') return undefined;
 
+      /*
+       * Confirm the folder is still on disk before reporting it as the destination.
+       *
+       * `prepareOutput` reads the name off the handle and, for a folder already called
+       * `geotagged`, returns without touching the disk at all — so a folder deleted since it was
+       * chosen restores as a perfectly convincing destination, and only fails at the moment of
+       * saving. Asked here, the answer is simply that there is no remembered folder, and the
+       * destination bar asks for one.
+       */
+      try {
+        await remembered.handle.entries().next();
+      } catch {
+        await forgetFolder('output-folder');
+        return undefined;
+      }
+
       return prepareOutput(remembered.handle);
     },
 
@@ -683,10 +739,62 @@ export function createBrowserFileStore(): BrowserFileStore {
       // In-place and copy-pending both have nothing to list: no second file exists yet.
       if (destination.kind !== 'copy') return names;
 
-      for await (const [name, handle] of destination.directory.entries()) {
-        if (handle.kind === 'file') names.add(name);
+      try {
+        for await (const [name, handle] of destination.directory.entries()) {
+          if (handle.kind === 'file') names.add(name);
+        }
+      } catch {
+        /*
+         * The folder has been deleted since it was chosen. That is a real problem and it is
+         * reported at *save* time, where it can be repaired — see `ensureDestination`. Here the
+         * honest answer is simply that no earlier copies were found, which is true.
+         *
+         * It used to propagate, and the result was an alarming red banner about an operation
+         * nobody had asked for, at the moment of opening a card.
+         */
       }
       return names;
+    },
+
+    async ensureDestination(
+      fallbackParent?: FileSystemDirectoryHandle,
+    ): Promise<SaveDestination> {
+      if (destination.kind !== 'copy') return destination;
+
+      /*
+       * Enumerating is the probe, and it has to be an operation that touches the directory itself.
+       * `getFileHandle` for some name throws `NotFoundError` whether the folder is missing or
+       * merely does not contain that file, so it cannot tell the two apart. Asking for the first
+       * entry costs nothing on a folder that exists — the iterator is lazy — and throws on one
+       * that does not.
+       */
+      try {
+        await destination.directory.entries().next();
+        return destination;
+      } catch {
+        // Gone. Fall through and try to put it back.
+      }
+
+      for (const parent of [destination.parent, fallbackParent]) {
+        if (!parent) continue;
+        try {
+          const remade = await prepareOutput(parent);
+          destination = remade;
+          return remade;
+        } catch {
+          // That folder has been deleted too, or the grant has lapsed. Try the next.
+        }
+      }
+
+      /*
+       * Forgotten as well as abandoned. A remembered handle to a folder that no longer exists is
+       * restored happily on the next launch — `prepareOutput` reads the *name* off the handle and
+       * never touches the disk — so the destination bar would go on naming a folder that is not
+       * there until the next save failed. Forgetting it means the question is asked once.
+       */
+      await forgetFolder('output-folder');
+      destination = { kind: 'copy-pending' };
+      return destination;
     },
 
     async readOutputHead(name: string, maxBytes: number): Promise<Uint8Array | undefined> {
@@ -786,7 +894,7 @@ async function prepareOutput(chosen: FileSystemDirectoryHandle): Promise<SaveDes
   }
 
   const directory = await chosen.getDirectoryHandle(OUTPUT_FOLDER_NAME, { create: true });
-  return { kind: 'copy', directory, label: `${chosen.name}/${OUTPUT_FOLDER_NAME}` };
+  return { kind: 'copy', directory, label: `${chosen.name}/${OUTPUT_FOLDER_NAME}`, parent: chosen };
 }
 
 /**

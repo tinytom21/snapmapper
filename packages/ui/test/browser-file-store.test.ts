@@ -352,6 +352,124 @@ describe('choosing where copies go', () => {
   });
 });
 
+/**
+ * A folder that can be deleted out from under its handle, as a real one can be.
+ *
+ * Every operation on a `FileSystemDirectoryHandle` whose directory has gone throws
+ * `NotFoundError`, and there is no way back to the parent through the API — which is what turned
+ * "I tidied up and deleted geotagged" into twelve identical write failures with no way out.
+ */
+function deletableDirectory(name: string) {
+  let alive = true;
+  const created: string[] = [];
+  const children: { remove: () => void }[] = [];
+
+  const handle = {
+    kind: 'directory' as const,
+    name,
+    async *entries(): AsyncGenerator<[string, unknown]> {
+      if (!alive) throw new DOMException('gone', 'NotFoundError');
+      // An empty folder that exists must not look like one that does not.
+    },
+    async getDirectoryHandle(child: string) {
+      if (!alive) throw new DOMException('gone', 'NotFoundError');
+      created.push(child);
+      const made = deletableDirectory(child);
+      children.push(made);
+      return made.handle;
+    },
+    async queryPermission() { return 'granted'; },
+    async requestPermission() { return 'granted'; },
+  } as unknown as FileSystemDirectoryHandle;
+
+  // Deleting a folder deletes what is inside it. Without cascading, a test that removes the
+  // parent leaves the child handle answering happily, which is not a filesystem anyone has.
+  const remove = () => {
+    alive = false;
+    for (const child of children) child.remove();
+  };
+
+  return { handle, created, remove, children };
+}
+
+describe('an output folder that has been deleted', () => {
+  async function chooseInto(parentName: string) {
+    const parent = deletableDirectory(parentName);
+    (globalThis as Record<string, unknown>).showDirectoryPicker = async () => parent.handle;
+    const store = createBrowserFileStore();
+    const chosen = await store.pickOutputFolder();
+    if (chosen) store.setDestination(chosen);
+    return { store, parent };
+  }
+
+  it('leaves a healthy destination completely alone', async () => {
+    const { store } = await chooseInto('100MSDCF');
+    const before = store.getDestination();
+
+    assert.equal((await store.ensureDestination()).kind, 'copy');
+    assert.equal(store.getDestination(), before);
+  });
+
+  it('remakes it inside the folder it was chosen in, with no prompt', async () => {
+    // The common case, and it should be invisible: the grant on the chosen folder already covers
+    // creating things inside it, so nothing needs to be asked.
+    const { store, parent } = await chooseInto('100MSDCF');
+    assert.deepEqual(parent.created, ['geotagged']);
+
+    // Delete the geotagged folder, as somebody tidying up would.
+    parent.children[0]?.remove();
+
+    const repaired = await store.ensureDestination();
+    assert.equal(repaired.kind, 'copy');
+    assert.deepEqual(parent.created, ['geotagged', 'geotagged']);
+  });
+
+  it('falls back to the folder the photographs came from', async () => {
+    // Folder mode's escape hatch: that folder was read from moments ago, so it is certainly alive.
+    const { store, parent } = await chooseInto('Pictures');
+    parent.remove();
+
+    const photos = deletableDirectory('100MSDCF');
+    const repaired = await store.ensureDestination(photos.handle);
+
+    assert.equal(repaired.kind, 'copy');
+    assert.deepEqual(photos.created, ['geotagged']);
+  });
+
+  it('asks again rather than quietly overwriting the originals', async () => {
+    /*
+     * The case the user hit: a folder *called* `Geotagged` was chosen directly, so there is no
+     * parent to remake it in, and the files were picked so there is no photograph folder either.
+     * Returning to `copy-pending` is what puts the question back in the destination bar; falling
+     * back to writing over the originals would be the opposite of what was asked for.
+     */
+    const chosen = deletableDirectory('Geotagged');
+    (globalThis as Record<string, unknown>).showDirectoryPicker = async () => chosen.handle;
+    const store = createBrowserFileStore();
+    const picked = await store.pickOutputFolder();
+    if (picked) store.setDestination(picked);
+    assert.deepEqual(chosen.created, [], 'a folder already named geotagged is used directly');
+
+    chosen.remove();
+
+    assert.equal((await store.ensureDestination()).kind, 'copy-pending');
+    assert.equal(store.getDestination().kind, 'copy-pending');
+  });
+
+  it('reports no earlier copies rather than throwing, when the folder is gone', async () => {
+    // At load time this is not the moment to raise it — and it used to produce an alarming red
+    // banner about an operation nobody had asked for, over a card that had just been opened.
+    const chosen = deletableDirectory('Geotagged');
+    (globalThis as Record<string, unknown>).showDirectoryPicker = async () => chosen.handle;
+    const store = createBrowserFileStore();
+    const picked = await store.pickOutputFolder();
+    if (picked) store.setDestination(picked);
+    chosen.remove();
+
+    assert.equal((await store.listOutputNames()).size, 0);
+  });
+});
+
 describe('adoptFolder', () => {
   /*
    * Raw picked one file at a time has no parent — `showOpenFilePicker` gives none — and a sidecar
