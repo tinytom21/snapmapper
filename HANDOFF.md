@@ -20,12 +20,12 @@ project needs does not travel through git, the photo fixtures above all.
 | Path | State |
 |---|---|
 | `packages/core` | Platform-agnostic logic. **346 tests, `tsc` clean.** `gps`, `time`, `jpeg` (the splice), `exif-tags`, `exiftool` (write path), `exiftool-wasm`, `session` (staged edits, undo, named actions), `clock-sync`, `gpx` (track parsing and matching), `google-timeline` + `track-file` (Timeline import), `exiftool-batch` (batched reads), `verify-write`, `prior-location` (earlier sessions' work), `storage`. |
-| `packages/ui` | React 19 + MapLibre 5 on Vite 7. **203 tests.** `browser-file-store.ts` is the only file behind `FileStore`; `batch-runner.ts` is the only other one tied to the build, since it takes the ExifTool script from a Vite virtual module. |
+| `packages/ui` | React 19 + MapLibre 5 on Vite 7. **220 tests.** `browser-file-store.ts` is the only file behind `FileStore`; `batch-runner.ts` is the only other one tied to the build, since it takes the ExifTool script from a Vite virtual module. |
 | `packages/shells` | Does not exist and is not needed. There is no native shell and no reason for one. |
 | `spike/` | Phase 0, done. Still where the write path is checked against a **native** ExifTool: `npm run splice --workspace spike` → 184 checks. |
 | `docs/PLAN.md` | Historical. Useful for intent, wrong in places. |
 
-**549 tests, `tsc` clean, production build succeeds.**
+**566 tests, `tsc` clean, production build succeeds.**
 
 ```bash
 npm test && npm run typecheck
@@ -60,7 +60,7 @@ was found:
 
 ## Deploying
 
-**Push to `main` and it ships.** `.github/workflows/deploy.yml` typechecks, runs all 549 tests,
+**Push to `main` and it ships.** `.github/workflows/deploy.yml` typechecks, runs all 566 tests,
 builds and publishes to GitHub Pages; a failing test blocks the deploy. About two minutes.
 
 The base path comes from the repository name, so renaming the repo needs no edit. A Pages project
@@ -114,35 +114,23 @@ a *"A new version is ready"* banner rather than leaving it a mystery.
   that `-fast2` really does read an XMP. Read the CLAUDE.md section before touching it: the search
   is driven by an *effect* rather than by the end of loading, because the output folder is usually
   not known when the photographs are.
+- **Map markers are the photographs themselves**, as a rounded tile, giving way to the old dot
+  wherever two would collide on screen — a pixel rule rather than a zoom threshold, so one town and
+  one tour both work. The selected frame always shows its picture and always comes to the front.
+  Measured: 9 tiles at z17 collapsing to 2 at z12, and a crowded dot becoming a 62px tile at
+  z-index 3 when picked. See CLAUDE.md, including the `mapReady` note — effects in `PhotoMap` that
+  ran before the map finished building used to never run again.
 
 ## What to pick up next
 
-**The first of the two designed features has shipped** — see "already placed" under *What is
-settled*. The one below is designed and agreed but not started; the design is here because it is
-the part that took the thinking.
+**Both designed features have shipped** — see "already placed" and "thumbnail markers" under
+*What is settled*. What is left below was deferred rather than designed.
 
-### 1. Thumbnail markers on the map
-
-Replace the circular pin with a rounded rectangle holding the photograph's thumbnail, so individual
-frames can be told apart on the map. MapLibre markers are DOM elements, so this is a `<div>` around
-an `<img>`, and the thumbnails are already in memory as object URLs.
-
-Three things to get right:
-
-- **The selected marker must always come to the front.** DOM markers stack by insertion order, so
-  this needs an explicit `zIndex` on the element rather than relying on the order they were added.
-- **Close grouping is the hard case**, and was raised as such. Forty-pixel tiles pile up at low
-  zoom. The suggestion on the table is to keep the current dot below a zoom threshold and switch to
-  thumbnails only where they can actually be told apart, rather than building spiderfying.
-- **Keep the white outline and drop shadow.** They are what make markers findable against Liberty's
-  colourful map, and they are the reason the pins do not need to compete on colour — see the vector
-  tiles section of `CLAUDE.md`.
-
-### 2. Video
+### 1. Video
 
 Wanted eventually, not now. ExifTool writes GPS to MP4/MOV.
 
-### 3. Code-split the ~1.5MB bundle
+### 2. Code-split the ~1.5MB bundle
 
 Fine on a desktop, worth it on mobile data. It is precached, so it is paid once per version rather
 than per visit.

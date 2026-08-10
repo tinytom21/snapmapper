@@ -538,6 +538,55 @@ measured on the painted pixels in the light theme, **4.44:1 at 0.85 and 6.13:1 a
 touch target is the **label**, not the tick box: 40px measured, where growing the box to 24px would
 have made a large square sit in a line of 13px text.
 
+### Markers are photographs, until they would collide
+
+`marker-layout.ts` decides, `PhotoMap.tsx` draws. A coloured dot says *something is here*; the
+question a review pass actually asks is *which frame is that*, and only the picture answers it.
+
+**The rule is pixels, not a zoom threshold**, which was the suggestion and is the same idea fitted
+to the data: a photograph draws as a tile unless another photograph is close enough on screen to
+collide with it. A day in one town and a fortnight across Europe need different thresholds and
+nobody can pick one for both — asked in pixels, the town gets dots, the tour gets pictures, and a
+lone outlier keeps its picture while the huddle beside it collapses.
+
+- **Recomputed on `zoomend`, never on move.** The distance between two fixed points in screen
+  pixels does not change when you pan. Listening to `move` would make markers flip between a
+  picture and a dot mid-drag, for no reason the user could see — which is also why this is pairwise
+  rather than a grid of screen cells, where two pins either side of a boundary would swap every few
+  pixels of pan.
+- **A selected photograph always shows its picture**, crowded or not. That is the feature: pick a
+  frame in the list, see which picture it is. Safe because selection also brings it to the front.
+- **`zIndex` is explicit.** DOM markers stack by insertion order, so the one just selected is
+  usually underneath something. Selected 3, pending 2, saved 1.
+- **One element, two shapes.** A marker changes between dot and tile constantly; rebuilding it
+  would drop the decoded image *and* the drag MapLibre is tracking on it. The `<img>` stays in the
+  DOM with its `src` set and is hidden by CSS on a dot, so zooming out and back does not re-decode
+  fifty JPEGs.
+- **3:2 with `object-fit: cover`**, like the list — the camera embeds a 3:2 frame letterboxed into
+  160x120, so a 4:3 box would draw the black bars.
+- **The white border and drop shadow stay on both shapes**, and the state moves to a ring *outside*
+  them, because the photograph has taken the fill. `styles.test.ts` pins that, and pins
+  `--marker-thumb-w` against `THUMB_WIDTH_PX` — the crowding rule is measured in those pixels, and
+  the two drifting apart would permit tiles that now overlap while the rule said they fit.
+
+Measured live: 12 markers, 2 tiles at 52x35 and 10 dots at whole-of-France zoom; **9 tiles at z17
+and back to 2 at z12**; selecting a dot in the huddle turned it into a 62px tile at z-index 3 above
+a maximum of 2 elsewhere. Two pins on identical coordinates stay dots at every zoom, correctly.
+
+#### Effects that ran before the map existed never ran again
+
+Found by this feature and **not caused by it**. The map is built *asynchronously* — the style is
+fetched and rewritten before `new maplibregl.Map` is called — so every effect in `PhotoMap` runs at
+least once while `map.current` is still null, takes its early return, and is never scheduled again
+unless one of its own dependencies happens to change afterwards.
+
+For the markers that is the difference between a map with pins and a map without. It went unnoticed
+because the only photographs with locations used to be ones the user had just placed, and placing
+changes `pins` and re-runs the effect by luck. **A folder of already-geotagged photographs arrives
+with its pins complete and nothing changing afterwards** — which is exactly what the previous
+feature made the common case. `mapReady` is bumped when the instance is created and is a dependency
+of every effect that reads it.
+
 ### The map's mount is a latch, and it needs a release
 
 Reported as *"click start again and it returns me to a page that is bugged — the text width is too

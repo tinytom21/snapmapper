@@ -862,9 +862,14 @@ export function App() {
         coordinates: location.coordinates,
         pending: location.kind === 'pending',
         selected: session.selected.has(entry.ref.name),
+        // The camera's own embedded thumbnail, already an object URL for the list. The map draws
+        // it in the marker so one frame can be told from another without opening anything.
+        // Spread rather than assigned: `exactOptionalPropertyTypes` distinguishes an absent
+        // property from one holding `undefined`, and a photograph without a thumbnail has none.
+        ...(thumbnails.has(entry.ref.name) ? { thumbnail: thumbnails.get(entry.ref.name)! } : {}),
       }];
     });
-  }, [session]);
+  }, [session, thumbnails]);
 
   const place = useCallback((coordinates: Coordinates) => {
     setSession((current) => {

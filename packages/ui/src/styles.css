@@ -645,6 +645,17 @@ label.check input[type='checkbox'] {
 
 /* Map pins. Saved locations are calm; unsaved ones are not, deliberately — a pending
    edit must never look like something already written to disk. */
+/*
+ * A marker is a dot or a photograph, and it changes between the two as the map zooms.
+ *
+ * The white border and the drop shadow are on both and are what make a marker findable against
+ * Liberty's colourful ground — they are also the reason markers do not have to compete on colour,
+ * which is what lets a photograph fill one without disappearing into the map.
+ *
+ * Note the two are one element, not two kinds of marker. A photograph moves between the shapes
+ * constantly, and rebuilding the element would drop the decoded image and the drag MapLibre is
+ * tracking on it. `z-index` is set inline per marker — see `markerZIndex`.
+ */
 .pin {
   width: 16px;
   height: 16px;
@@ -655,9 +666,56 @@ label.check input[type='checkbox'] {
   box-shadow: 0 1px 3px rgb(0 0 0 / 0.4);
   cursor: pointer;
   padding: 0;
+  /* Nothing inside a dot. The image stays in the DOM so its bitmap survives a zoom out and back. */
+  overflow: hidden;
 }
+.pin > img { display: none; }
+
 .pin-pending { background: var(--pending); }
-.pin-selected { width: 22px; height: 22px; z-index: 2; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 45%, transparent); }
+.pin-selected { width: 22px; height: 22px; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 45%, transparent); }
+
+/*
+ * The photograph, at `--marker-thumb-w` wide.
+ *
+ * 3:2 with `object-fit: cover`, like the list and for the same reason: the camera embeds a 3:2
+ * frame letterboxed into 160x120, so a 4:3 box would draw the black bars. The width is a custom
+ * property because `marker-layout.ts` has to agree with it — the crowding rule is measured in
+ * these pixels, and the two drifting apart would let tiles overlap while the rule said they fit.
+ */
+.pin.pin-tile {
+  --marker-thumb-w: 52px;
+  width: var(--marker-thumb-w);
+  height: auto;
+  aspect-ratio: 3 / 2;
+  border-radius: var(--radius-sm);
+  /* Undo the teardrop: a rectangle rotated 45 degrees is a diamond. */
+  transform: none;
+  background: var(--surface);
+}
+.pin.pin-tile > img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/*
+ * State is the ring outside the white border, because the photograph has taken the fill.
+ *
+ * Layered outward: white border (in the box), then the state ring, then the shadow. Written as one
+ * `box-shadow` per state rather than added to, since a later declaration replaces the property
+ * whole — two rules each setting a shadow would leave only the last one's.
+ */
+.pin.pin-tile.pin-pending {
+  box-shadow: 0 0 0 2px var(--pending), 0 1px 4px rgb(0 0 0 / 0.45);
+}
+.pin.pin-tile.pin-selected {
+  width: calc(var(--marker-thumb-w) + 10px);
+  box-shadow: 0 0 0 3px var(--accent), 0 2px 8px rgb(0 0 0 / 0.5);
+}
+.pin.pin-tile.pin-selected.pin-pending {
+  box-shadow: 0 0 0 3px var(--pending), 0 2px 8px rgb(0 0 0 / 0.5);
+}
 
 /* --- Clock sync --------------------------------------------------------- */
 

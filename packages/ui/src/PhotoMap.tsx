@@ -16,7 +16,7 @@
  * anyway — it handles one photo and fifty identically.
  */
 
-import { useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import maplibregl, {
   type GeoJSONSource,
   type Map as MapLibreMap,
@@ -25,6 +25,12 @@ import maplibregl, {
 import type { Feature, LineString } from 'geojson';
 
 import { boundsOf, selectionFocus } from './map-focus.ts';
+import {
+  crowdedNames,
+  markerZIndex,
+  showsThumbnail,
+  type ProjectedPin,
+} from './marker-layout.ts';
 import { trackLine, type LinePoint } from './track-line.ts';
 import { offlineStyle, registerTileProtocol } from './offline-tiles.ts';
 import {
@@ -47,6 +53,15 @@ export interface MapPin {
   /** Staged edits look different from what is already on disk. */
   readonly pending: boolean;
   readonly selected: boolean;
+  /**
+   * Object URL of the camera's embedded thumbnail, when there is one.
+   *
+   * Drawn in the marker so individual frames can be told apart on the map — which a coloured dot
+   * cannot do, and which is most of what a review pass is checking. Optional: some photographs
+   * have no embedded thumbnail, and those keep the dot. See `marker-layout.ts` for when a tile is
+   * shown and when it gives way.
+   */
+  readonly thumbnail?: string;
 }
 
 export interface PhotoMapProps {
@@ -89,6 +104,22 @@ export function PhotoMap({
 
   /** The track as `[lng, lat]` pairs, held in a ref so `style.load` can redraw it. */
   const line = useRef<readonly LinePoint[]>([]);
+
+  /**
+   * Bumped when the map instance exists, so the effects below re-run once there is a map.
+   *
+   * Not a nicety. The map is built **asynchronously** — the style has to be fetched and rewritten
+   * before `new maplibregl.Map` is called — so every effect here runs at least once while
+   * `map.current` is still null, takes its early return, and is never scheduled again unless one
+   * of its own dependencies happens to change afterwards.
+   *
+   * For the markers that is the difference between a map with pins and a map without. It went
+   * unnoticed for as long as the only photographs with locations were ones the user had just
+   * placed, because placing changes `pins` and re-runs the effect by luck. A folder of photographs
+   * that are *already* geotagged arrives with its pins complete and nothing changing afterwards —
+   * which is precisely what showing earlier sessions' work made the common case.
+   */
+  const [mapReady, setMapReady] = useState(0);
 
   useEffect(() => {
     if (!container.current || map.current) return;
@@ -184,6 +215,7 @@ export function PhotoMap({
     });
 
     map.current = instance;
+    setMapReady((count) => count + 1);
     return instance;
     }
   }, []);
@@ -192,7 +224,55 @@ export function PhotoMap({
     const instance = map.current;
     if (!instance) return;
     instance.getCanvas().style.cursor = armed ? 'crosshair' : '';
-  }, [armed]);
+  }, [armed, mapReady]);
+
+  /**
+   * Which photographs are too close together to be drawn as pictures, by name.
+   *
+   * A ref rather than state: it is recomputed on zoom, and routing it through React would
+   * re-render the whole map component on every wheel notch to change two class names.
+   */
+  const crowded = useRef<ReadonlySet<string>>(new Set());
+  /** The current pins, so the zoom listener can re-measure without being rebuilt. */
+  const pinsRef = useRef<readonly MapPin[]>(pins);
+  pinsRef.current = pins;
+
+  /**
+   * Re-measure the crowding and repaint every marker.
+   *
+   * Projection is what makes this a *pixel* question rather than a geographic one, and pixels are
+   * what legibility is actually about — see `marker-layout.ts`.
+   */
+  const repaintAll = useCallback(() => {
+    const instance = map.current;
+    if (!instance) return;
+
+    const projected: ProjectedPin[] = pinsRef.current.map((pin) => {
+      const point = instance.project([pin.coordinates.longitude, pin.coordinates.latitude]);
+      return { name: pin.name, x: point.x, y: point.y };
+    });
+    crowded.current = crowdedNames(projected);
+
+    for (const pin of pinsRef.current) {
+      const marker = markers.current.get(pin.name);
+      if (marker) paint(marker.getElement(), pin, crowded.current);
+    }
+  }, []);
+
+  /*
+   * On zoom, and only on zoom.
+   *
+   * The distance between two fixed points in screen pixels does not change when you pan, so
+   * panning cannot change any of these answers — and listening to `move` would make markers flip
+   * between a picture and a dot while the map is being dragged, for no reason the user could see.
+   */
+  useEffect(() => {
+    const instance = map.current;
+    if (!instance) return;
+
+    instance.on('zoomend', repaintAll);
+    return () => { instance.off('zoomend', repaintAll); };
+  }, [repaintAll, mapReady]);
 
   // Reconcile markers: update in place, add what is new, remove what is gone.
   useEffect(() => {
@@ -207,15 +287,24 @@ export function PhotoMap({
 
       if (existing) {
         existing.setLngLat([pin.coordinates.longitude, pin.coordinates.latitude]);
-        paint(existing.getElement(), pin);
         continue;
       }
 
       const element = document.createElement('button');
       element.type = 'button';
-      element.className = 'pin';
       element.title = pin.name;
-      paint(element, pin);
+
+      /*
+       * The image is created once and kept, rather than added and removed as the marker changes
+       * between a picture and a dot. Removing it would drop the decoded bitmap, so zooming out and
+       * back in would re-decode fifty JPEGs; `display` on the image costs nothing and keeps them.
+       */
+      const image = document.createElement('img');
+      image.alt = '';
+      // Browsers make images draggable by default, and a native image drag starting on a marker
+      // would fight MapLibre's own pointer tracking — the same trap as the thumbnails in the list.
+      image.draggable = false;
+      element.append(image);
 
       element.addEventListener('click', (event) => {
         // Without this the map's own click handler also fires and re-places the photo.
@@ -241,20 +330,27 @@ export function PhotoMap({
         markers.current.delete(name);
       }
     }
-  }, [pins]);
+
+    /*
+     * Measured after the set has changed, not before: adding a photograph can crowd one that was
+     * previously on its own, and removing one can free its neighbour. This also paints the markers
+     * just created, so `paint` is not called anywhere in the loop above.
+     */
+    repaintAll();
+  }, [pins, repaintAll, mapReady]);
 
   useEffect(() => {
     line.current = trackLine(track);
     const instance = map.current;
     // Before the style is in there is nowhere to put a layer; `style.load` draws it instead.
     if (instance?.isStyleLoaded()) drawTrack(instance, line.current);
-  }, [track]);
+  }, [track, mapReady]);
 
   // A hidden map never learns it was resized, so it comes back with the container size it had
   // when it was hidden. Cheap to ask; wrong-looking if not asked.
   useEffect(() => {
     if (visible) map.current?.resize();
-  }, [visible]);
+  }, [visible, mapReady]);
 
   // Frame the photos once there is something to frame, so the user is not left staring
   // at the mid-Atlantic wondering where their pins went.
@@ -266,7 +362,7 @@ export function PhotoMap({
     if (!instance || !bounds || framed.current || !visible) return;
     framed.current = true;
     instance.fitBounds(bounds, { padding: 80, maxZoom: 14, duration: 0 });
-  }, [bounds, visible]);
+  }, [bounds, visible, mapReady]);
 
   /*
    * Move to whatever is selected, when the selection changes.
@@ -295,7 +391,7 @@ export function PhotoMap({
       return;
     }
     instance.fitBounds(focus.bounds, { padding: 80, maxZoom: 15 });
-  }, [focus, visible]);
+  }, [focus, visible, mapReady]);
 
   return (
     <div className="map-wrap">
@@ -351,7 +447,32 @@ function drawTrack(
   });
 }
 
-function paint(element: HTMLElement, pin: MapPin): void {
+/**
+ * Put a marker into the state its pin describes.
+ *
+ * One function for both shapes rather than two kinds of marker, because a photograph changes
+ * between them as the map zooms and as it is selected — rebuilding the element each time would
+ * discard the decoded image and, worse, the marker MapLibre is tracking a drag on.
+ */
+function paint(element: HTMLElement, pin: MapPin, crowded: ReadonlySet<string>): void {
+  const tile = showsThumbnail(pin, crowded);
+
+  element.className = tile ? 'pin pin-tile' : 'pin';
   element.classList.toggle('pin-pending', pin.pending);
   element.classList.toggle('pin-selected', pin.selected);
+  element.style.zIndex = String(markerZIndex(pin));
+
+  const image = element.firstElementChild as HTMLImageElement | null;
+  if (!image) return;
+
+  /*
+   * The `src` is only ever set, never cleared, and only when it changes.
+   *
+   * Clearing it to hide the tile would make the browser drop the decoded bitmap, so zooming back
+   * in would decode every thumbnail again. Re-assigning the same URL would do the same. The
+   * stylesheet hides the image on a dot.
+   */
+  if (pin.thumbnail && image.getAttribute('src') !== pin.thumbnail) {
+    image.src = pin.thumbnail;
+  }
 }

@@ -16,6 +16,7 @@ import path from 'node:path';
 import { describe, it } from 'node:test';
 
 import { contrastRatio } from '../src/contrast.ts';
+import { THUMB_WIDTH_PX } from '../src/marker-layout.ts';
 
 const css = await readFile(
   path.join(import.meta.dirname, '..', 'src', 'styles.css'),
@@ -122,6 +123,45 @@ describe('the palette in styles.css', () => {
      */
     const rule = /\.photo-grid\s*\{([\s\S]*?)\}/.exec(css)?.[1] ?? '';
     assert.match(rule, /grid-auto-rows:\s*max-content/);
+  });
+
+  it('draws a marker tile at exactly the width the crowding rule assumes', () => {
+    /*
+     * The two have to agree, and nothing else would notice if they stopped.
+     *
+     * `crowdedNames` decides whether two photographs can both show a picture by measuring the gap
+     * between them in pixels, against the tile width. Widen the tile in the stylesheet alone and
+     * the rule goes on permitting tiles that now overlap; narrow it and the map hides pictures
+     * that would have fitted. Either way it looks like a judgement call rather than a bug.
+     */
+    const rule = /\.pin\.pin-tile\s*\{([\s\S]*?)\}/.exec(css)?.[1] ?? '';
+    const width = /--marker-thumb-w:\s*(\d+)px/.exec(rule)?.[1];
+
+    assert.equal(Number(width), THUMB_WIDTH_PX);
+  });
+
+  it('keeps the white outline and the drop shadow on both marker shapes', () => {
+    // What makes a marker findable against Liberty's colourful ground, and the reason markers do
+    // not have to compete on colour — which is what lets a photograph fill one.
+    const dot = /\.pin\s*\{([\s\S]*?)\}/.exec(css)?.[1] ?? '';
+    assert.match(dot, /border:\s*2px solid #fff/);
+    assert.match(dot, /box-shadow:/);
+
+    // The tile keeps the border by not overriding it, and restates the shadow in each state ring.
+    const tile = /\.pin\.pin-tile\s*\{([\s\S]*?)\}/.exec(css)?.[1] ?? '';
+    assert.doesNotMatch(tile, /border:/, 'the tile must inherit the white border, not replace it');
+    /*
+     * Built with `String.raw`, not a plain template literal.
+     *
+     * In a normal template literal `\.` is just `.` and `\s` is a literal `s`, so the pattern
+     * silently becomes `.pin.pin-tile.pin-pendings*{` and matches nothing — a test that fails for
+     * a reason that has nothing to do with the stylesheet. It did exactly that once.
+     */
+    for (const state of ['pin-pending', 'pin-selected']) {
+      const pattern = String.raw`\.pin\.pin-tile\.${state}\s*\{([\s\S]*?)\}`;
+      const ring = new RegExp(pattern).exec(css)?.[1] ?? '';
+      assert.match(ring, /box-shadow:[^;]*rgb\(0 0 0/, `${state} must restate the drop shadow`);
+    }
   });
 
   it('defines the dark theme by overriding tokens, not by restyling components', () => {

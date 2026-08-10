@@ -42,7 +42,7 @@ import {
 
 import { ActionMenu } from './ActionMenu.tsx';
 import { ConflictPrompt } from './ConflictPrompt.tsx';
-import { PhotoMap } from './PhotoMap.tsx';
+import { PhotoMap, type MapPin } from './PhotoMap.tsx';
 import { PhotoPreview } from './PhotoPreview.tsx';
 import { ReviewBar } from './ReviewBar.tsx';
 import { Sidebar } from './Sidebar.tsx';
@@ -478,21 +478,59 @@ export function previewMap(): void {
 
   mapRoot?.unmount();
   mapRoot = createRoot(host);
-  mapRoot.render(
-    <PhotoMap
-      pins={[
-        { name: 'a.jpg', coordinates: { latitude: 43.6047, longitude: 1.4442 }, pending: false, selected: false },
-        { name: 'b.jpg', coordinates: { latitude: 43.2965, longitude: 5.3698 }, pending: true, selected: true },
-      ]}
-      track={sampleTrack()}
-      onPlace={(c) => console.log('place', c)}
-      onSelectPin={(n) => console.log('select', n)}
-      onMovePin={(n, c) => console.log('move', n, c)}
-      armed
-      selectedCount={1}
-      visible
-    />,
-  );
+
+  /*
+   * A spread set *and* a huddle, because that is the case thumbnail markers had to solve.
+   *
+   * Fifty frames from one walk pile forty-pixel tiles on top of each other, so the crowding rule
+   * turns a huddle back into dots while leaving an isolated photograph its picture — and a preview
+   * with only well-separated pins would show none of that. `previewMap` used to have two.
+   */
+  const session = sampleSession(12);
+  const thumbnails = sampleThumbnails(session);
+  const names = session.photos.map((entry) => entry.ref.name);
+
+  const spread: MapPin[] = [
+    { name: names[0]!, coordinates: { latitude: 43.6047, longitude: 1.4442 } },
+    { name: names[1]!, coordinates: { latitude: 43.2965, longitude: 5.3698 } },
+    { name: names[2]!, coordinates: { latitude: 45.7640, longitude: 4.8357 } },
+  ].map((pin) => ({ ...pin, pending: false, selected: false, thumbnail: thumbnails.get(pin.name)! }));
+
+  // Eight frames within a few hundred metres, as an afternoon in one town produces.
+  const huddle: MapPin[] = names.slice(3, 11).map((name, index) => ({
+    name,
+    coordinates: { latitude: 43.6047 + index * 0.0004, longitude: 1.4442 + index * 0.0006 },
+    pending: index % 3 === 0,
+    selected: false,
+    thumbnail: thumbnails.get(name)!,
+  }));
+
+  // One with no thumbnail at all, which must stay a dot however much room it has.
+  const bare: MapPin = {
+    name: 'no-thumbnail.jpg',
+    coordinates: { latitude: 47.2184, longitude: -1.5536 },
+    pending: false,
+    selected: false,
+  };
+
+  const pins = [...spread, ...huddle, bare];
+
+  function render(selected: string | null) {
+    mapRoot?.render(
+      <PhotoMap
+        pins={pins.map((pin) => ({ ...pin, selected: pin.name === selected }))}
+        track={sampleTrack()}
+        onPlace={(c) => console.log('place', c)}
+        onSelectPin={render}
+        onMovePin={(n, c) => console.log('move', n, c)}
+        armed={selected !== null}
+        selectedCount={selected ? 1 : 0}
+        visible
+      />,
+    );
+  }
+
+  render(null);
 }
 
 /**
