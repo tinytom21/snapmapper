@@ -1215,3 +1215,13 @@ button.stacked .sub {
    * max-width beats width, inline or not.
    */
 }
+
+/* The licence line. Quiet, always present — the obligation is to reproduce the notices, not to
+   make them prominent, but a link nobody can find is not reproduction either. */
+.landing-licences {
+  margin: 1.6rem auto 0;
+  max-width: 34rem;
+  font-size: 0.8rem;
+  color: var(--dim);
+}
+.landing-licences a { color: inherit; }

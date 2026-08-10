@@ -12,7 +12,8 @@
     "test": "node --test \"test/**/*.test.ts\"",
     "dev:lan": "vite --mode lan",
     "preview:lan": "vite preview --mode lan --host",
-    "icons": "node scripts/make-icons.mjs"
+    "icons": "node scripts/make-icons.mjs",
+    "notices": "node scripts/make-notices.mjs"
   },
   "dependencies": {
     "@6over3/zeroperl-ts": "1.0.10",

@@ -176,6 +176,24 @@ export function Landing({
         </li>
       </ol>
 
+      {/*
+        The notices have to reach the person receiving the software, not just sit in the
+        repository — MIT, BSD-3-Clause and Apache-2.0 each oblige us to reproduce their text when
+        distributing a binary, and a bundled web app is a binary distribution. So the file is a
+        static asset served beside the app, and this is the link to it.
+
+        `import.meta.env.BASE_URL` rather than a bare '/': on a GitHub Pages project site the app
+        lives under `/snapmapper/`, and a root-relative link would 404 there while working
+        perfectly on localhost.
+      */}
+      <p className="landing-licences">
+        Open source. <a href="https://github.com/tinytom21/snapmapper">Source code</a> under the
+        Artistic License 2.0, and the{' '}
+        <a href={`${import.meta.env.BASE_URL}THIRD-PARTY-NOTICES.md`}>
+          notices for everything it is built on
+        </a>.
+      </p>
+
       <p className="landing-privacy">
         <strong>Your photographs stay on this device.</strong> They are read and written here, by
         code running in your browser — there is no server and no account, and it works with the

@@ -78,8 +78,33 @@ real time to learn — including three confident assumptions that turned out to 
 
 ## Licensing
 
-ExifTool and Perl are each dual-licensed under the Artistic License or the GPL. This project
-**elects the Artistic License**, which imposes no copyleft. See [LICENSE](LICENSE).
+Snapmapper is under the **Artistic License 2.0** — see [LICENSE](LICENSE). No copyleft: the source
+may be kept public or taken private, and the tool may be sold.
+
+ExifTool and Perl are each dual-licensed under the Artistic License or the GPL, and this project
+**elects the Artistic License**. Taking the GPL instead would have made the whole bundle copyleft
+and conflicted with the App Store, so the election is load-bearing rather than a preference.
+
+Everything shipped alongside it — MapLibre (BSD-3-Clause), React and node-qrcode (MIT),
+@uswriting/exiftool, zeroperl and jsQR (Apache-2.0) — obliges us to reproduce its notices when
+distributing a build, and a bundled web app is a distribution. Those notices are generated from the
+licence texts as installed and served with the app:
+
+```bash
+npm run notices --workspace @snapmapper/ui
+```
+
+The result is [packages/ui/public/THIRD-PARTY-NOTICES.md](packages/ui/public/THIRD-PARTY-NOTICES.md),
+linked from the landing screen. **Do not edit it by hand** — regenerate it after changing a
+dependency, or it will claim to ship something it does not.
+
+Note that `@uswriting/exiftool` strips ExifTool own POD when bundling, so the copy actually shipped
+carries no notice of its own. That is the strongest reason the generated file exists.
+
+The map is OpenStreetMap data under the ODbL, credited unconditionally on every screen showing a
+map; place names come from Nominatim under its usage policy. Neither is a code licence, but both
+carry obligations — and both are the things to revisit before charging for this, since they run on
+donated infrastructure sized for small applications.
 
 ## Credits
 
