@@ -1059,7 +1059,19 @@ export function App() {
         </div>
       </header>
 
-      {session && (
+      {/*
+        The destination is a question about *copies*, and raw photographs are never copied.
+
+        A raw file is never opened for writing at all — its location goes into a sidecar written
+        beside it — so there is nothing for a `geotagged` folder to hold and nothing to overwrite.
+        Asking anyway put a red blocker across the top of a raw session demanding an answer that
+        would have changed nothing, directly contradicting the notice underneath it saying where
+        the sidecars were already going.
+
+        Only asked when the session actually contains something that gets copied. A mixed session
+        still needs it, for the JPEGs.
+      */}
+      {session && session.photos.some((entry) => !isRawFile(entry.ref.name)) && (
         <DestinationBar
           destination={destination}
           busy={busy}
