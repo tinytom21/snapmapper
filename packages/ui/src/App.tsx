@@ -285,15 +285,27 @@ export function App() {
     target: BrowserFolder,
     keepClock?: CameraClock,
   ) => {
+    /*
+     * The progress line is cleared *here*, in a `finally`, rather than by each caller.
+     *
+     * It used to be the caller's job, and every caller but one remembered — so importing raw left
+     * "Reading metadata 2/2" on screen for the rest of the session, above a photo list that had
+     * plainly finished loading. Whoever turns it on should be the one who turns it off; anything
+     * else is correct by convention, and a convention is a bug waiting for the next call site.
+     */
     setLoading({ done: 0, total: refs.length, current: '' });
-    const loaded = await loadPhotos(refs, store, await getBackend(), setLoading);
+    try {
+      const loaded = await loadPhotos(refs, store, await getBackend(), setLoading);
 
-    setThumbnails((previous) => {
-      revokeThumbnailUrls(previous);
-      return toThumbnailUrls(loaded.thumbnails);
-    });
-    setFolder(target);
-    setSession(createSession(loaded.entries, keepClock ?? defaultClock()));
+      setThumbnails((previous) => {
+        revokeThumbnailUrls(previous);
+        return toThumbnailUrls(loaded.thumbnails);
+      });
+      setFolder(target);
+      setSession(createSession(loaded.entries, keepClock ?? defaultClock()));
+    } finally {
+      setLoading(null);
+    }
   }, [getBackend]);
 
   /**
@@ -1005,57 +1017,22 @@ export function App() {
           because the alternative — a horizontally scrolling row — hides whatever is past the right
           edge behind a gesture nobody knows to make.
         */}
-        {session && (narrow
-          ? (
-            <ActionMenu
-              open={menuOpen}
-              onOpen={() => setMenuOpen(true)}
-              onClose={() => setMenuOpen(false)}
-            >
-              {folder && <div className="menu-label">{folder.displayName}</div>}
-              {folder?.directory
-                ? (
-                  <button type="button" onClick={rescanFolder} disabled={busy}>
-                    Re-scan folder
-                  </button>
-                )
-                : (
-                  <button type="button" onClick={addPhotos} disabled={busy}>Add photos…</button>
-                )}
-              {isFilePickerSupported() && (
-                <button type="button" onClick={openPhotos} disabled={busy}>
-                  Select different photos…
-                </button>
-              )}
-              {isFolderPickerSupported() && (
-                <button type="button" onClick={openFolder} disabled={busy}>
-                  Open a whole folder…
-                </button>
-              )}
-            </ActionMenu>
-          )
-          : (
-            <>
-              {folder && <span className="folder">{folder.displayName}</span>}
-              {folder?.directory
-                ? (
-                  <button type="button" onClick={rescanFolder} disabled={busy}>
-                    Re-scan folder
-                  </button>
-                )
-                : (
-                  <button type="button" onClick={addPhotos} disabled={busy}>Add photos…</button>
-                )}
-              {isFilePickerSupported() && (
-                <button type="button" onClick={openPhotos} disabled={busy}>Select photos…</button>
-              )}
-              {isFolderPickerSupported() && (
-                <button type="button" onClick={openFolder} disabled={busy}>
-                  Open whole folder…
-                </button>
-              )}
-            </>
-          ))}
+        {/*
+          One button, where there were four.
+
+          The header carried the folder name, Re-scan, Select photos… and Open whole folder… —
+          three of which start a *different* session, which is to say they all go back to the
+          beginning by a slightly different route. As a group they took most of the width and the
+          overflow menu existed to hold them.
+
+          `Start again` says the one thing they had in common, and the mark beside it does the same
+          for anyone who reaches for a logo. Adding photographs mid-session goes with them: it was
+          the only genuinely distinct action here, and it is not worth a permanent control until
+          somebody wants it back.
+        */}
+        {session && (
+          <button type="button" onClick={goHome} disabled={busy}>Start again</button>
+        )}
         </div>
       </header>
 
@@ -1146,10 +1123,16 @@ export function App() {
       )}
 
       {error && <div className="banner error">{error}</div>}
+      {/*
+        One line, with Dismiss on it rather than under it.
+
+        `.banner button` carries a top margin, so the button dropped onto its own row and the
+        notice took twice the height it needed — a permanent bite out of the map for one sentence.
+      */}
       {notice && (
-        <div className="banner warn">
-          {notice}
-          <button type="button" onClick={() => setNotice(null)}>Dismiss</button>
+        <div className="banner warn line">
+          <span>{notice}</span>
+          <button type="button" className="link" onClick={() => setNotice(null)}>Dismiss</button>
         </div>
       )}
 

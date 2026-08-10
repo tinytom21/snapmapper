@@ -1341,3 +1341,25 @@ button.stacked .sub {
   gap: 0.6rem;
 }
 .landing-actions button.feature { grid-column: 1 / -1; }
+
+/* A banner that is one sentence and a way out of it. Flat row, so the button does not drop onto a
+   second line and cost the map twice the height for no extra information. */
+.banner.line {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  padding: 0.45rem 0.95rem;
+}
+.banner.line span { min-width: 0; }
+.banner.line button { margin: 0 0 0 auto; flex: none; }
+
+/* A banner that is one sentence and a way out of it. Flat row, so the button does not drop onto
+   a second line and cost the map twice the height for no extra information. */
+.banner.line {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  padding: 0.45rem 0.95rem;
+}
+.banner.line span { min-width: 0; }
+.banner.line button { margin: 0 0 0 auto; flex: none; }
