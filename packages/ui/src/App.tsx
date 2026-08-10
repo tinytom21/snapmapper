@@ -73,7 +73,7 @@ import { Mark, Wordmark } from './Wordmark.tsx';
 import { describeAction, explainAction } from './describe-action.ts';
 import { Landing } from './Landing.tsx';
 import { UPDATE_READY_EVENT, activateUpdate } from './register-sw.ts';
-import { isMapVisible } from './map-focus.ts';
+import { isMapVisible, keepMapMounted } from './map-focus.ts';
 import { scanForSyncCode } from './clock-sync-qr.ts';
 import {
   LARGE_FOLDER_THRESHOLD,
@@ -1068,18 +1068,21 @@ export function App() {
   const mapVisible = isMapVisible(session !== null, narrow, pane);
 
   /*
-   * Mounted the first time it would be visible, and never unmounted after that.
+   * Mounted the first time it would be visible, kept for the rest of the session, released when
+   * the session ends. `keepMapMounted` is the rule, and each of its three answers was a bug.
    *
-   * Both halves matter. Constructing a MapLibre map inside a `display: none` container gives it a
-   * zero-sized viewport — on a phone the Photos tab is the default, so mounting with the session
-   * would mean every map on a phone was born blind and dependent on a later `resize()`. And once
-   * it exists, hiding beats unmounting, because a rebuild discards the tiles, the viewport and
-   * every marker, so returning to the tab would land somewhere other than where you left.
+   * Constructing a MapLibre map inside a `display: none` container gives it a zero-sized viewport
+   * — on a phone the Photos tab is the default, so mounting with the session would mean every map
+   * on a phone was born blind and dependent on a later `resize()`. Within a session, hiding beats
+   * unmounting, because a rebuild discards the tiles, the viewport and every marker. And the
+   * release matters just as much: without it, going home left the landing screen squeezed into the
+   * sidebar's 26rem, which reads as a mobile layout served to a desktop.
    */
   const [mapMounted, setMapMounted] = useState(false);
+  const hasSession = session !== null;
   useEffect(() => {
-    if (mapVisible) setMapMounted(true);
-  }, [mapVisible]);
+    setMapMounted((mounted) => keepMapMounted(mounted, mapVisible, hasSession));
+  }, [mapVisible, hasSession]);
 
   if (!isFileSystemAccessSupported()) {
     return (

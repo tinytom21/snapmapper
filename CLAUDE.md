@@ -538,6 +538,28 @@ measured on the painted pixels in the light theme, **4.44:1 at 0.85 and 6.13:1 a
 touch target is the **label**, not the tick box: 40px measured, where growing the box to 24px would
 have made a large square sit in a line of 13px text.
 
+### The map's mount is a latch, and it needs a release
+
+Reported as *"click start again and it returns me to a page that is bugged — the text width is too
+narrow, like it's formatted for mobile"*, which is a layout complaint about a state bug.
+
+The map is mounted the first time it would be visible and hidden rather than unmounted afterwards,
+because rebuilding a MapLibre instance discards the tiles, the viewport and every marker. That was
+a one-way latch: `goHome` cleared the session and left it set. The landing screen is only laid out
+full width when there is no map beside it, so it came back squeezed into the sidebar's 26rem.
+Measured at 1900px: **`.landing-main` 375px wide with a 188px hero column, against 1112px and
+611px** once released. It genuinely looks like a mobile layout served to a desktop.
+
+`keepMapMounted` in `map-focus.ts` is the rule, beside `isMapVisible` and for the same reason —
+each of its answers has been a bug. Ending the session is the release, and nothing is lost by it:
+the viewport and the markers belonged to the session that just ended, and the tiles are in Cache
+Storage. **The latch must still hold across a phone's tab switch**, which is what it exists for; a
+test walks both journeys.
+
+Note why this could not be caught by looking at the landing screen. It is correct on first load and
+only wrong on the way back, so the check has to be the *sequence* — landing, session, home — rather
+than the page.
+
 ### A deleted output folder is repaired, not reported twelve times
 
 Found in use, immediately: the `geotagged` folder was deleted between sessions and the next save

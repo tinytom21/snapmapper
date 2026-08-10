@@ -26,6 +26,28 @@ export function isMapVisible(
   return !narrow || pane === 'map';
 }
 
+/**
+ * Whether the map should stay in the document, given that it is not on screen.
+ *
+ * Mounting is a **latch**, and it has to be: within a session the map is hidden rather than
+ * unmounted, because rebuilding a MapLibre instance discards the tiles, the viewport and every
+ * marker. But a latch with no release is a bug waiting to happen, and it happened — *"click start
+ * again and it returns me to a page that is bugged, the text width is too narrow"*.
+ *
+ * Ending the session is the release. The landing screen is laid out full width only when there is
+ * no map beside it, so a map still mounted from the previous session left the whole hero squeezed
+ * into the sidebar's 26rem: measured at 1900px, `.landing-main` came out **375px wide with a
+ * 188px hero column**, against 1112px and 611px once released. It reads exactly like a mobile
+ * layout served to a desktop, which is what it was.
+ *
+ * Nothing is lost by releasing it. The viewport and the markers belong to the session that just
+ * ended, and the tiles are in the browser's cache — see `offline-tiles.ts`.
+ */
+export function keepMapMounted(mounted: boolean, visible: boolean, hasSession: boolean): boolean {
+  if (!hasSession) return false;
+  return mounted || visible;
+}
+
 /** `[[west, south], [east, north]]`, MapLibre's `LngLatBoundsLike`. */
 export type Bounds = [[number, number], [number, number]];
 

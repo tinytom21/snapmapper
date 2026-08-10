@@ -8,7 +8,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { boundsOf, isMapVisible, selectionFocus } from '../src/map-focus.ts';
+import { boundsOf, isMapVisible, keepMapMounted, selectionFocus } from '../src/map-focus.ts';
 
 const pin = (name: string, latitude: number, longitude: number, selected = true) => ({
   name,
@@ -96,5 +96,37 @@ describe('isMapVisible', () => {
   it('shows one pane at a time on a narrow screen', () => {
     assert.equal(isMapVisible(true, true, 'photos'), false);
     assert.equal(isMapVisible(true, true, 'map'), true);
+  });
+});
+
+describe('keeping the map mounted', () => {
+  it('mounts the first time it would be visible', () => {
+    assert.equal(keepMapMounted(false, true, true), true);
+  });
+
+  it('does not mount before it would be visible', () => {
+    // A MapLibre map built inside a `display: none` container is born with a zero-sized viewport.
+    assert.equal(keepMapMounted(false, false, true), false);
+  });
+
+  it('keeps it while the session runs, even when hidden', () => {
+    // The phone's Photos tab. Rebuilding would discard the tiles, the viewport and every marker.
+    assert.equal(keepMapMounted(true, false, true), true);
+  });
+
+  it('releases it when the session ends', () => {
+    /*
+     * The bug this exists for. Without the release, going home left the landing screen laid out
+     * beside a map nobody could see — measured at 1900px, `.landing-main` came out 375px wide
+     * with a 188px hero column, against 1112px and 611px once released. Reported as "the text
+     * width is too narrow, like it's formatted for mobile", which is exactly what it looked like.
+     */
+    assert.equal(keepMapMounted(true, false, false), false);
+  });
+
+  it('stays released on the landing screen however often it is asked', () => {
+    assert.equal(keepMapMounted(false, false, false), false);
+    // `isMapVisible` cannot report true without a session, but the rule must not depend on that.
+    assert.equal(keepMapMounted(true, true, false), false);
   });
 });
