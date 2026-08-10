@@ -15,6 +15,7 @@
 import { useState } from 'react';
 
 import { OUTPUT_FOLDER_NAME } from './browser-file-store.ts';
+import { MapBackdrop } from './MapBackdrop.tsx';
 import { QrClock } from './QrClock.tsx';
 import { Wordmark } from './Wordmark.tsx';
 
@@ -86,6 +87,21 @@ export function Landing({
 
   return (
     <div className="landing">
+      <MapBackdrop />
+
+      {/*
+        Two columns on a wide screen, one on a narrow one.
+
+        Centred everything is right for a phone and wasteful on a desktop: the hero sat in a 32rem
+        column with several hundred pixels of nothing either side, and the three steps — which are
+        the thing a stranger reads *while* deciding which button to press — were pushed below the
+        fold by that emptiness. Side by side, the choice and the explanation are visible together,
+        which is the whole job of this screen.
+
+        The clock panel stays in the left column with its button rather than spanning both. It is
+        the tallest thing here when open, and letting it push the steps down would undo the point.
+      */}
+      <div className="landing-main">
       <div className="landing-hero">
         {/*
           The wordmark, then the sentence. The name is the mark's job and the headline's job is to
@@ -175,6 +191,7 @@ export function Landing({
           </span>
         </li>
       </ol>
+      </div>
 
       {/*
         The notices have to reach the person receiving the software, not just sit in the
