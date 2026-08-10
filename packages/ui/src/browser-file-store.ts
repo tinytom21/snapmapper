@@ -160,7 +160,29 @@ export interface BrowserFileStore extends FileStore {
    * Write permission on the picked files is requested only when saving in place. In copy mode
    * the originals are never written to, so asking would be a prompt per file for nothing.
    */
-  pickPhotos(options?: { add?: PhotoRef[] }): Promise<PickedPhotos | undefined>;
+  pickPhotos(options?: { add?: PhotoRef[]; raw?: boolean }): Promise<PickedPhotos | undefined>;
+
+  /**
+   * Attach a folder to already-picked files, so their sidecars have somewhere to go.
+   *
+   * Raw picked through the file picker has no parent — `showOpenFilePicker` gives none by design —
+   * and a sidecar has to be written beside its raw file or no reader will ever look for it. So the
+   * folder is asked for as a *second, separately-gestured* step and grafted on here.
+   *
+   * It cannot be chained onto the pick: a picker only opens while a user gesture is in flight, and
+   * the first dialog spends it. See the note in CLAUDE.md — this failed with "Must be handling a
+   * user gesture to show a file picker" on desktop and phone alike.
+   *
+   * **Every file is checked against the folder by name**, and any that is not in it is reported
+   * rather than adopted. Choosing the wrong folder is an easy mistake and a silent one: the
+   * sidecars would be written somewhere plausible, next to nothing, and Lightroom would show no
+   * change with no error anywhere.
+   */
+  adoptFolder(refs: readonly PhotoRef[]): Promise<{
+    refs: PhotoRef[];
+    folder: BrowserFolder;
+    missing: string[];
+  } | undefined>;
   /** The OS folder picker. One prompt covers the folder; best when it is small. */
   pickFolder(): Promise<BrowserFolder | undefined>;
   /** How many JPEGs a folder holds, without reading any metadata. */
@@ -256,6 +278,49 @@ export function createBrowserFileStore(): BrowserFileStore {
   }
 
   return {
+    async adoptFolder(refs: readonly PhotoRef[]) {
+      if (!isFolderPickerSupported()) {
+        throw new Error('This browser cannot open a folder. Use Chrome or Edge.');
+      }
+
+      let directory: FileSystemDirectoryHandle;
+      try {
+        directory = await globalThis.showDirectoryPicker!({ id: 'photos', mode: 'readwrite' });
+      } catch (error) {
+        if (error instanceof DOMException && error.name === 'AbortError') return undefined;
+        throw error;
+      }
+
+      /*
+       * Verified by name against what is actually in the folder.
+       *
+       * The whole point of this step is that sidecars land beside their raw files. A folder that
+       * does not contain them would still *work* — files would be written, no error raised — and
+       * the photographs would simply never gain a location as far as any reader is concerned.
+       * Silent, and discovered weeks later.
+       */
+      const present = new Set<string>();
+      for await (const [name, handle] of directory.entries()) {
+        if (handle.kind === 'file') present.add(name);
+      }
+
+      const folder: BrowserFolder = {
+        id: directory.name,
+        displayName: directory.name,
+        directory,
+      };
+
+      const missing = refs.filter((ref) => !present.has(ref.name)).map((ref) => ref.name);
+
+      // The handle map is keyed by locator, and the locators do not change — the files are the same
+      // files, they have simply acquired a parent. Only the folder is replaced.
+      return {
+        refs: refs.map((ref) => ({ ...ref, folder })),
+        folder,
+        missing,
+      };
+    },
+
     async pickPhotos(options = {}): Promise<PickedPhotos | undefined> {
       if (!isFilePickerSupported()) {
         throw new Error('This browser has no file picker. Use Chrome or Edge.');
@@ -267,23 +332,20 @@ export function createBrowserFileStore(): BrowserFileStore {
           multiple: true,
           id: 'photos',
           /*
-           * JPEG only, deliberately.
+           * One format at a time, never both.
            *
-           * A raw photograph cannot be *saved* from a picked selection at all: its location goes
-           * into a sidecar written beside the file, and `showOpenFilePicker` gives no access to a
-           * file's parent. Offering raw here meant it could be chosen, placed by hand, and only
-           * then refused — so the picker now does not offer it, and "Open whole folder…" is the
-           * route for raw.
+           * A card holds a RAW+JPEG pair for every frame, so a picker offering both shows each
+           * photograph twice and you have to read extensions to tell which is which. People work
+           * in one format per session; the choice belongs on the button that opens the dialog, not
+           * inside it.
            *
-           * `excludeAcceptAllOption` is what makes that real rather than a suggestion: without it
-           * the dialog still shows an "All files" entry, and raw could be selected through it.
-           * The warning in `describePicked` stays as a backstop for anything that gets through
-           * regardless — a drag-and-drop, or a browser that ignores the hint.
+           * `excludeAcceptAllOption` is what makes that real rather than a hint: without it the
+           * dialog still shows an "All files" entry and the other format comes back through it.
+           * `describePicked` stays as a backstop for whatever gets through anyway.
            */
-          types: [{
-            description: 'JPEG photos',
-            accept: { 'image/jpeg': ['.jpg', '.jpeg'] },
-          }],
+          types: [options.raw
+            ? { description: 'Sony raw photos', accept: { 'image/x-sony-arw': ['.arw'] } }
+            : { description: 'JPEG photos', accept: { 'image/jpeg': ['.jpg', '.jpeg'] } }],
           excludeAcceptAllOption: true,
         });
       } catch (error) {

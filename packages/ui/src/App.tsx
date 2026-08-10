@@ -303,6 +303,65 @@ export function App() {
    * anything can be done would run for the better part of an hour on a phone. Letting the OS
    * picker narrow the set first is the difference between unusable and instant.
    */
+  /**
+   * Raw files picked one by one, which then need their folder named before anything can be saved.
+   *
+   * The folder cannot be asked for here. A picker only opens while a user gesture is in flight and
+   * the first dialog spends it — the same trap the save destination fell into, recorded in
+   * CLAUDE.md. So the pick is parked and the interface asks; the button it offers *is* the next
+   * gesture. Nothing is loaded until the folder is known, because a raw session without one is a
+   * session that can place photographs and then refuse to write them.
+   */
+  const [rawAwaitingFolder, setRawAwaitingFolder] = useState<PhotoRef[] | null>(null);
+
+  const openRaw = useCallback(async () => {
+    setError(null);
+    setOutcomes(null);
+    setNotice(null);
+
+    try {
+      const picked = await store.pickPhotos({ raw: true });
+      if (!picked || picked.refs.length === 0) return;
+      setRawAwaitingFolder(picked.refs);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }, []);
+
+  /** The second gesture: name the folder those raw files live in, then load them. */
+  const adoptRawFolder = useCallback(async () => {
+    const waiting = rawAwaitingFolder;
+    if (!waiting) return;
+
+    setError(null);
+    try {
+      const adopted = await store.adoptFolder(waiting);
+      if (!adopted) return;
+
+      if (adopted.missing.length === waiting.length) {
+        // Not one of them is in there. Almost certainly the wrong folder, and going ahead would
+        // scatter sidecars next to nothing at all.
+        setError(
+          `None of those files are in ${adopted.folder.displayName}. `
+          + 'Choose the folder that actually contains them.',
+        );
+        return;
+      }
+
+      setRawAwaitingFolder(null);
+      setSession(null);
+      await loadRefs(adopted.refs, adopted.folder);
+
+      setNotice(adopted.missing.length > 0
+        ? `${adopted.missing.length} of these are not in ${adopted.folder.displayName} `
+          + `(${adopted.missing.slice(0, 3).join(', ')}), so their sidecars cannot be written `
+          + 'beside them. The rest are fine.'
+        : `Sidecars will be written into ${adopted.folder.displayName}, beside the raw files.`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }, [rawAwaitingFolder, loadRefs]);
+
   const openPhotos = useCallback(async () => {
     setError(null);
     setOutcomes(null);
@@ -1215,13 +1274,63 @@ export function App() {
                 />
               )
               : !loading && (
-                <Landing
-                  canPickFiles={isFilePickerSupported()}
-                  canPickFolder={isFolderPickerSupported()}
-                  busy={busy}
-                  onPickPhotos={openPhotos}
-                  onPickFolder={openFolder}
-                />
+                rawAwaitingFolder
+                  ? (
+                    /*
+                     * Between the pick and the session, and deliberately blocking.
+                     *
+                     * A raw photograph's location goes into a sidecar written *beside* the file,
+                     * so without the folder there is nothing this session could ever save. Letting
+                     * it through and refusing at Save is the shape of the bug this replaces: the
+                     * work is already done by then.
+                     *
+                     * The button here is the point. The folder cannot be requested straight after
+                     * the file picker — the gesture is spent — so the interface has to hand the
+                     * next one back to the user.
+                     */
+                    <div className="landing">
+                      <div className="raw-folder">
+                        <h2>Which folder are these in?</h2>
+                        <p className="note">
+                          {rawAwaitingFolder.length} raw file
+                          {rawAwaitingFolder.length === 1 ? '' : 's'} chosen. A raw photograph is
+                          never written to — its location goes into an <code>.xmp</code> sidecar
+                          next to it, which is where Lightroom and the rest look. So Snapmapper
+                          needs the folder itself, which picking individual files does not give it.
+                        </p>
+                        <p className="note">
+                          Choose the folder those files are in. Nothing else in it is read.
+                        </p>
+                        <div className="row">
+                          <button
+                            type="button"
+                            className="primary big"
+                            onClick={adoptRawFolder}
+                            disabled={busy}
+                          >
+                            Choose their folder…
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setRawAwaitingFolder(null)}
+                            disabled={busy}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )
+                  : (
+                    <Landing
+                      canPickFiles={isFilePickerSupported()}
+                      canPickFolder={isFolderPickerSupported()}
+                      busy={busy}
+                      onPickPhotos={openPhotos}
+                      onPickRaw={openRaw}
+                      onPickFolder={openFolder}
+                    />
+                  )
               )}
 
             {/*

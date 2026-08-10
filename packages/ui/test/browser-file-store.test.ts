@@ -351,3 +351,59 @@ describe('choosing where copies go', () => {
     }
   });
 });
+
+describe('adoptFolder', () => {
+  /*
+   * Raw picked one file at a time has no parent — `showOpenFilePicker` gives none — and a sidecar
+   * written anywhere but beside its raw file is a file no reader will ever look for. So the folder
+   * is asked for separately and grafted on, and *checked*: choosing the wrong one is an easy
+   * mistake and a completely silent one, because sidecars would still be written, still report
+   * success, and simply sit next to nothing.
+   */
+  /** A picked file: no `directory` on its folder, which is exactly the problem being solved. */
+  function refIn(name: string) {
+    const parentless: BrowserFolder = { id: 'picked', displayName: 'Selected photos' };
+    return { folder: parentless, name, sizeBytes: 10, modifiedAtMs: 0, locator: name };
+  }
+
+  function withPicker(names: readonly string[], run: () => Promise<unknown>) {
+    const { directory } = fakeDirectory(names);
+    const original = globalThis.showDirectoryPicker;
+    (globalThis as { showDirectoryPicker?: unknown }).showDirectoryPicker = async () => directory;
+    return run().finally(() => {
+      (globalThis as { showDirectoryPicker?: unknown }).showDirectoryPicker = original;
+    });
+  }
+
+  it('attaches the folder so a sidecar has somewhere to go', async () => {
+    await withPicker(['a.ARW', 'b.ARW'], async () => {
+      const store = createBrowserFileStore();
+      const got = await store.adoptFolder([refIn('a.ARW'), refIn('b.ARW')]);
+
+      assert.equal(got?.missing.length, 0);
+      // The directory handle is what `writeSidecar` needs; without it the write refuses.
+      assert.ok((got?.refs[0]?.folder as { directory?: unknown }).directory);
+      assert.equal(got?.refs.length, 2);
+    });
+  });
+
+  it('names the files that are not in the chosen folder', async () => {
+    // The wrong folder, or the right folder for only some of them. Either way the user has to be
+    // told which, because the failure is otherwise invisible until Lightroom shows nothing.
+    await withPicker(['a.ARW'], async () => {
+      const store = createBrowserFileStore();
+      const got = await store.adoptFolder([refIn('a.ARW'), refIn('missing.ARW')]);
+
+      assert.deepEqual(got?.missing, ['missing.ARW']);
+    });
+  });
+
+  it('keeps each file’s locator, since the files have not changed', async () => {
+    // Only the parent is new. A changed locator would orphan the handle the store already holds.
+    await withPicker(['a.ARW'], async () => {
+      const store = createBrowserFileStore();
+      const got = await store.adoptFolder([refIn('a.ARW')]);
+      assert.equal(got?.refs[0]?.locator, 'a.ARW');
+    });
+  });
+});

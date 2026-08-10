@@ -75,12 +75,14 @@ export function Landing({
   canPickFolder,
   busy,
   onPickPhotos,
+  onPickRaw,
   onPickFolder,
 }: {
   readonly canPickFiles: boolean;
   readonly canPickFolder: boolean;
   readonly busy: boolean;
   readonly onPickPhotos: () => void;
+  readonly onPickRaw: () => void;
   readonly onPickFolder: () => void;
 }) {
   const [showClock, setShowClock] = useState(false);
@@ -144,6 +146,15 @@ export function Landing({
             <span>{showClock ? 'Hide the clock code' : 'Sync the camera clock'}</span>
             <span className="sub">Cameras drift — one photo fixes it</span>
           </button>
+          {/*
+            Two buttons rather than one button and a format prompt.
+
+            A card holds a RAW+JPEG pair per frame, so a picker offering both lists every
+            photograph twice and you are reading extensions to tell them apart. People work in one
+            format per session — so the choice is made *before* the dialog opens, and made in one
+            press. A prompt after the button would add a step to every single import to ask a
+            question the person answered by reaching for the button.
+          */}
           {canPickFiles && (
             <button
               type="button"
@@ -151,14 +162,25 @@ export function Landing({
               onClick={onPickPhotos}
               disabled={busy}
             >
-              <span>Select photos…</span>
-              <span className="sub">JPEG only</span>
+              <span>Select JPEGs…</span>
+              <span className="sub">Individual files</span>
+            </button>
+          )}
+          {canPickFiles && canPickFolder && (
+            <button
+              type="button"
+              className="big stacked"
+              onClick={onPickRaw}
+              disabled={busy}
+            >
+              <span>Select raw…</span>
+              <span className="sub">Then name their folder</span>
             </button>
           )}
           {canPickFolder && (
             <button type="button" className="big stacked" onClick={onPickFolder} disabled={busy}>
               <span>Open a whole folder…</span>
-              <span className="sub">JPEG and raw</span>
+              <span className="sub">Everything in it</span>
             </button>
           )}
         </div>
