@@ -16,6 +16,8 @@ import { clockFromSync, type ClockSync } from './clock-sync.ts';
 import { assertValidCoordinates, type Coordinates } from './gps.ts';
 import { matchTrack, type GpxTrack, type MatchOptions } from './gpx.ts';
 import { isEmptyPlace, type Place } from './place.ts';
+// Types only, so this is erased at runtime and the two files do not form an import cycle.
+import type { LocationChoice, LocationConflict, PriorLocation } from './prior-location.ts';
 import { parseExifDateTime, photoInstant, type CameraClock, type NaiveDateTime } from './time.ts';
 import type { PhotoRef } from './storage.ts';
 
@@ -86,6 +88,7 @@ export type SessionAction =
   | { readonly kind: 'geocode'; readonly count: number }
   | { readonly kind: 'clear'; readonly count: number }
   | { readonly kind: 'revert'; readonly count: number }
+  | { readonly kind: 'prior'; readonly count: number }
   | { readonly kind: 'time-zone'; readonly timeZone: string }
   | { readonly kind: 'offset'; readonly offsetSeconds: number }
   | { readonly kind: 'sync' }
@@ -576,6 +579,91 @@ export function markSaved(session: Session, savedNames: readonly string[]): Sess
   });
 
   return { ...session, photos, edits, places, history: [], future: [] };
+}
+
+/**
+ * Take up locations an earlier session left on disk, as though they had been read from the file.
+ *
+ * These go into `existing` and **stage nothing**. That is the whole point: the coordinates are
+ * already written, so a photograph shown as placed from a copy must not then be counted as unsaved
+ * work — it would put a number on the Save button for a write that has already happened, and the
+ * only way to clear it would be to do it again.
+ *
+ * Not undoable, and there is nothing to undo. This does not change the session's *intent*; it
+ * corrects the session's belief about what is on disk, which the undo stack has no opinion about.
+ * The snapshot `commit` takes is edits, places, clock and sync, deliberately — see `SessionSnapshot`.
+ *
+ * Photographs with a staged edit are left alone. An edit is something the user has just done and a
+ * prior location is history; overwriting the first with the second would silently discard work
+ * between placing a pin and pressing Save.
+ */
+export function adoptPriorLocations(
+  session: Session,
+  adopt: readonly PriorLocation[],
+): Session {
+  if (adopt.length === 0) return session;
+
+  const byName = new Map(adopt.map((prior) => [prior.name, prior]));
+
+  const photos = session.photos.map((entry) => {
+    const prior = byName.get(entry.ref.name);
+    if (!prior || entry.error !== undefined) return entry;
+    if (session.edits.has(entry.ref.name)) return entry;
+    return { ...entry, existing: prior.coordinates };
+  });
+
+  return { ...session, photos };
+}
+
+/** A conflict and the answer given for it. */
+export interface ConflictResolution {
+  readonly conflict: LocationConflict;
+  readonly choice: LocationChoice;
+}
+
+/**
+ * Settle disagreements between a photograph and the copy an earlier session wrote.
+ *
+ * The two answers are deliberately not symmetrical, because the disk is not symmetrical:
+ *
+ *   - **`copy`** — the earlier placement wins. It goes into `existing` and nothing is staged,
+ *     because that is exactly what the file in `geotagged/` already says. No work to do.
+ *   - **`original`** — the camera's own fix wins, and the copy on disk is therefore *wrong*. So
+ *     this stages an edit, and the next save rewrites the copy to agree. Leaving it unstaged would
+ *     look tidier and be a trap: the disagreement would still be on disk, the same question would
+ *     be asked again on the next visit, and the answer given here would have achieved nothing.
+ *
+ * One history entry for the lot. Undo removes the staged edits, which is the half that is a
+ * decision; the adopted `existing` values stay, because they are facts about the disk rather than
+ * intentions — see `adoptPriorLocations`.
+ */
+export function resolvePriorConflicts(
+  session: Session,
+  resolutions: readonly ConflictResolution[],
+): Session {
+  if (resolutions.length === 0) return session;
+
+  const edits = new Map(session.edits);
+  const adopted = new Map<string, Coordinates>();
+
+  for (const { conflict, choice } of resolutions) {
+    if (choice === 'copy') {
+      adopted.set(conflict.name, conflict.prior.coordinates);
+    } else {
+      edits.set(conflict.name, conflict.original);
+    }
+  }
+
+  const photos = session.photos.map((entry) => {
+    const coordinates = adopted.get(entry.ref.name);
+    return coordinates ? { ...entry, existing: coordinates } : entry;
+  });
+
+  return commit(
+    { ...session, photos },
+    { edits, places: session.places, clock: session.clock, sync: session.sync },
+    { kind: 'prior', count: resolutions.length },
+  );
 }
 
 /**

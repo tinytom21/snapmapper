@@ -9,6 +9,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   addPhotos as addPhotosToSession,
+  adoptPriorLocations,
   applySync,
   applyTrack,
   assignLocation,
@@ -28,8 +29,10 @@ import {
   locationOf,
   markSaved,
   pendingPhotos,
+  findPriorLocations,
   readTrackFile,
   redo,
+  resolvePriorConflicts,
   redoAction,
   restoreEdits,
   revert,
@@ -45,7 +48,10 @@ import {
   type CameraClock,
   type ClockSync,
   type Coordinates,
+  type BatchRunner,
   type GpxTrack,
+  type LocationChoice,
+  type LocationConflict,
   type TrackApplyOptions,
   type MetadataBackend,
   type PhotoEntry,
@@ -53,6 +59,8 @@ import {
   type Session,
 } from '@snapmapper/core';
 
+import { ConflictPrompt } from './ConflictPrompt.tsx';
+import { readPriorLocations } from './prior-locations.ts';
 import { PlatformReport } from './PlatformReport.tsx';
 import { ReviewBar } from './ReviewBar.tsx';
 import { locatedGroups, placesByPhoto } from './PlacePanel.tsx';
@@ -251,6 +259,8 @@ export function App() {
     setReviewing(null);
     setLastSearch(null);
     setLastGeocode(null);
+    // A question about photographs that are no longer open has nothing to be an answer to.
+    setConflicts([]);
     setMenuOpen(false);
     setPane('photos');
   }, [session]);
@@ -271,6 +281,146 @@ export function App() {
     backend.current = created;
     return created;
   }, []);
+
+  /**
+   * Photographs whose file and whose earlier copy disagree about where they were taken.
+   *
+   * Queued rather than resolved: each one is a decision only the user can make. The first is on
+   * screen and the rest wait behind it — see `ConflictPrompt`.
+   */
+  const [conflicts, setConflicts] = useState<readonly LocationConflict[]>([]);
+  /** True while the output folder and any sidecars are being consulted. A second or two. */
+  const [checkingPriors, setCheckingPriors] = useState(false);
+
+  /**
+   * Find out which of these photographs an earlier session already placed, and say so.
+   *
+   * A photograph geotagged last week is *placed*, and showing it as untouched is the app being
+   * wrong about the state of the disk. The coordinates are in the copy under `geotagged/`, or in
+   * the sidecar beside a raw file; `prior-locations.ts` does the reading and
+   * `core/prior-location.ts` decides which are safe to take up without asking.
+   *
+   * Nothing here can fail the session. This is a convenience running after the photographs are
+   * already on screen, and a card that refused to open because an optional lookup threw would be a
+   * bad trade — so a failure becomes a notice and the session carries on.
+   */
+  const checkPriorLocations = useCallback(async (
+    entries: readonly PhotoEntry[],
+    metadataBackend: MetadataBackend,
+    runner: BatchRunner | undefined,
+  ): Promise<void> => {
+    setCheckingPriors(true);
+    try {
+      const { priors, problems } = await readPriorLocations(entries, store, metadataBackend, runner);
+      if (priors.length === 0) {
+        if (problems.length > 0) setNotice(describePriorProblems(problems));
+        return;
+      }
+
+      const review = findPriorLocations(entries, priors);
+
+      // Adopted straight in: already on disk, so nothing is staged and the Save button is
+      // untouched. The disagreements are queued for the prompt instead.
+      if (review.adopt.length > 0) {
+        setSession((current) => (current ? adoptPriorLocations(current, review.adopt) : current));
+      }
+      if (review.conflicts.length > 0) {
+        setConflicts((current) => [...current, ...review.conflicts]);
+      }
+
+      setNotice([
+        review.adopt.length > 0
+          ? `${review.adopt.length} photo(s) were already geotagged in an earlier session.`
+          : undefined,
+        problems.length > 0 ? describePriorProblems(problems) : undefined,
+      ].filter(Boolean).join(' ') || null);
+    } catch (cause) {
+      setNotice(
+        'Could not check for earlier geotagging: '
+        + (cause instanceof Error ? cause.message : String(cause)),
+      );
+    } finally {
+      setCheckingPriors(false);
+    }
+  }, []);
+
+  /**
+   * Answer the conflict on screen, and possibly the rest of them.
+   *
+   * `all` exists because the reason two sources disagree is usually systematic — one afternoon
+   * re-placed, or a dozen frames on a cold GPS fix — so the second question tends to have the same
+   * answer as the first. It is off by default: a disagreement is a decision.
+   *
+   * Note the deliberate absence of a `setConflicts` updater function around this. Putting the
+   * `setSession` call inside one would make it a side effect inside a state updater, which React
+   * is entitled to run twice — and does in development — applying every answer to the session
+   * twice over.
+   */
+  const resolveConflict = useCallback((choice: LocationChoice, all: boolean) => {
+    const answered = all ? conflicts : conflicts.slice(0, 1);
+    if (answered.length === 0) return;
+
+    setSession((current) => (current
+      ? resolvePriorConflicts(current, answered.map((conflict) => ({ conflict, choice })))
+      : current));
+    setConflicts(all ? [] : conflicts.slice(1));
+  }, [conflicts]);
+
+  /**
+   * What the search for earlier geotagging depends on: these photographs, and that output folder.
+   *
+   * A string rather than the objects, and that is the whole trick. Adopting a prior location
+   * produces a **new** `photos` array, so an effect keyed on the array itself would re-run, adopt
+   * again, produce another new array, and never stop. The filenames do not change when a location
+   * is adopted, so keying on them settles after one pass.
+   */
+  const priorCheckKey = useMemo(() => {
+    if (!session) return null;
+    const where = destination.kind === 'copy' ? destination.label : destination.kind;
+    return `${where}\n${session.photos.map((entry) => entry.ref.name).join('\n')}`;
+  }, [session, destination]);
+
+  const priorsCheckedFor = useRef<string | null>(null);
+
+  /**
+   * Look for earlier geotagging whenever the set of photographs or the output folder changes.
+   *
+   * An effect rather than a call at the end of loading, because **the output folder is often not
+   * known yet when the photographs are**. In folder mode the destination is prepared *after*
+   * `loadRefs` returns; through the file picker it is not chosen until the user presses a button
+   * in the destination bar, which may be minutes later. A search run at load time would find
+   * nothing in either case and never run again — the whole feature inert, with no error to notice.
+   *
+   * Keyed on names, so it settles: see `priorCheckKey`. And on the destination, so choosing the
+   * folder later is what triggers the real pass.
+   */
+  useEffect(() => {
+    if (!priorCheckKey) {
+      // The session ended. Forgetting what was checked is what lets the *same* folder, reopened,
+      // be searched again — otherwise going home and straight back in would find nothing.
+      priorsCheckedFor.current = null;
+      return;
+    }
+    if (priorsCheckedFor.current === priorCheckKey) return;
+    priorsCheckedFor.current = priorCheckKey;
+
+    // Nothing to consult until copies have somewhere to go. In-place mode has no second file at
+    // all — the original *is* the copy — so its coordinates arrived with the ordinary read.
+    if (destination.kind !== 'copy') return;
+
+    const entries = session?.photos;
+    if (!entries || entries.length === 0) return;
+
+    void (async () => {
+      // Cached page-wide, so this is free when the load has already built one. The `> 2` is
+      // `loadPhotos`'s rule: below it, booting an interpreter costs more than batching saves.
+      const runner = entries.length > 2 ? await createBatchRunner() : undefined;
+      await checkPriorLocations(entries, await getBackend(), runner);
+    })();
+    // `session` and `destination` are read through the key, deliberately: depending on them
+    // directly would re-run this every time a pin moves.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [priorCheckKey]);
 
   /**
    * Read metadata for a set of files and start a session from them.
@@ -303,6 +453,8 @@ export function App() {
       });
       setFolder(target);
       setSession(createSession(loaded.entries, keepClock ?? defaultClock()));
+      // The search for earlier geotagging is not started here — see the effect below, which
+      // covers this *and* the case where the output folder is chosen minutes later.
     } finally {
       setLoading(null);
     }
@@ -1142,6 +1294,19 @@ export function App() {
         </div>
       )}
 
+      {checkingPriors && !loading && (
+        <div className="banner">Looking for photographs geotagged in an earlier session…</div>
+      )}
+
+      {conflicts.length > 0 && (
+        <ConflictPrompt
+          conflicts={conflicts}
+          thumbnails={thumbnails}
+          onChoose={resolveConflict}
+          onDismiss={() => setConflicts([])}
+        />
+      )}
+
       {outcomes && (
         <Outcomes
           outcomes={outcomes}
@@ -1445,6 +1610,19 @@ function RestoreBanner({
 }
 
 /** What is worth telling the user about a pick, if anything. */
+/**
+ * Say that a lookup failed, without listing every file.
+ *
+ * Naming the first is enough to act on and keeps the notice one line; the count says whether it
+ * was a stray corrupt sidecar or something wrong with the whole folder.
+ */
+function describePriorProblems(problems: readonly string[]): string {
+  const [first] = problems;
+  return problems.length === 1
+    ? `Could not read an earlier location — ${first}`
+    : `Could not read ${problems.length} earlier locations — first: ${first}`;
+}
+
 function describePicked(picked: {
   skippedDuplicates: readonly string[];
   readOnly: readonly string[];

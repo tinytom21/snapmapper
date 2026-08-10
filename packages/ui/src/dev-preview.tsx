@@ -12,6 +12,7 @@
  *     (await import('/src/dev-preview.tsx')).previewFullSize()
  *     (await import('/src/dev-preview.tsx')).previewActionMenu()
  *     (await import('/src/dev-preview.tsx')).previewMap()
+ *     (await import('/src/dev-preview.tsx')).previewConflicts(3)
  *
  * Sample photos only — nothing here touches the filesystem, and no real photograph is involved.
  */
@@ -32,12 +33,15 @@ import {
   toggleSelected,
   stagedPhotos,
   unplacedPhotos,
+  distanceMetres,
   type GpxTrack,
+  type LocationConflict,
   type PhotoEntry,
   type Session,
 } from '@snapmapper/core';
 
 import { ActionMenu } from './ActionMenu.tsx';
+import { ConflictPrompt } from './ConflictPrompt.tsx';
 import { PhotoMap } from './PhotoMap.tsx';
 import { PhotoPreview } from './PhotoPreview.tsx';
 import { ReviewBar } from './ReviewBar.tsx';
@@ -383,6 +387,78 @@ export function previewActionMenu(): void {
   }
 
   render(false);
+}
+
+let conflictRoot: Root | undefined;
+let conflictHost: HTMLElement | undefined;
+
+/**
+ * The "two locations for this photograph" question, which is otherwise almost unreachable.
+ *
+ * It needs a card whose photographs were geotagged in an *earlier* session and then moved, so
+ * without this it could not be looked at on a phone-width screen without staging that situation on
+ * real files. It is also the only overlay in the app with three lines of text on each of two
+ * buttons, which is exactly the shape that overflows at 320px.
+ *
+ * `count` drives the "answer the same way for the other N" checkbox, which only appears when there
+ * is more than one — so both states need to be reachable.
+ */
+export function previewConflicts(count = 3): void {
+  /*
+   * The previous host is *removed*, not just unmounted.
+   *
+   * Unmounting empties a `<div>` and leaves it in the document. Calling this twice then left two
+   * hosts, and `document.querySelector('.conflict')` answered with the stale one — so a second
+   * measurement silently reported the first call's numbers. Found by measuring, which is the
+   * only way it would have been found: on screen the two sit exactly on top of one another.
+   */
+  conflictRoot?.unmount();
+  conflictHost?.remove();
+
+  const host = document.createElement('div');
+  document.body.append(host);
+  conflictHost = host;
+  conflictRoot = createRoot(host);
+
+  const names = ['DSC00119.JPG', 'DSC00120.JPG', 'DSC00121.JPG', 'DSC00516.ARW'];
+  const conflicts: LocationConflict[] = Array.from({ length: count }, (_, index) => {
+    const name = names[index % names.length] as string;
+    const original = { latitude: 51.4778, longitude: -0.0015 };
+    /*
+     * Varied so the distance wording is exercised across metres and kilometres — and offset from
+     * `index + 1`, never zero. A conflict a metre apart cannot occur: `samePlace` settles those
+     * without asking, so a preview showing "0 m apart" would be showing a state the app never
+     * reaches. It did, on the first cut of this harness.
+     */
+    const step = index + 1;
+    const prior = { latitude: 51.4778 + step * 0.0008, longitude: -0.0015 - step * 0.004 };
+    return {
+      name,
+      original,
+      prior: {
+        name,
+        coordinates: prior,
+        source: name.toLowerCase().endsWith('.arw') ? 'sidecar' : 'copy',
+        location: name.toLowerCase().endsWith('.arw')
+          ? name.replace(/\.[^.]+$/, '.xmp')
+          : `geotagged/${name}`,
+      },
+      metresApart: distanceMetres(original, prior),
+    };
+  });
+
+  function render(queued: readonly LocationConflict[]) {
+    conflictRoot?.render(
+      <ConflictPrompt
+        conflicts={queued}
+        thumbnails={new Map()}
+        onChoose={(_choice, all) => render(all ? [] : queued.slice(1))}
+        onDismiss={() => render([])}
+      />,
+    );
+  }
+
+  render(conflicts);
 }
 
 let mapRoot: Root | undefined;

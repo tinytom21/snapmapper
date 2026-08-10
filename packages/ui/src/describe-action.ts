@@ -27,6 +27,7 @@ export function describeAction(action: SessionAction | undefined): string {
     case 'geocode': return `name ${action.count}`;
     case 'clear': return `clear ${action.count}`;
     case 'revert': return `revert ${action.count}`;
+    case 'prior': return `resolve ${action.count}`;
     // One word each. Measured at 375px: "clock offset" left 15px of slack on the header row and
     // overflowed a 320px screen outright. The full phrasing is in the tooltip.
     case 'time-zone': return 'zone';
@@ -58,6 +59,8 @@ function longForm(action: SessionAction): string {
       return `clearing the location of ${photos(action.count)}`;
     case 'revert':
       return `reverting ${photos(action.count)} to what is on disk`;
+    case 'prior':
+      return `choosing where ${photos(action.count)} already geotagged belong`;
     case 'time-zone':
       return `the time zone change to ${action.timeZone}`;
     case 'offset':

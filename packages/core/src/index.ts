@@ -8,6 +8,7 @@ export * from './jpeg.ts';
 export * from './exiftool.ts';
 export * from './exiftool-batch.ts';
 export * from './raw.ts';
+export * from './prior-location.ts';
 export * from './xmp-sidecar.ts';
 export * from './exiftool-wasm.ts';
 export * from './session.ts';

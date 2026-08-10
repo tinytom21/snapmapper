@@ -19,13 +19,13 @@ project needs does not travel through git, the photo fixtures above all.
 
 | Path | State |
 |---|---|
-| `packages/core` | Platform-agnostic logic. **324 tests, `tsc` clean.** `gps`, `time`, `jpeg` (the splice), `exif-tags`, `exiftool` (write path), `exiftool-wasm`, `session` (staged edits, undo, named actions), `clock-sync`, `gpx` (track parsing and matching), `google-timeline` + `track-file` (Timeline import), `exiftool-batch` (batched reads), `verify-write`, `storage`. |
-| `packages/ui` | React 19 + MapLibre 5 on Vite 7. **179 tests.** `browser-file-store.ts` is the only file behind `FileStore`; `batch-runner.ts` is the only other one tied to the build, since it takes the ExifTool script from a Vite virtual module. |
+| `packages/core` | Platform-agnostic logic. **346 tests, `tsc` clean.** `gps`, `time`, `jpeg` (the splice), `exif-tags`, `exiftool` (write path), `exiftool-wasm`, `session` (staged edits, undo, named actions), `clock-sync`, `gpx` (track parsing and matching), `google-timeline` + `track-file` (Timeline import), `exiftool-batch` (batched reads), `verify-write`, `prior-location` (earlier sessions' work), `storage`. |
+| `packages/ui` | React 19 + MapLibre 5 on Vite 7. **193 tests.** `browser-file-store.ts` is the only file behind `FileStore`; `batch-runner.ts` is the only other one tied to the build, since it takes the ExifTool script from a Vite virtual module. |
 | `packages/shells` | Does not exist and is not needed. There is no native shell and no reason for one. |
 | `spike/` | Phase 0, done. Still where the write path is checked against a **native** ExifTool: `npm run splice --workspace spike` → 184 checks. |
 | `docs/PLAN.md` | Historical. Useful for intent, wrong in places. |
 
-**503 tests, `tsc` clean, production build succeeds.**
+**539 tests, `tsc` clean, production build succeeds.**
 
 ```bash
 npm test && npm run typecheck
@@ -54,12 +54,13 @@ was found:
 (await import('/src/dev-preview.tsx')).previewMap()         // the map on its own, pins and a track
 (await import('/src/dev-preview.tsx')).previewReviewBar()   // the review strip, over a stand-in map
 (await import('/src/dev-preview.tsx')).previewActionMenu()  // the phone's overflow menu
+(await import('/src/dev-preview.tsx')).previewConflicts(3)  // "two locations for this photograph"
 (await import('/src/dev-preview.tsx')).findOverlaps()       // anything painted over anything
 ```
 
 ## Deploying
 
-**Push to `main` and it ships.** `.github/workflows/deploy.yml` typechecks, runs all 503 tests,
+**Push to `main` and it ships.** `.github/workflows/deploy.yml` typechecks, runs all 539 tests,
 builds and publishes to GitHub Pages; a failing test blocks the deploy. About two minutes.
 
 The base path comes from the repository name, so renaming the repo needs no edit. A Pages project
@@ -103,38 +104,22 @@ a *"A new version is ready"* banner rather than leaving it a mystery.
   all. Midnight falls out of it rather than being special-cased, and so does the turn of the month.
   Daily *and* monthly track files work; monthly is the harder one and the one in use — see
   CLAUDE.md for the span-from-the-ends and load-window measurements.
+- **Photographs geotagged in an earlier session show as placed**, read from the copy in
+  `geotagged/` or from a raw file's `.xmp` sidecar — through `Composite:GPS*` and `XMP:GPS*`
+  respectively, which are *not* interchangeable. Where the file and the earlier copy genuinely
+  disagree the user is asked, per photograph, with a way to answer for the rest. Proved against
+  native ExifTool by `npm run prior-verify --workspace spike` (15 checks, 0 failures), including
+  that `-fast2` really does read an XMP. Read the CLAUDE.md section before touching it: the search
+  is driven by an *effect* rather than by the end of loading, because the output folder is usually
+  not known when the photographs are.
 
 ## What to pick up next
 
-**Both of the first two are designed and agreed but not started.** The design is here because it is
-the part that took the thinking; neither has a line of code yet.
+**The first of the two designed features has shipped** — see "already placed" under *What is
+settled*. The one below is designed and agreed but not started; the design is here because it is
+the part that took the thinking.
 
-### 1. Show photographs that are already placed
-
-Asked for directly: a photograph that has already been geotagged in an earlier session should appear
-on the map as placed, rather than looking untouched. The coordinates are on disk already — they are
-just not in the file being read.
-
-They live in two places and are read two different ways:
-
-- **JPEG** — the copy at `geotagged/<name>`. Read `Composite:GPSLatitude` / `Composite:GPSLongitude`.
-- **Raw** — the sidecar `<base>.xmp` beside the file. Read **`XMP:GPSLatitude` / `XMP:GPSLongitude`** —
-  *not* Composite. An XMP has no `Composite:GPSLatitude` to compose from; the value *is* the XMP
-  tag. This was found the hard way building `verifySidecar` in `save.ts`.
-
-Both fold into `PhotoEntry.existing`, so they render as placed with no change to the map at all.
-
-**Cost was discussed and accepted.** One directory listing finds which exist — cheap, no file is
-opened — then a batched read of those that do: about 43 ms per photograph, so fifty is roughly two
-seconds on top of the load. The user explicitly said they will take that hit.
-
-**The trap is precedence, and it needs deciding rather than falling out.** This introduces a second
-source of truth for where a photograph is. If the original carries GPS and the copy disagrees —
-an earlier session placed it somewhere else — one has to win. The copy is later, so the copy should
-win, and the interface should say so rather than silently preferring one. Related: a photograph
-shown as placed *from a copy* must not then appear as unsaved work.
-
-### 2. Thumbnail markers on the map
+### 1. Thumbnail markers on the map
 
 Replace the circular pin with a rounded rectangle holding the photograph's thumbnail, so individual
 frames can be told apart on the map. MapLibre markers are DOM elements, so this is a `<div>` around
@@ -151,11 +136,11 @@ Three things to get right:
   colourful map, and they are the reason the pins do not need to compete on colour — see the vector
   tiles section of `CLAUDE.md`.
 
-### 3. Video
+### 2. Video
 
 Wanted eventually, not now. ExifTool writes GPS to MP4/MOV.
 
-### 4. Code-split the ~1.5MB bundle
+### 3. Code-split the ~1.5MB bundle
 
 Fine on a desktop, worth it on mobile data. It is precached, so it is paid once per version rather
 than per visit.

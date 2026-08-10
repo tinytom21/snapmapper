@@ -489,6 +489,61 @@ backstop. **`PHOTO_PATTERN` in `browser-file-store.ts` must include `arw`.** It 
 alone would have shipped the whole feature inert: raw can only be *saved* from a folder, so a folder
 listing that hides ARW hides the only route raw has.
 
+### Photographs geotagged last week show as placed, and a disagreement is a question
+
+`prior-location.ts` in core decides, `prior-locations.ts` in the UI reads, `ConflictPrompt.tsx`
+asks. A photograph done in an earlier session *is* placed — the coordinates are on disk, just not
+in the file being read, because saving writes a copy and leaves the original alone.
+
+- **Two files, two tags, and they are not interchangeable.** A JPEG copy at `geotagged/<name>` is
+  read through `Composite:GPSLatitude`; a raw file's sidecar through **`XMP:GPSLatitude`**. An XMP
+  has no Composite value — there is nothing to compose it from — so asking the wrong one returns
+  nothing and the raw photograph goes on looking unplaced with no error anywhere.
+- **`-fast2` does read an XMP, and that was an assumption until it was measured.** `readManyTags`
+  passes it, and it is already known to skip maker notes — which is why the verification read is
+  forbidden from using it. `npm run prior-verify --workspace spike` puts a real geotagged copy and
+  a real sidecar through **one mixed invocation** and checks both against native ExifTool:
+  **15 checks, 0 failures.**
+- **One directory listing decides what to open.** No file is opened speculatively, so a card of a
+  thousand untouched frames costs one enumeration rather than a thousand failed opens. Only the
+  copies that exist are read, batched, at ~43 ms each.
+- **Adopting stages nothing.** These coordinates are already written, so a photograph shown as
+  placed from a copy must not then be counted as unsaved work — that would put a number on the Save
+  button for a write that has already happened, clearable only by doing it again.
+
+**The precedence rule is asked, not decided**, because neither source is automatically right: the
+camera's own fix can be a cold start, and the earlier placement can be last week's mistake. Only a
+genuine disagreement is raised — `SAME_PLACE_METRES` is 1 m, and it is deliberately not zero,
+because a coordinate that has been through EXIF's rationals and back is not the decimal that went
+in and an exact comparison would question every photograph ever saved.
+
+The two answers are **not symmetrical, because the disk is not**. *Use the copy* sets `existing`
+and stages nothing — the file already says so. *Keep the original* stages an edit, so the next save
+rewrites the copy; leaving it unstaged would look tidier and be a trap, since the disagreement
+would still be on disk and the same question would come back next visit having achieved nothing.
+
+**It is driven by an effect, not by the end of loading, and that is load-bearing.** The output
+folder is usually not known when the photographs are: in folder mode the destination is prepared
+*after* `loadRefs` returns, and through the file picker it is not chosen until somebody presses a
+button in the destination bar. A search run at load time finds nothing in either case and never
+runs again — the whole feature inert, with nothing to notice. Shipped that way for an hour.
+
+**The effect is keyed on filenames, never on `session.photos`.** Adopting produces a new array, so
+an effect watching the array re-runs, adopts, produces another array, and never settles. A test
+pins the invariant that adopting cannot change a name.
+
+Two measured things about the prompt. Its sub-labels run at **full opacity**, unlike every other
+`button.stacked .sub`: those are footnotes, these are the coordinates being chosen between —
+measured on the painted pixels in the light theme, **4.44:1 at 0.85 and 6.13:1 at 1**. And the
+touch target is the **label**, not the tick box: 40px measured, where growing the box to 24px would
+have made a large square sit in a line of 13px text.
+
+**Known and accepted: choosing *use the copy* is asked again next session.** The original is never
+written, so only changing the copy can erase a disagreement, and that answer deliberately changes
+nothing on disk. It is rare in the workflow this is for — an A6400 has no GPS receiver, so its
+originals carry none and the common case is the silent one. Remembering answers is the fix if it
+ever becomes annoying.
+
 ### Three small things that carry their weight
 
 - **Unplaced.** `unplacedPhotos` and one button. A match that places 38 of 45 leaves seven

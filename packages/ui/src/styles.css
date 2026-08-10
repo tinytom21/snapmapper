@@ -1363,3 +1363,119 @@ button.stacked .sub {
 }
 .banner.line span { min-width: 0; }
 .banner.line button { margin: 0 0 0 auto; flex: none; }
+
+/* --- Two locations for one photograph ----------------------------------- */
+
+/*
+ * A question, not a view, so it sits above everything and offers no way out but an answer.
+ *
+ * Above `.preview-backdrop`'s z-index of 10 deliberately: the preview can be opened over a
+ * session, and a question hidden behind a photograph is a session that appears to have frozen.
+ */
+.conflict-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  background: rgb(0 0 0 / 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+}
+
+.conflict {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 1.1rem;
+  /* `min()` rather than a bare max-width: at 320px a fixed 26rem would overflow the padding. */
+  width: min(26rem, 100%);
+  /* The overlay must scroll rather than the page behind it — the page behind it is 100dvh. */
+  max-height: 100%;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  box-shadow: 0 8px 32px rgb(0 0 0 / 0.35);
+}
+
+.conflict h2 { font-size: 1.05rem; margin: 0; }
+.conflict > .note { margin: 0; }
+
+.conflict-photo { display: flex; align-items: center; gap: 0.6rem; min-width: 0; }
+/*
+ * 3:2 with `object-fit: cover`, like the list.
+ *
+ * The camera's embedded thumbnail is a 3:2 frame letterboxed into 160x120, so a 4:3 box here
+ * would show the black bars — the exact bug the photo list carried for months.
+ */
+.conflict-photo img {
+  width: 96px;
+  aspect-ratio: 3 / 2;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+  flex: none;
+}
+.conflict-noshot {
+  width: 96px;
+  aspect-ratio: 3 / 2;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  flex: none;
+}
+.conflict-photo .name {
+  font-family: ui-monospace, monospace;
+  font-weight: 600;
+  /* The filename is the one thing here that can be arbitrarily long. */
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.conflict-apart { margin: 0; }
+
+/*
+ * Stacked, never side by side.
+ *
+ * Two three-line buttons in a row are ~11rem each, so they would collide below about 24rem — and
+ * this is a decision, not a toolbar: reading one option fully before the next is the point.
+ */
+.conflict-choices { display: flex; flex-direction: column; gap: 0.5rem; }
+.conflict-choices button { width: 100%; text-align: center; }
+/*
+ * Full opacity, unlike every other `button.stacked .sub` in the application.
+ *
+ * Elsewhere a sub-label is a footnote — the formats a picker accepts — and 0.85 is right for it.
+ * Here the two lines under each label *are* the decision: a pair of coordinates and where they
+ * came from. Dimming the only content that distinguishes the two buttons is the wrong emphasis,
+ * and it is also below AA. Measured on the painted pixels, light theme, 12.16px:
+ * **4.44:1 at 0.85, 6.13:1 at 1**. Opacity is composited, so the inherited value cannot be read
+ * off the palette — it has to be measured.
+ */
+.conflict-choices button .sub { opacity: 1; }
+
+/*
+ * The label is the touch target, not the tick box.
+ *
+ * A tick box cannot be made comfortably tappable by growing it — at 24px it is a large square in
+ * a line of 13px text and reads as a button. So the padding goes on the label, which is clickable
+ * for free because it wraps the input, and the measured height of the whole row is what has to
+ * clear the minimum. Measured at 320px: 40px.
+ */
+.conflict-all {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  padding: 0.5rem 0;
+  cursor: pointer;
+}
+.conflict-all input { width: 1.1rem; height: 1.1rem; flex: none; }
+
+.conflict-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+.conflict-footer .note { margin: 0; font-size: 0.8rem; }

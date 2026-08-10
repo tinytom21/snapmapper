@@ -38,7 +38,7 @@
  */
 
 import type { FileStore, FolderHandle, PhotoRef, WrittenFile } from '@snapmapper/core';
-import { FileWriteError } from '@snapmapper/core';
+import { FileWriteError, sidecarName } from '@snapmapper/core';
 import {
   forgetFolder,
   regrantFolder,
@@ -231,6 +231,36 @@ export interface BrowserFileStore extends FileStore {
 
   /** The remembered output folder, so copies are asked about once ever rather than once a visit. */
   restoreOutputFolder(): Promise<SaveDestination | undefined>;
+
+  /**
+   * Names of the files an earlier session already wrote into the output folder.
+   *
+   * A directory enumeration and nothing more — no file is opened and no metadata is read, so this
+   * costs the same whether the folder holds three copies or three thousand. That is what makes
+   * "which of these have I already done" answerable before deciding what to actually read.
+   *
+   * Empty when saves are not going to a copy folder. In-place mode has no second file to consult:
+   * the original *is* the copy, and its coordinates arrived with the ordinary metadata read.
+   */
+  listOutputNames(): Promise<ReadonlySet<string>>;
+
+  /**
+   * The first bytes of a file in the output folder, by name.
+   *
+   * A head, like `readHead`, and for the same reason: only the header is needed to read GPS out of
+   * a JPEG, and a phone should not pull seven megabytes off a card per photograph to find out where
+   * it already is. `undefined` when there is no such file, which is the ordinary answer.
+   */
+  readOutputHead(name: string, maxBytes: number): Promise<Uint8Array | undefined>;
+
+  /**
+   * The XMP sidecar beside a photograph, whole, or `undefined` if there is none.
+   *
+   * Whole rather than a head because a sidecar is a few hundred bytes of XML. Needs the
+   * photograph's folder, so it answers `undefined` for individually picked files — the same
+   * limitation that stops `writeSidecar` working there.
+   */
+  readSidecar(ref: PhotoRef): Promise<Uint8Array | undefined>;
 }
 
 export interface TrackFolder {
@@ -646,6 +676,45 @@ export function createBrowserFileStore(): BrowserFileStore {
         replacedOriginal: false,
         read: async () => new Uint8Array(await (await output.getFile()).arrayBuffer()),
       };
+    },
+
+    async listOutputNames(): Promise<ReadonlySet<string>> {
+      const names = new Set<string>();
+      // In-place and copy-pending both have nothing to list: no second file exists yet.
+      if (destination.kind !== 'copy') return names;
+
+      for await (const [name, handle] of destination.directory.entries()) {
+        if (handle.kind === 'file') names.add(name);
+      }
+      return names;
+    },
+
+    async readOutputHead(name: string, maxBytes: number): Promise<Uint8Array | undefined> {
+      if (destination.kind !== 'copy') return undefined;
+
+      try {
+        const handle = await destination.directory.getFileHandle(name);
+        const file = await handle.getFile();
+        // `Blob.slice` is a view, so only these bytes leave the disk — and one `arrayBuffer()`
+        // on the slice, never on the Blob, for the reason in core's exiftool.ts.
+        return new Uint8Array(await file.slice(0, maxBytes).arrayBuffer());
+      } catch {
+        // Gone between the listing and the read, or never there. Not an error worth raising:
+        // the answer to "is there a prior copy of this" is simply no.
+        return undefined;
+      }
+    },
+
+    async readSidecar(ref: PhotoRef): Promise<Uint8Array | undefined> {
+      const directory = (ref.folder as Partial<BrowserFolder>).directory;
+      if (!directory) return undefined;
+
+      try {
+        const handle = await directory.getFileHandle(sidecarName(ref.name));
+        return new Uint8Array(await (await handle.getFile()).arrayBuffer());
+      } catch {
+        return undefined;
+      }
     },
 
     async writeAtomic(ref: PhotoRef, bytes: Uint8Array): Promise<WrittenFile> {

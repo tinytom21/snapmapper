@@ -17,7 +17,8 @@
     "batch-read": "node src/batch-read.mjs",
     "batch-verify": "node src/batch-verify.mjs",
     "xmp": "node src/xmp-sidecar.mjs",
-    "arw": "node src/arw-read.mjs"
+    "arw": "node src/arw-read.mjs",
+    "prior-verify": "node src/prior-verify.mjs"
   },
   "dependencies": {
     "@uswriting/exiftool": "latest",

@@ -130,6 +130,34 @@ export function formatDms(decimalDegrees: number): string {
   return `${degrees} deg ${minutes}' ${secondsText}"`;
 }
 
+/** Mean Earth radius, metres. WGS-84's semi-major axis is 6378137; this is the IUGG mean. */
+const EARTH_RADIUS_METRES = 6371008.8;
+
+/**
+ * Great-circle distance between two positions, in metres.
+ *
+ * Haversine rather than the spherical law of cosines, which loses precision to floating point at
+ * short distances — and short distances are the whole use here: telling "the same fix, rounded
+ * differently" from "somewhere else entirely" when two records disagree about one photograph.
+ *
+ * A sphere, not an ellipsoid. The error against Vincenty is a few tenths of a percent, which for
+ * "are these the same place, and if not how far apart" is far below the question's own resolution.
+ * Altitude is ignored deliberately: two readings of the same spot routinely differ by tens of
+ * metres vertically, and folding that in would report a horizontal disagreement that is not there.
+ */
+export function distanceMetres(a: Coordinates, b: Coordinates): number {
+  const toRadians = Math.PI / 180;
+  const lat1 = a.latitude * toRadians;
+  const lat2 = b.latitude * toRadians;
+  const deltaLat = (b.latitude - a.latitude) * toRadians;
+  const deltaLon = (b.longitude - a.longitude) * toRadians;
+
+  const h = Math.sin(deltaLat / 2) ** 2
+    + Math.cos(lat1) * Math.cos(lat2) * Math.sin(deltaLon / 2) ** 2;
+
+  return 2 * EARTH_RADIUS_METRES * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
 function roundTo(value: number, decimals: number): number {
   const factor = 10 ** decimals;
   return Math.round(value * factor) / factor;
