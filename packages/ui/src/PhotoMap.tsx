@@ -293,6 +293,8 @@ export function PhotoMap({
       const element = document.createElement('button');
       element.type = 'button';
       element.title = pin.name;
+      // Added, not assigned — `paint` only ever toggles, for the reason recorded there.
+      element.classList.add('pin');
 
       /*
        * The image is created once and kept, rather than added and removed as the marker changes
@@ -457,7 +459,22 @@ function drawTrack(
 function paint(element: HTMLElement, pin: MapPin, crowded: ReadonlySet<string>): void {
   const tile = showsThumbnail(pin, crowded);
 
-  element.className = tile ? 'pin pin-tile' : 'pin';
+  /*
+   * **Toggle classes. Never assign `className`.**
+   *
+   * MapLibre adds `maplibregl-marker` to this element in the `Marker` constructor, and that class
+   * is what carries `position: absolute`. Assigning `className` wholesale removes it, and the
+   * markers fall into normal document flow: every one keeps the correct inline `transform`, but it
+   * is now an offset from wherever the element happened to land in the flow rather than from the
+   * top-left of the map. Measured with three markers on identical coordinates and therefore an
+   * identical transform, rendering at x = 585, 705 and 721.
+   *
+   * On screen that is a neat, evenly-spaced row of photographs across the map, and it is the worst
+   * failure this application can have short of writing a wrong coordinate: the map is lying about
+   * where the photographs are. Shipped for one commit, reported immediately, and worth the size of
+   * this comment — a one-word change from `classList.toggle` to `className =` reintroduces it.
+   */
+  element.classList.toggle('pin-tile', tile);
   element.classList.toggle('pin-pending', pin.pending);
   element.classList.toggle('pin-selected', pin.selected);
   element.style.zIndex = String(markerZIndex(pin));

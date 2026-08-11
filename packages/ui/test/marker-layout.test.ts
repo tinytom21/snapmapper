@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
 import { describe, it } from 'node:test';
 
 import {
@@ -121,5 +123,41 @@ describe('stacking order', () => {
       markerZIndex({ selected: true, pending: true }),
       markerZIndex({ selected: true, pending: false }),
     );
+  });
+});
+
+/**
+ * Read back out of `PhotoMap.tsx`, because the mistake was a DOM write and there is no DOM here.
+ *
+ * A grep is a poor test in general and the right one for this: what went wrong was not a wrong
+ * value but a wrong *kind of assignment*, in one line, with no observable consequence until the
+ * markers were on a real map. The same shape as the rule in `styles.test.ts` forbidding a literal
+ * `color: #fff` beside an accent background.
+ */
+const photoMap = await readFile(
+  path.join(import.meta.dirname, '..', 'src', 'PhotoMap.tsx'),
+  'utf8',
+);
+
+describe('the marker element MapLibre is positioning', () => {
+  it('never has its className assigned wholesale', () => {
+    /*
+     * The bug this pins reached the user, and it is the worst kind this application can have short
+     * of writing a wrong coordinate: the map lying about where photographs are.
+     *
+     * MapLibre adds `maplibregl-marker` in the `Marker` constructor and that class carries
+     * `position: absolute`. Assigning `className` removes it, the markers drop into normal
+     * document flow, and each one's correct inline transform becomes an offset from wherever it
+     * landed in the flow. Measured: three markers on identical coordinates, identical transforms,
+     * rendering at x = 585, 705 and 721 — an evenly spaced row of photographs across the map.
+     */
+    const offenders = [...photoMap.matchAll(/^.*\.className\s*=[^=].*$/gm)]
+      .map((match) => match[0].trim());
+
+    assert.deepEqual(offenders, [], 'use classList.add / classList.toggle on a marker element');
+  });
+
+  it('is given its base class by adding, not by replacing', () => {
+    assert.match(photoMap, /classList\.add\('pin'\)/);
   });
 });

@@ -573,6 +573,37 @@ Measured live: 12 markers, 2 tiles at 52x35 and 10 dots at whole-of-France zoom;
 and back to 2 at z12**; selecting a dot in the huddle turned it into a 62px tile at z-index 3 above
 a maximum of 2 elsewhere. Two pins on identical coordinates stay dots at every zoom, correctly.
 
+#### Never assign `className` on a marker element
+
+The worst bug this application has had short of writing a wrong coordinate, and it shipped for one
+commit. **The map lied about where the photographs were**: they drew as an evenly spaced horizontal
+row across the county, which is unmistakable in a screenshot and impossible to explain away.
+
+MapLibre adds `maplibregl-marker` in the `Marker` constructor, and that class is what carries
+`position: absolute`. `paint` assigned `element.className = tile ? 'pin pin-tile' : 'pin'`, which
+removed it. The markers dropped into normal document flow, and each one's *correct* inline
+`transform` then offset it from wherever it had landed in the flow rather than from the map's
+origin. Measured: three markers on identical coordinates with identical transforms, rendering at
+x = 585, 705 and 721.
+
+Two things make it worth this much text. The inline transform is still right, so nothing in the
+code looks wrong and no error is raised. And the old code was `classList.toggle`, so the regression
+was a one-word change while adding a third class. A test greps `PhotoMap.tsx` for any `.className =`
+— a poor kind of test in general and the right one here, because what went wrong was a *kind of
+assignment* with no consequence until the markers were on a real map.
+
+Fixed and measured across z6–z19, dots and tiles, selected and not: **worst error 0.05 px** between
+where MapLibre computed the coordinate and where the element is painted, and the anchor holds while
+a selected tile grows from 52px to 62px. Note that measuring this in metres is useless — at z6 one
+pixel is 2.4 km, so a pixel-perfect marker reports half a kilometre of "drift". Pixels are the only
+honest unit.
+
+Related, and the reason the shape looks as it does: **a `transform` in the stylesheet is dead on a
+marker**, because MapLibre's inline one always wins. `.pin` carried `transform: rotate(-45deg)` for
+months to turn the teardrop's square corner downwards, and it never applied once — the dot is a
+circle with one square corner, which is what has shipped all along. The declaration is gone; the
+shape is left alone.
+
 #### Effects that ran before the map existed never ran again
 
 Found by this feature and **not caused by it**. The map is built *asynchronously* — the style is

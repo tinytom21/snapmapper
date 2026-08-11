@@ -655,12 +655,18 @@ label.check input[type='checkbox'] {
  * Note the two are one element, not two kinds of marker. A photograph moves between the shapes
  * constantly, and rebuilding the element would drop the decoded image and the drag MapLibre is
  * tracking on it. `z-index` is set inline per marker — see `markerZIndex`.
+ *
+ * **Do not put `transform` on a marker.** MapLibre positions each one with an inline
+ * `transform: translate(…)` and an inline style beats any stylesheet, so a `transform` here is
+ * dead the moment the marker is placed. This carried a `rotate(-45deg)` for months, meant to turn
+ * the teardrop's square corner downwards; it never once applied, which is why the dot renders as a
+ * circle with one square corner. Left as it is because that is the shape actually in use and
+ * shipped — rotating it now would be a change nobody asked for, dressed as a fix.
  */
 .pin {
   width: 16px;
   height: 16px;
   border-radius: 50% 50% 50% 0;
-  transform: rotate(-45deg);
   background: var(--accent);
   border: 2px solid #fff;
   box-shadow: 0 1px 3px rgb(0 0 0 / 0.4);
@@ -688,8 +694,6 @@ label.check input[type='checkbox'] {
   height: auto;
   aspect-ratio: 3 / 2;
   border-radius: var(--radius-sm);
-  /* Undo the teardrop: a rectangle rotated 45 degrees is a diamond. */
-  transform: none;
   background: var(--surface);
 }
 .pin.pin-tile > img {
