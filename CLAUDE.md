@@ -1087,6 +1087,16 @@ Three things worth not undoing:
 - **`ATTRIBUTION` is passed to the control directly.** The style's own credit arrives with its
   TileJSON, so it is missing while loading and missing entirely if the style fails. OpenStreetMap's
   licence has no loading state.
+- **`attributionControl: false` on the map, because MapLibre adds one of its own.** Without it,
+  adding ours made *two* credit banners stacked at the bottom of the map, each with its own (i)
+  button, saying nearly the same thing twice across two lines of a phone screen. Reported from a
+  device; measured at one control and 24px afterwards.
+- **`ATTRIBUTION` credits OpenStreetMap and deliberately not OpenFreeMap**, and the raster
+  fallback's source shares the identical constant rather than a string that reads the same. Both
+  are the same trap: MapLibre merges every attribution it can find and dedupes only *exact*
+  matches, so anything said twice in slightly different words is printed twice. Nothing is owed to
+  a tile host whose tiles never arrived, whereas the OSM credit has to survive a style that never
+  loads — which is the whole reason the constant exists.
 
 `pixelRatio` is capped at 2. Past that the difference is invisible at arm's length while the GPU
 fills nine times the pixels of a 1x screen, which costs frames when panning on a mid-range phone.

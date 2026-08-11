@@ -169,6 +169,17 @@ export function PhotoMap({
        * vector tiles.
        */
       pixelRatio: Math.min(window.devicePixelRatio || 1, 2),
+      /*
+       * **Off, because we add our own below.**
+       *
+       * MapLibre adds an `AttributionControl` of its own unless told not to, so adding one made
+       * two: a second credit banner stacked under the first, each with its own (i) button, taking
+       * two lines of a phone screen to say almost the same thing twice. Reported from a device.
+       *
+       * Ours is the one to keep — it carries `ATTRIBUTION` directly, so the credit is there while
+       * the style is still loading and stays there if the style never loads at all.
+       */
+      attributionControl: false,
     });
 
     instance.addControl(new maplibregl.NavigationControl(), 'top-right');

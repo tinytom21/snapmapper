@@ -37,6 +37,12 @@ describe('the tile source', () => {
     assert.doesNotMatch(JSON.stringify(RASTER_FALLBACK), /key=|token=/i);
     // Attribution is not optional, and it is easy to lose in a refactor.
     assert.match(JSON.stringify(RASTER_FALLBACK), /OpenStreetMap/);
+    /*
+     * The identical string, not an equivalent one. MapLibre dedupes attributions by exact match,
+     * so a plain-text credit here beside the linked one in `ATTRIBUTION` renders as two entries
+     * saying the same thing.
+     */
+    assert.equal(source && 'attribution' in source ? source.attribution : null, ATTRIBUTION);
   });
 });
 
@@ -102,8 +108,17 @@ describe('ATTRIBUTION', () => {
     // The style's own attribution arrives with its TileJSON, so it is missing while loading and
     // missing altogether if the style fails. The licence has no loading state.
     assert.match(ATTRIBUTION, /OpenStreetMap/);
-    assert.match(ATTRIBUTION, /OpenFreeMap/);
     assert.match(ATTRIBUTION, /openstreetmap\.org\/copyright/);
+  });
+
+  it('does not credit OpenFreeMap, because the style credits itself', () => {
+    /*
+     * The style says "OpenFreeMap © OpenMapTiles Data from OpenStreetMap" the moment it loads, and
+     * MapLibre merges that with this — so naming OpenFreeMap here printed it twice in one banner.
+     * Nothing is owed to a tile host whose tiles never arrived; the OSM credit above is a licence
+     * requirement and is the part that has to survive a style that never loads.
+     */
+    assert.doesNotMatch(ATTRIBUTION, /OpenFreeMap/);
   });
 });
 

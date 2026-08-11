@@ -51,6 +51,24 @@ export const VECTOR_STYLE_URL = 'https://tiles.openfreemap.org/styles/liberty';
  * deeper zoom and packing it into fewer CSS pixels would sharpen the image at the cost of four
  * times the requests to a service whose usage policy asks precisely that you do not.
  */
+/**
+ * Credit shown whatever happens.
+ *
+ * The style's own attribution arrives with its TileJSON, which means it is absent while the style
+ * is loading and absent entirely if the style fails. OpenStreetMap's licence does not have a
+ * loading state, so this is passed to the attribution control directly.
+ *
+ * **OpenStreetMap only, and OpenFreeMap deliberately not.** The style credits itself the moment it
+ * loads — "OpenFreeMap © OpenMapTiles Data from OpenStreetMap" — so naming it here as well printed
+ * it twice in one banner. There is nothing owed to a tile host whose tiles never arrived, whereas
+ * the OSM credit is a licence requirement and has to survive a style that does not load, which is
+ * exactly why this constant exists. MapLibre merges the two, so what is left is the canonical
+ * wording and a link, followed by whatever the style says for itself.
+ */
+export const ATTRIBUTION =
+  '<a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">'
+  + '© OpenStreetMap contributors</a>';
+
 export const RASTER_FALLBACK: StyleSpecification = {
   version: 8,
   sources: {
@@ -59,7 +77,16 @@ export const RASTER_FALLBACK: StyleSpecification = {
       tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
       tileSize: 256,
       maxzoom: 19,
-      attribution: '© OpenStreetMap contributors',
+      /*
+       * The very same string as `ATTRIBUTION`, not a copy that says the same thing.
+       *
+       * MapLibre dedupes attributions by exact match, so a plain-text credit here beside a linked
+       * one from the custom attribution is two entries that read identically — "© OpenStreetMap
+       * contributors | © OpenStreetMap contributors" in the one place nobody wants clutter.
+       * Sharing the constant makes them one entry, and keeps the style self-describing for
+       * anything that loads it without our control.
+       */
+      attribution: ATTRIBUTION,
     },
   },
   layers: [{ id: 'osm', type: 'raster', source: 'osm' }],
@@ -76,18 +103,7 @@ export function tileChoiceFrom(search: string): 'vector' | 'raster' {
   return new URLSearchParams(search).get('tiles') === 'raster' ? 'raster' : 'vector';
 }
 
-/**
- * Credit shown whatever happens.
- *
- * The style's own attribution arrives with its TileJSON, which means it is absent while the style
- * is loading and absent entirely if the style fails. OpenStreetMap's licence does not have a
- * loading state, so this is passed to the attribution control directly.
- */
-export const ATTRIBUTION = [
-  '<a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">'
-  + '© OpenStreetMap contributors</a>',
-  '<a href="https://openfreemap.org" target="_blank" rel="noreferrer">OpenFreeMap</a>',
-].join(' · ');
+
 
 /**
  * How much earlier each kind of label should appear, in zoom levels.

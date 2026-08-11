@@ -217,6 +217,20 @@ describe('the marker element MapLibre is positioning', () => {
     assert.deepEqual(offenders, [], 'use classList.add / classList.toggle on a marker element');
   });
 
+  it('turns off the attribution control MapLibre would add for itself', () => {
+    /*
+     * MapLibre adds an `AttributionControl` unless the map is told not to, and this file adds one
+     * too — so without this the map carried two credit banners stacked on top of each other, each
+     * with its own (i) button, taking two lines of a phone screen to say nearly the same thing
+     * twice. Reported from a device.
+     *
+     * Ours is the one to keep: it carries `ATTRIBUTION` directly, so the credit is present while
+     * the style is still loading and stays present if the style never loads at all.
+     */
+    assert.match(photoMap, /attributionControl:\s*false/);
+    assert.equal((photoMap.match(/new maplibregl\.AttributionControl/g) ?? []).length, 1);
+  });
+
   it('is given its base class by adding, not by replacing', () => {
     assert.match(photoMap, /classList\.add\('pin'\)/);
   });
