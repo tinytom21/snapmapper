@@ -18,6 +18,20 @@ import { describe, it } from 'node:test';
 import { contrastRatio } from '../src/contrast.ts';
 import { THUMB_WIDTH_PX } from '../src/marker-layout.ts';
 
+/**
+ * The body of one rule, found by its exact selector.
+ *
+ * Anchored to the start of a line and required to be followed by `{`, so `.pin` cannot match
+ * `.pin-body` or `.pin.pin-tile` — a prefix match would quietly test the wrong rule and pass.
+ * Built with `String.raw` at every call site: in a plain template literal `\.` is just `.` and
+ * `\s` is a literal `s`, which silently produces a pattern that matches nothing.
+ */
+function ruleBody(css: string, selector: string): string {
+  const match = new RegExp(String.raw`^${selector}\s*\{([\s\S]*?)\}`, 'm').exec(css);
+  if (!match) throw new Error(`no rule for ${selector} in styles.css`);
+  return match[1] as string;
+}
+
 const css = await readFile(
   path.join(import.meta.dirname, '..', 'src', 'styles.css'),
   'utf8',
@@ -125,6 +139,9 @@ describe('the palette in styles.css', () => {
     assert.match(rule, /grid-auto-rows:\s*max-content/);
   });
 
+  /** `ruleBody` bound to this file's stylesheet, so each call site reads as one line. */
+  const block = (selector: string) => ruleBody(css, selector);
+
   it('draws a marker tile at exactly the width the crowding rule assumes', () => {
     /*
      * The two have to agree, and nothing else would notice if they stopped.
@@ -134,7 +151,7 @@ describe('the palette in styles.css', () => {
      * the rule goes on permitting tiles that now overlap; narrow it and the map hides pictures
      * that would have fitted. Either way it looks like a judgement call rather than a bug.
      */
-    const rule = /\.pin\.pin-tile\s*\{([\s\S]*?)\}/.exec(css)?.[1] ?? '';
+    const rule = block(String.raw`\.pin\.pin-tile \.pin-body`);
     const width = /--marker-thumb-w:\s*(\d+)px/.exec(rule)?.[1];
 
     assert.equal(Number(width), THUMB_WIDTH_PX);
@@ -143,25 +160,54 @@ describe('the palette in styles.css', () => {
   it('keeps the white outline and the drop shadow on both marker shapes', () => {
     // What makes a marker findable against Liberty's colourful ground, and the reason markers do
     // not have to compete on colour — which is what lets a photograph fill one.
-    const dot = /\.pin\s*\{([\s\S]*?)\}/.exec(css)?.[1] ?? '';
+    const dot = block(String.raw`\.pin-body`);
     assert.match(dot, /border:\s*2px solid #fff/);
     assert.match(dot, /box-shadow:/);
 
     // The tile keeps the border by not overriding it, and restates the shadow in each state ring.
-    const tile = /\.pin\.pin-tile\s*\{([\s\S]*?)\}/.exec(css)?.[1] ?? '';
+    const tile = block(String.raw`\.pin\.pin-tile \.pin-body`);
     assert.doesNotMatch(tile, /border:/, 'the tile must inherit the white border, not replace it');
-    /*
-     * Built with `String.raw`, not a plain template literal.
-     *
-     * In a normal template literal `\.` is just `.` and `\s` is a literal `s`, so the pattern
-     * silently becomes `.pin.pin-tile.pin-pendings*{` and matches nothing — a test that fails for
-     * a reason that has nothing to do with the stylesheet. It did exactly that once.
-     */
     for (const state of ['pin-pending', 'pin-selected']) {
-      const pattern = String.raw`\.pin\.pin-tile\.${state}\s*\{([\s\S]*?)\}`;
-      const ring = new RegExp(pattern).exec(css)?.[1] ?? '';
+      const ring = block(String.raw`\.pin\.pin-tile\.${state} \.pin-body`);
       assert.match(ring, /box-shadow:[^;]*rgb\(0 0 0/, `${state} must restate the drop shadow`);
     }
+  });
+
+  it('reserves room for the leader on the wrapper MapLibre positions', () => {
+    /*
+     * This is what makes the marker point at the right place, and it is easy to undo by accident.
+     *
+     * The marker is anchored `bottom`, so the wrapper's bottom edge sits on the coordinate. The
+     * leader is drawn inside the wrapper's own bottom padding, which is why its tip lands exactly
+     * there and why a marker that changes shape does not move. Take the padding away and the
+     * picture drops onto the coordinate with the leader hanging below it, pointing at nothing —
+     * and nothing would fail except the thing the leader was added to promise.
+     */
+    const wrapper = block(String.raw`\.pin`);
+    assert.match(wrapper, /--leader:\s*\d+px/);
+    assert.match(wrapper, /padding:\s*0 0 var\(--leader\)/);
+
+    const leader = block(String.raw`\.pin::after`);
+    assert.match(leader, /bottom:\s*0/);
+    assert.match(leader, /border-top:\s*var\(--leader\) solid #fff/);
+  });
+
+  it('never positions or transforms the element MapLibre positions', () => {
+    /*
+     * `.pin` is MapLibre's element, not ours, and both halves of this have already bitten.
+     *
+     * `position`: `.maplibregl-marker` sets `position: absolute`, which is what takes a marker out
+     * of the flow. `.pin` has the same specificity and this stylesheet loads later, so a
+     * `position` here wins — a `position: relative` added to anchor the leader put every marker
+     * back into normal flow, stacking them one marker-height apart: measured at 57, 114, 171 …
+     * 627 pixels out, an exact multiple per marker.
+     *
+     * `transform`: MapLibre sets an inline one, and inline beats the stylesheet, so `.pin` carried
+     * a `rotate(-45deg)` for months that never once applied.
+     */
+    const wrapper = block(String.raw`\.pin`);
+    assert.doesNotMatch(wrapper, /(^|[;{\s])transform:/);
+    assert.doesNotMatch(wrapper, /(^|[;{\s])position:/);
   });
 
   it('defines the dark theme by overriding tokens, not by restyling components', () => {

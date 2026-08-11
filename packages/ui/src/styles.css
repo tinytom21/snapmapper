@@ -646,57 +646,108 @@ label.check input[type='checkbox'] {
 /* Map pins. Saved locations are calm; unsaved ones are not, deliberately — a pending
    edit must never look like something already written to disk. */
 /*
- * A marker is a dot or a photograph, and it changes between the two as the map zooms.
+ * A marker is a dot or a photograph, and both point at their position with a leader.
  *
- * The white border and the drop shadow are on both and are what make a marker findable against
- * Liberty's colourful ground — they are also the reason markers do not have to compete on colour,
- * which is what lets a photograph fill one without disappearing into the map.
+ * ## The leader is why there are three elements
  *
- * Note the two are one element, not two kinds of marker. A photograph moves between the shapes
- * constantly, and rebuilding the element would drop the decoded image and the drag MapLibre is
- * tracking on it. `z-index` is set inline per marker — see `markerZIndex`.
+ * `.pin` is the wrapper MapLibre positions. It draws nothing itself; it reserves the leader's
+ * height as padding and draws the leader in that padding with `::after`. `.pin-body` is the
+ * visible box, and it clips the image to its rounded corners — which is exactly why the leader
+ * cannot live on it, since `overflow: hidden` would cut a protruding triangle straight off.
  *
- * **Do not put `transform` on a marker.** MapLibre positions each one with an inline
- * `transform: translate(…)` and an inline style beats any stylesheet, so a `transform` here is
- * dead the moment the marker is placed. This carried a `rotate(-45deg)` for months, meant to turn
- * the teardrop's square corner downwards; it never once applied, which is why the dot renders as a
- * circle with one square corner. Left as it is because that is the shape actually in use and
- * shipped — rotating it now would be a change nobody asked for, dressed as a fix.
+ * **The marker is anchored `bottom` in `PhotoMap.tsx`**, so the wrapper's bottom edge — the tip of
+ * the leader — sits on the coordinate. That is the whole reason the leader was worth adding: a
+ * centred marker only says "somewhere around here", and half a tile is a lot of ground. Because
+ * the padding is part of the wrapper, a marker that changes shape changes nothing about where it
+ * points, and no pixel offset is needed anywhere.
+ *
+ * The white border and the drop shadow are on both shapes and are what make a marker findable
+ * against Liberty's colourful ground — also the reason markers do not compete on colour, which is
+ * what lets a photograph fill one without disappearing into the map.
+ *
+ * ## Two things `.pin` must never declare, both learned the hard way
+ *
+ * **`position`.** MapLibre's own `.maplibregl-marker` sets `position: absolute`, and that is what
+ * takes a marker out of the flow. `.pin` has the same specificity — one class — and this
+ * stylesheet loads later, so anything `position` here *wins*. A `position: relative` added to
+ * anchor the leader put every marker back into normal flow, stacking them one marker-height apart
+ * down the page: measured as errors of 57, 114, 171 … 627 pixels, an exact multiple per marker.
+ * The leader needs no containing block of its own, because an absolutely positioned element
+ * already is one.
+ *
+ * **`transform`.** MapLibre positions each marker with an inline `transform: translate(…)`, and an
+ * inline style beats any stylesheet, so a `transform` on `.pin` is dead the moment the marker is
+ * placed. It carried a `rotate(-45deg)` for months, meant to turn a teardrop's square corner
+ * downwards, and it never applied once.
+ *
+ * Both are the same lesson: **`.pin` is MapLibre's element, not ours.** Anything that positions or
+ * transforms belongs on `.pin-body` or a pseudo-element, which MapLibre never touches. Tests in
+ * `styles.test.ts` forbid both.
  */
 .pin {
-  width: 16px;
-  height: 16px;
-  border-radius: 50% 50% 50% 0;
-  background: var(--accent);
+  --leader: 7px;
+  --pin-face: var(--accent);
+  display: block;
+  padding: 0 0 var(--leader);
+  background: none;
+  border: 0;
+  line-height: 0;
+  cursor: pointer;
+}
+
+/* The leader: a triangle in the wrapper's padding, its point on the coordinate. */
+.pin::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  width: 0;
+  height: 0;
+  transform: translateX(-50%);
+  border-left: var(--leader) solid transparent;
+  border-right: var(--leader) solid transparent;
+  /* White, so it reads as the frame continuing to a point rather than as a second object. */
+  border-top: var(--leader) solid #fff;
+  filter: drop-shadow(0 1px 1px rgb(0 0 0 / 0.35));
+}
+
+.pin-body {
+  display: block;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--pin-face);
   border: 2px solid #fff;
   box-shadow: 0 1px 3px rgb(0 0 0 / 0.4);
-  cursor: pointer;
-  padding: 0;
-  /* Nothing inside a dot. The image stays in the DOM so its bitmap survives a zoom out and back. */
   overflow: hidden;
 }
-.pin > img { display: none; }
+.pin-body > img { display: none; }
 
-.pin-pending { background: var(--pending); }
-.pin-selected { width: 22px; height: 22px; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 45%, transparent); }
+.pin-pending { --pin-face: var(--pending); }
+.pin-selected .pin-body {
+  width: 24px;
+  height: 24px;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 45%, transparent);
+}
 
 /*
  * The photograph, at `--marker-thumb-w` wide.
  *
  * 3:2 with `object-fit: cover`, like the list and for the same reason: the camera embeds a 3:2
  * frame letterboxed into 160x120, so a 4:3 box would draw the black bars. The width is a custom
- * property because `marker-layout.ts` has to agree with it — the crowding rule is measured in
+ * property because `marker-layout.ts` has to agree with it — the decluttering rule is measured in
  * these pixels, and the two drifting apart would let tiles overlap while the rule said they fit.
  */
-.pin.pin-tile {
-  --marker-thumb-w: 52px;
+.pin.pin-tile { --leader: 9px; }
+.pin.pin-tile .pin-body {
+  --marker-thumb-w: 72px;
   width: var(--marker-thumb-w);
   height: auto;
   aspect-ratio: 3 / 2;
   border-radius: var(--radius-sm);
   background: var(--surface);
 }
-.pin.pin-tile > img {
+.pin.pin-tile .pin-body > img {
   display: block;
   width: 100%;
   height: 100%;
@@ -704,22 +755,26 @@ label.check input[type='checkbox'] {
 }
 
 /*
- * State is the ring outside the white border, because the photograph has taken the fill.
+ * State is the ring outside the white border, because the photograph has taken the fill — and the
+ * leader takes the same colour, so the two read as one outline rather than a box with a white spur.
  *
- * Layered outward: white border (in the box), then the state ring, then the shadow. Written as one
- * `box-shadow` per state rather than added to, since a later declaration replaces the property
- * whole — two rules each setting a shadow would leave only the last one's.
+ * Written as one `box-shadow` per state rather than added to, since a later declaration replaces
+ * the property whole: two rules each setting a shadow would leave only the last one's.
  */
-.pin.pin-tile.pin-pending {
+.pin.pin-tile.pin-pending .pin-body {
   box-shadow: 0 0 0 2px var(--pending), 0 1px 4px rgb(0 0 0 / 0.45);
 }
-.pin.pin-tile.pin-selected {
-  width: calc(var(--marker-thumb-w) + 10px);
+.pin.pin-tile.pin-pending::after { border-top-color: var(--pending); }
+
+.pin.pin-tile.pin-selected .pin-body {
+  width: calc(var(--marker-thumb-w) + 12px);
   box-shadow: 0 0 0 3px var(--accent), 0 2px 8px rgb(0 0 0 / 0.5);
 }
-.pin.pin-tile.pin-selected.pin-pending {
+.pin.pin-tile.pin-selected::after { border-top-color: var(--accent); }
+.pin.pin-tile.pin-selected.pin-pending .pin-body {
   box-shadow: 0 0 0 3px var(--pending), 0 2px 8px rgb(0 0 0 / 0.5);
 }
+.pin.pin-tile.pin-selected.pin-pending::after { border-top-color: var(--pending); }
 
 /* --- Clock sync --------------------------------------------------------- */
 

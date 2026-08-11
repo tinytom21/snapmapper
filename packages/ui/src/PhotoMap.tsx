@@ -27,8 +27,11 @@ import type { Feature, LineString } from 'geojson';
 import { boundsOf, selectionFocus } from './map-focus.ts';
 import {
   crowdedNames,
+  depthRanks,
+  markerModeFrom,
   markerZIndex,
   showsThumbnail,
+  type MarkerMode,
   type ProjectedPin,
 } from './marker-layout.ts';
 import { trackLine, type LinePoint } from './track-line.ts';
@@ -233,6 +236,11 @@ export function PhotoMap({
    * re-render the whole map component on every wheel notch to change two class names.
    */
   const crowded = useRef<ReadonlySet<string>>(new Set());
+  /**
+   * Whether crowded photographs give up their picture. Read once — a query string does not change
+   * under a running page, and re-reading it per repaint would be work for nothing.
+   */
+  const mode = useMemo(() => markerModeFrom(window.location.search), []);
   /** The current pins, so the zoom listener can re-measure without being rebuilt. */
   const pinsRef = useRef<readonly MapPin[]>(pins);
   pinsRef.current = pins;
@@ -252,12 +260,15 @@ export function PhotoMap({
       return { name: pin.name, x: point.x, y: point.y };
     });
     crowded.current = crowdedNames(projected);
+    const depth = depthRanks(projected);
 
     for (const pin of pinsRef.current) {
       const marker = markers.current.get(pin.name);
-      if (marker) paint(marker.getElement(), pin, crowded.current);
+      if (marker) {
+        paint(marker.getElement(), pin, crowded.current, mode, depth.get(pin.name) ?? 0);
+      }
     }
-  }, []);
+  }, [mode]);
 
   /*
    * On zoom, and only on zoom.
@@ -297,16 +308,29 @@ export function PhotoMap({
       element.classList.add('pin');
 
       /*
+       * Three nested elements, and each one earns its place.
+       *
+       * `.pin` is a bare wrapper that MapLibre positions and that reserves the height of the
+       * leader below the picture. `.pin-body` is the visible box, and it clips the image to its
+       * rounded corners — which is why the leader cannot live on it, since `overflow: hidden`
+       * would cut the leader off. So the leader is `.pin::after`, drawn in the wrapper's padding.
+       *
        * The image is created once and kept, rather than added and removed as the marker changes
-       * between a picture and a dot. Removing it would drop the decoded bitmap, so zooming out and
-       * back in would re-decode fifty JPEGs; `display` on the image costs nothing and keeps them.
+       * shape. Removing it would drop the decoded bitmap, so zooming out and back in would
+       * re-decode fifty JPEGs; `display` on the image costs nothing and keeps them.
        */
+      const body = document.createElement('span');
+      // `classList.add`, though nothing else touches this one — the ban on assigning `className`
+      // is kept absolute so it needs no judgement about which element MapLibre owns.
+      body.classList.add('pin-body');
+
       const image = document.createElement('img');
       image.alt = '';
       // Browsers make images draggable by default, and a native image drag starting on a marker
       // would fight MapLibre's own pointer tracking — the same trap as the thumbnails in the list.
       image.draggable = false;
-      element.append(image);
+      body.append(image);
+      element.append(body);
 
       element.addEventListener('click', (event) => {
         // Without this the map's own click handler also fires and re-places the photo.
@@ -314,7 +338,16 @@ export function PhotoMap({
         handlers.current.onSelectPin(pin.name);
       });
 
-      const marker = new maplibregl.Marker({ element, draggable: true })
+      /*
+       * **Anchored at the bottom, which is the tip of the leader.**
+       *
+       * A marker with a leader is making a claim about one exact point, so that point has to be
+       * where the leader ends — not the middle of the picture, which is where a centre-anchored
+       * marker puts it and which would be half a tile out. `.pin` reserves the leader's height as
+       * padding, so its bottom edge *is* the tip and no pixel offset is needed here; a marker that
+       * changes shape therefore changes nothing about where it points.
+       */
+      const marker = new maplibregl.Marker({ element, anchor: 'bottom', draggable: true })
         .setLngLat([pin.coordinates.longitude, pin.coordinates.latitude])
         .addTo(instance);
 
@@ -456,8 +489,14 @@ function drawTrack(
  * between them as the map zooms and as it is selected — rebuilding the element each time would
  * discard the decoded image and, worse, the marker MapLibre is tracking a drag on.
  */
-function paint(element: HTMLElement, pin: MapPin, crowded: ReadonlySet<string>): void {
-  const tile = showsThumbnail(pin, crowded);
+function paint(
+  element: HTMLElement,
+  pin: MapPin,
+  crowded: ReadonlySet<string>,
+  mode: MarkerMode,
+  depthRank: number,
+): void {
+  const tile = showsThumbnail(pin, crowded, mode);
 
   /*
    * **Toggle classes. Never assign `className`.**
@@ -477,9 +516,9 @@ function paint(element: HTMLElement, pin: MapPin, crowded: ReadonlySet<string>):
   element.classList.toggle('pin-tile', tile);
   element.classList.toggle('pin-pending', pin.pending);
   element.classList.toggle('pin-selected', pin.selected);
-  element.style.zIndex = String(markerZIndex(pin));
+  element.style.zIndex = String(markerZIndex(pin, depthRank));
 
-  const image = element.firstElementChild as HTMLImageElement | null;
+  const image = element.querySelector('img');
   if (!image) return;
 
   /*

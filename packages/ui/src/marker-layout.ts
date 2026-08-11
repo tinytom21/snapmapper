@@ -37,9 +37,10 @@ export interface ProjectedPin {
  * Tile width in CSS pixels.
  *
  * Big enough to recognise a photograph you took, small enough that several fit on a phone screen
- * without becoming the map. The height follows from the aspect ratio in the stylesheet.
+ * without becoming the map. The height follows from the aspect ratio in the stylesheet. Raised
+ * from 52 on request — 52 was legible and mean, and the whole point is to recognise the frame.
  */
-export const THUMB_WIDTH_PX = 52;
+export const THUMB_WIDTH_PX = 72;
 
 /**
  * How close two photographs may be before both give up their picture.
@@ -100,11 +101,38 @@ export function crowdedNames(
 export function showsThumbnail(
   pin: { readonly name: string; readonly selected: boolean; readonly thumbnail?: string },
   crowded: ReadonlySet<string>,
+  mode: MarkerMode = 'always',
 ): boolean {
   if (!pin.thumbnail) return false;
+  if (mode === 'always') return true;
   if (pin.selected) return true;
   return !crowded.has(pin.name);
 }
+
+/**
+ * Whether a crowded photograph gives up its picture, or every marker keeps one.
+ *
+ * `always` is the default, on request and as an experiment: overlapping photographs may well read
+ * better than a map that keeps swapping between two kinds of marker as you zoom. The decluttering
+ * rule is kept rather than deleted, because which of the two is actually nicer to use is a
+ * question about a real card on a real phone, not one that can be settled by argument.
+ *
+ * Reached with `?markers=declutter`, the same shape as `?tiles=raster` — a diagnostic that can be
+ * used from a phone, where there is no console and no way to rebuild.
+ */
+export type MarkerMode = 'always' | 'declutter';
+
+export function markerModeFrom(search: string): MarkerMode {
+  return new URLSearchParams(search).get('markers') === 'declutter' ? 'declutter' : 'always';
+}
+
+/**
+ * How far apart the three bands of stacking are.
+ *
+ * Wide enough that a depth rank can never carry a marker out of its band: there is no session with
+ * ten thousand photographs, and if there were, the arithmetic would clamp rather than mix.
+ */
+const BAND = 10_000;
 
 /**
  * Stacking order, because DOM markers stack by the order they were added.
@@ -115,11 +143,32 @@ export function showsThumbnail(
  * markers, so the order is effectively the order photographs were first placed and drifts further
  * from anything meaningful the longer a session runs.
  *
- * Three levels, in the order of how much the user currently cares: what they picked, what they
- * have changed and not saved, and everything else.
+ * Three bands, in the order of how much the user currently cares: what they picked, what they have
+ * changed and not saved, and everything else.
+ *
+ * **Within a band, what is lower on the screen draws in front**, which is `depthRank`. That is how
+ * every map draws overlapping things and it is what stops a pile of tiles looking shuffled: the
+ * nearer object occludes the further one. It matters much more now that every photograph keeps its
+ * picture, since overlap is the normal case rather than the exception.
  */
-export function markerZIndex(pin: { readonly selected: boolean; readonly pending: boolean }): number {
-  if (pin.selected) return 3;
-  if (pin.pending) return 2;
-  return 1;
+export function markerZIndex(
+  pin: { readonly selected: boolean; readonly pending: boolean },
+  depthRank = 0,
+): number {
+  const depth = Math.max(0, Math.min(BAND - 1, Math.round(depthRank)));
+  if (pin.selected) return 2 * BAND + depth;
+  if (pin.pending) return BAND + depth;
+  return depth;
+}
+
+/**
+ * Rank pins by how far down the screen they are, northernmost first.
+ *
+ * Returned as a map of name to rank so `markerZIndex` can be given a small integer. Ties are
+ * broken by name rather than left to the sort, so two photographs on one spot keep a stable order
+ * between repaints instead of swapping every time the map is touched.
+ */
+export function depthRanks(pins: readonly ProjectedPin[]): Map<string, number> {
+  const order = [...pins].sort((a, b) => (a.y - b.y) || a.name.localeCompare(b.name));
+  return new Map(order.map((pin, index) => [pin.name, index]));
 }

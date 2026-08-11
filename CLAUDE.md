@@ -538,16 +538,36 @@ measured on the painted pixels in the light theme, **4.44:1 at 0.85 and 6.13:1 a
 touch target is the **label**, not the tick box: 40px measured, where growing the box to 24px would
 have made a large square sit in a line of 13px text.
 
-### Markers are photographs, until they would collide
+### Markers are photographs, and they point at their spot
 
 `marker-layout.ts` decides, `PhotoMap.tsx` draws. A coloured dot says *something is here*; the
 question a review pass actually asks is *which frame is that*, and only the picture answers it.
 
-**The rule is pixels, not a zoom threshold**, which was the suggestion and is the same idea fitted
-to the data: a photograph draws as a tile unless another photograph is close enough on screen to
-collide with it. A day in one town and a fortnight across Europe need different thresholds and
-nobody can pick one for both — asked in pixels, the town gets dots, the tour gets pictures, and a
-lone outlier keeps its picture while the huddle beside it collapses.
+**Every marker keeps its picture**, on request and as an experiment. The decluttering rule below
+is kept rather than deleted, because whether overlapping photographs read better than a map that
+swaps between two kinds of marker as you zoom is a question about a real card on a real phone.
+`?markers=declutter` restores it — the same shape as `?tiles=raster`, reachable from a phone where
+there is no console and no way to rebuild.
+
+**The leader is why the marker is three elements.** `.pin` is the wrapper MapLibre positions; it
+draws nothing and reserves the leader's height as padding. `.pin-body` is the visible box and clips
+the image to its rounded corners — which is exactly why the leader cannot live on it, since
+`overflow: hidden` would cut a protruding triangle off. So the leader is `.pin::after`, drawn in
+that padding.
+
+**Anchored `bottom`, so the wrapper's bottom edge — the leader's tip — is the coordinate.** That is
+the point of adding it: a centred marker only says "somewhere around here", and half a tile is a
+lot of ground. Because the padding belongs to the wrapper, a marker that changes shape changes
+nothing about where it points, and no pixel offset is needed anywhere.
+
+**Within a band, what is lower on the screen draws in front** — `depthRanks`. How every map draws
+overlap, and what stops a pile looking shuffled. It matters far more now that overlap is the normal
+case. Ties break by name so a repaint cannot reshuffle a pile.
+
+**When decluttering, the rule is pixels rather than a zoom threshold**, which was the suggestion and
+is the same idea fitted to the data: a photograph draws as a tile unless another is close enough on
+screen to collide with it. A day in one town and a fortnight across Europe need different
+thresholds and nobody can pick one for both.
 
 - **Recomputed on `zoomend`, never on move.** The distance between two fixed points in screen
   pixels does not change when you pan. Listening to `move` would make markers flip between a
@@ -569,9 +589,28 @@ lone outlier keeps its picture while the huddle beside it collapses.
   `--marker-thumb-w` against `THUMB_WIDTH_PX` — the crowding rule is measured in those pixels, and
   the two drifting apart would permit tiles that now overlap while the rule said they fit.
 
-Measured live: 12 markers, 2 tiles at 52x35 and 10 dots at whole-of-France zoom; **9 tiles at z17
-and back to 2 at z12**; selecting a dot in the huddle turned it into a 62px tile at z-index 3 above
-a maximum of 2 elsewhere. Two pins on identical coordinates stay dots at every zoom, correctly.
+Measured live across z6-z19: tile 72x57 (48 of picture, 9 of leader), dot 18x25, and the leader's
+tip **0 px** from the coordinate for every on-screen marker at every zoom. The only non-zero
+readings are markers 2.5 million pixels off-screen, where `getBoundingClientRect` loses float
+precision — worth knowing before chasing one. `?markers=declutter` still gives 2 tiles and 10 dots
+at low zoom, so the experiment is reversible from the address bar.
+
+#### `.pin` is MapLibre's element, not ours
+
+Two ways of forgetting that have now shipped, both with the same symptom — **the map lying about
+where the photographs are** — and both invisible in the code:
+
+- **`className`**, below.
+- **`position`**. `.maplibregl-marker` sets `position: absolute`, and that is what takes a marker
+  out of the flow. `.pin` has the same specificity — one class — and this stylesheet loads later,
+  so a `position` here *wins*. A `position: relative` added to anchor the leader put every marker
+  back into normal flow, stacking them one marker-height apart down the page: measured as errors of
+  57, 114, 171 ... 627 px, an exact multiple per marker. An absolutely positioned element is already
+  a containing block, so the leader never needed it.
+
+Add `transform` to the list, which is dead rather than harmful. Anything that positions, rotates or
+replaces classes belongs on `.pin-body` or a pseudo-element. `styles.test.ts` forbids `position` and
+`transform` on `.pin`; `marker-layout.test.ts` forbids any `.className =` in `PhotoMap.tsx`.
 
 #### Never assign `className` on a marker element
 

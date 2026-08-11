@@ -20,12 +20,12 @@ project needs does not travel through git, the photo fixtures above all.
 | Path | State |
 |---|---|
 | `packages/core` | Platform-agnostic logic. **346 tests, `tsc` clean.** `gps`, `time`, `jpeg` (the splice), `exif-tags`, `exiftool` (write path), `exiftool-wasm`, `session` (staged edits, undo, named actions), `clock-sync`, `gpx` (track parsing and matching), `google-timeline` + `track-file` (Timeline import), `exiftool-batch` (batched reads), `verify-write`, `prior-location` (earlier sessions' work), `storage`. |
-| `packages/ui` | React 19 + MapLibre 5 on Vite 7. **222 tests.** `browser-file-store.ts` is the only file behind `FileStore`; `batch-runner.ts` is the only other one tied to the build, since it takes the ExifTool script from a Vite virtual module. |
+| `packages/ui` | React 19 + MapLibre 5 on Vite 7. **232 tests.** `browser-file-store.ts` is the only file behind `FileStore`; `batch-runner.ts` is the only other one tied to the build, since it takes the ExifTool script from a Vite virtual module. |
 | `packages/shells` | Does not exist and is not needed. There is no native shell and no reason for one. |
 | `spike/` | Phase 0, done. Still where the write path is checked against a **native** ExifTool: `npm run splice --workspace spike` → 184 checks. |
 | `docs/PLAN.md` | Historical. Useful for intent, wrong in places. |
 
-**568 tests, `tsc` clean, production build succeeds.**
+**578 tests, `tsc` clean, production build succeeds.**
 
 ```bash
 npm test && npm run typecheck
@@ -60,7 +60,7 @@ was found:
 
 ## Deploying
 
-**Push to `main` and it ships.** `.github/workflows/deploy.yml` typechecks, runs all 568 tests,
+**Push to `main` and it ships.** `.github/workflows/deploy.yml` typechecks, runs all 578 tests,
 builds and publishes to GitHub Pages; a failing test blocks the deploy. About two minutes.
 
 The base path comes from the repository name, so renaming the repo needs no edit. A Pages project
@@ -118,10 +118,14 @@ a *"A new version is ready"* banner rather than leaving it a mystery.
   wherever two would collide on screen — a pixel rule rather than a zoom threshold, so one town and
   one tour both work. The selected frame always shows its picture and always comes to the front.
   Measured: 9 tiles at z17 collapsing to 2 at z12, and a crowded dot becoming a 62px tile at
-  z-index 3 when picked. Placement measured across z6-z19, dots and tiles: **worst error 0.05 px**.
-  See CLAUDE.md before touching `PhotoMap.tsx` — **never assign `className` on a marker element**,
-  and note the `mapReady` rule, since effects that ran before the map finished building used to
-  never run again.
+  z-index 3 when picked. Each marker has a **leader** whose tip is the coordinate, and every
+  photograph keeps its picture — `?markers=declutter` restores the give-way-when-crowded rule,
+  which is kept as an experiment rather than deleted. Measured across z6-z19: tile 72x57, dot
+  18x25, tip **0 px** from the coordinate for every on-screen marker.
+  See CLAUDE.md before touching `PhotoMap.tsx`: **`.pin` is MapLibre's element** — never assign
+  `className` on it and never give it `position` or `transform`, each of which has shipped a map
+  that lied about where photographs were. Note the `mapReady` rule too, since effects that ran
+  before the map finished building used to never run again.
 
 ## What to pick up next
 

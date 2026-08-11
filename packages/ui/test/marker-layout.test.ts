@@ -6,8 +6,11 @@ import { describe, it } from 'node:test';
 import {
   CROWDING_GAP_PX,
   crowdedNames,
+  depthRanks,
+  markerModeFrom,
   markerZIndex,
   showsThumbnail,
+  type MarkerMode,
   type ProjectedPin,
 } from '../src/marker-layout.ts';
 
@@ -77,28 +80,71 @@ describe('which markers are too close to show a photograph', () => {
 
 describe('whether a marker draws its photograph', () => {
   const crowded = new Set(['a', 'b']);
+  const shown = (name: string, selected: boolean, mode: MarkerMode) =>
+    showsThumbnail({ name, selected, thumbnail: 'blob:x' }, crowded, mode);
 
-  it('draws it when there is room', () => {
-    assert.equal(showsThumbnail({ name: 'c', selected: false, thumbnail: 'blob:x' }, crowded), true);
+  it('draws it when there is room, under either rule', () => {
+    assert.equal(shown('c', false, 'declutter'), true);
+    assert.equal(shown('c', false, 'always'), true);
   });
 
-  it('falls back to a dot in a huddle', () => {
-    assert.equal(showsThumbnail({ name: 'a', selected: false, thumbnail: 'blob:x' }, crowded), false);
+  it('keeps every picture by default, crowded or not', () => {
+    // The default, on request and as an experiment: overlapping photographs may read better than a
+    // map that keeps swapping between two kinds of marker as you zoom.
+    assert.equal(shown('a', false, 'always'), true);
+  });
+
+  it('falls back to a dot in a huddle when decluttering', () => {
+    assert.equal(shown('a', false, 'declutter'), false);
   });
 
   it('always draws the selected one, however crowded', () => {
     /*
-     * The whole point of the feature. Choosing a frame in the list and seeing *which picture* it
-     * is on the map is the check a dot cannot answer — and it is safe, because selection also
-     * brings the marker to the front, so the tile lands over the huddle rather than inside it.
+     * Choosing a frame in the list and seeing *which picture* it is on the map is the check a dot
+     * cannot answer, and it is safe because selection also brings the marker to the front.
      */
-    assert.equal(showsThumbnail({ name: 'a', selected: true, thumbnail: 'blob:x' }, crowded), true);
+    assert.equal(shown('a', true, 'declutter'), true);
   });
 
-  it('stays a dot when there is no thumbnail to show', () => {
+  it('stays a dot when there is no thumbnail to show, under either rule', () => {
     // A frame the camera wrote without one, or one whose read failed. An empty box says less.
-    assert.equal(showsThumbnail({ name: 'c', selected: false }, crowded), false);
-    assert.equal(showsThumbnail({ name: 'c', selected: true }, crowded), false);
+    for (const mode of ['always', 'declutter'] as const) {
+      assert.equal(showsThumbnail({ name: 'c', selected: false }, crowded, mode), false);
+      assert.equal(showsThumbnail({ name: 'c', selected: true }, crowded, mode), false);
+    }
+  });
+});
+
+describe('choosing between the two marker rules', () => {
+  it('keeps every picture unless asked otherwise', () => {
+    assert.equal(markerModeFrom(''), 'always');
+    assert.equal(markerModeFrom('?tiles=raster'), 'always');
+  });
+
+  it('restores decluttering from the query string, like ?tiles=raster', () => {
+    // Reachable from a phone, where there is no console and no way to rebuild.
+    assert.equal(markerModeFrom('?markers=declutter'), 'declutter');
+  });
+
+  it('ignores a value it does not recognise', () => {
+    assert.equal(markerModeFrom('?markers=sometimes'), 'always');
+  });
+});
+
+describe('drawing order by depth', () => {
+  it('ranks what is lower on the screen later, so it draws in front', () => {
+    const ranks = depthRanks([at('south', 0, 900), at('north', 0, 100), at('middle', 0, 500)]);
+    assert.equal(ranks.get('north'), 0);
+    assert.equal(ranks.get('middle'), 1);
+    assert.equal(ranks.get('south'), 2);
+  });
+
+  it('breaks ties by name, so a repaint cannot shuffle a pile', () => {
+    // Two photographs on one spot must keep a stable order between repaints, or the top of the
+    // pile changes every time the map is touched.
+    const once = depthRanks([at('b', 0, 10), at('a', 0, 10)]);
+    const again = depthRanks([at('a', 0, 10), at('b', 0, 10)]);
+    assert.deepEqual([...once], [...again]);
   });
 });
 
@@ -120,9 +166,23 @@ describe('stacking order', () => {
 
   it('prefers selection over pending, when a photograph is both', () => {
     assert.equal(
-      markerZIndex({ selected: true, pending: true }),
-      markerZIndex({ selected: true, pending: false }),
+      markerZIndex({ selected: true, pending: true }, 5),
+      markerZIndex({ selected: true, pending: false }, 5),
     );
+  });
+
+  it('draws the nearer of two equals in front', () => {
+    // How every map draws overlap, and what stops a pile of tiles looking shuffled. It matters
+    // much more now every photograph keeps its picture, since overlap is the normal case.
+    const plain = { selected: false, pending: false };
+    assert.ok(markerZIndex(plain, 40) > markerZIndex(plain, 3));
+  });
+
+  it('never lets depth carry a marker out of its band', () => {
+    // A selection must beat every unselected photograph, whatever the session size.
+    const deepest = markerZIndex({ selected: false, pending: true }, 9_999_999);
+    assert.ok(markerZIndex({ selected: true, pending: false }, 0) > deepest);
+    assert.ok(deepest > markerZIndex({ selected: false, pending: false }, 9_999_999));
   });
 });
 
