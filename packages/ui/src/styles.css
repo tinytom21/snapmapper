@@ -1856,3 +1856,20 @@ button.stacked .sub {
   border-radius: var(--radius-pill);
   transition: width 120ms linear;
 }
+
+/* The timings report. Monospace and scrollable, because it is meant to be read and then copied. */
+.timings {
+  margin: 0;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  font-family: ui-monospace, monospace;
+  font-size: 0.72rem;
+  line-height: 1.45;
+  /* Wide fixed-width text must scroll inside its own box rather than widen the page. */
+  overflow-x: auto;
+  max-height: 40vh;
+  overflow-y: auto;
+  white-space: pre;
+}

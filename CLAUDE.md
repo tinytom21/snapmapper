@@ -158,6 +158,38 @@ Consequences worth keeping:
 Measured in a browser on 322 files, all sixty of the open day: **548 ms to fill, 24 of 25 sampled
 100 ms timers inside 150 ms** — against roughly four seconds and a solidly blocked thread before.
 
+#### Awaiting a file access inside a loop, three times now
+
+The fast path above shipped and **made no difference anyone could feel**, which is worth as much
+space as the fast path itself.
+
+`readThumbnails` read its header bytes in a serial `for` loop with an `await` in it. So removing a
+~700 ms ExifTool call per batch of sixteen only replaced it with sixteen serialised card reads —
+at the ~31 ms per file access measured on a real phone, about the same total. The gain was real and
+entirely cancelled.
+
+This is the **same fault as `listFolder` had**, in the same shape, found the same way, one commit
+apart. Overlapped with `Promise.all`, a batch costs one round trip instead of sixteen: measured
+against a store with 30 ms of simulated latency, **480 ms serial against 32 ms overlapped, 15x**.
+
+The rule, since it has now cost three separate bugs: **never `await` a file access inside a loop.**
+Collect what is needed, then `Promise.all` it in bounded batches. It is invisible on a desktop with
+the files on an SSD and it is the whole cost on a phone reading a card.
+
+#### The timings are in the interface, because the slow machine is never this one
+
+`diagnostics.ts`, reachable from the chooser's footer: one tap shows the report, a second copies it.
+
+That is there because every performance question in this project has been answered on a desktop and
+then been wrong on a phone — twice by the identical mistake. The report splits reading from parsing
+from ExifTool, gives per-photograph figures that can be compared against the numbers written down
+here, and ends with a **verdict line** naming whichever stage dominates. Reading at tens of
+milliseconds per photograph means reads are being serialised somewhere; that is the sentence that
+would have caught all three faults in one paste.
+
+Plain text on purpose: it is pasted from a phone into a message, where anything needing a console
+or a file is not going to happen.
+
 **A worker is still the fix for raw**, and the trap is unchanged: zeroperl fetches
 `./zeroperl.wasm` relative to the *document*, which is why a Vite plugin serves it at the site root.
 

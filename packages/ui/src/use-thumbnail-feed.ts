@@ -18,6 +18,7 @@ import type { BatchRunner, FileStore, PhotoRef } from '@snapmapper/core';
 import { createBatchRunner } from './batch-runner.ts';
 import { readThumbnails } from './read-thumbnails.ts';
 import { THUMBNAIL_BATCH, nextBatch } from './thumbnail-feed.ts';
+import { NOTHING, addBatch, type Totals } from './diagnostics.ts';
 
 /**
  * How long the main thread is handed back between batches.
@@ -42,6 +43,8 @@ export interface ThumbnailFeed {
   readonly wantedCount: number;
   /** Report what is on screen, so it jumps the queue. */
   readonly want: (names: readonly string[]) => void;
+  /** Where the time went, for a report the user can paste back. See `diagnostics.ts`. */
+  readonly timings: Totals;
 }
 
 export function useThumbnailFeed(
@@ -51,6 +54,7 @@ export function useThumbnailFeed(
 ): ThumbnailFeed {
   const [urls, setUrls] = useState<ReadonlyMap<string, string>>(new Map());
   const [done, setDone] = useState(0);
+  const [timings, setTimings] = useState<Totals>(NOTHING);
 
   /*
    * What is on screen, in a ref rather than state.
@@ -127,6 +131,7 @@ export function useThumbnailFeed(
         for (const name of batch) doneNames.add(name);
 
         setDone(doneNames.size);
+        setTimings((was) => addBatch(was, batchResult.timing));
         if (fresh.size > 0) setUrls((was) => new Map([...was, ...fresh]));
 
         /*
@@ -148,6 +153,7 @@ export function useThumbnailFeed(
       for (const url of made) URL.revokeObjectURL(url);
       setUrls(new Map());
       setDone(0);
+      setTimings(NOTHING);
     };
   }, [refs, store, enabled]);
 
@@ -155,5 +161,5 @@ export function useThumbnailFeed(
    * `done` counts everything tried, including the lookahead, so it can exceed what is wanted. The
    * progress line reads better clamped than showing "72/60".
    */
-  return { urls, done: Math.min(done, wantedCount), wantedCount, want };
+  return { urls, done: Math.min(done, wantedCount), wantedCount, want, timings };
 }

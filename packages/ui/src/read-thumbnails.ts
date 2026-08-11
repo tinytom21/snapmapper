@@ -38,6 +38,30 @@ export interface ThumbnailBatch {
    * thread for about 700 ms and does.
    */
   readonly usedExifTool: boolean;
+  /** Where the time actually went, for the diagnostics report. */
+  readonly timing: BatchTiming;
+}
+
+/**
+ * What one batch cost, split by stage.
+ *
+ * Collected always rather than behind a flag, because the question it answers — *why is this not
+ * faster* — only ever comes up on somebody else's hardware, where nothing can be attached. Reading
+ * a card through a phone is a completely different machine from a desktop with the files on an SSD,
+ * and guessing which stage dominates has now been wrong once.
+ */
+export interface BatchTiming {
+  readonly files: number;
+  /** Getting the header bytes off the card. Overlapped, so this is wall clock, not the sum. */
+  readonly readMs: number;
+  /** Following the EXIF offsets. Expected to be a fraction of a millisecond per file. */
+  readonly parseMs: number;
+  /** ExifTool, for whatever the byte reader declined. Zero for a folder of JPEGs. */
+  readonly exifMs: number;
+  /** How many the byte reader answered. */
+  readonly fast: number;
+  /** How many needed ExifTool. */
+  readonly slow: number;
 }
 
 /**
@@ -71,13 +95,34 @@ export async function readThumbnails(
   const results: ThumbnailResult[] = [];
   const slow: BatchFile[] = [];
 
-  for (const ref of refs) {
-    let head: Uint8Array;
+  /*
+   * **Read the heads together, not one after another.**
+   *
+   * This was a serial `for` loop with an `await` in it, and it made the whole fast path pointless:
+   * removing a ~700 ms ExifTool call per batch of sixteen only to spend the same on sixteen
+   * serialised card reads. Reported as exactly that — "I didn't notice any speed difference".
+   *
+   * The same mistake `listFolder` had, in the same shape. On a phone reading a card through a
+   * reader one file access is tens of milliseconds — measured by the user at about 31 ms while
+   * listing — so sixteen of them in a row is half a second whatever happens afterwards. Overlapped,
+   * they cost about one.
+   */
+  const readAt = performance.now();
+  const heads = await Promise.all(refs.map(async (ref) => {
     try {
-      head = await readHead(store, ref);
+      return await readHead(store, ref);
     } catch {
       // Could not be read off disk at all. Not worth a retry: the chooser shows an empty tile and
       // opening the photograph properly will report it.
+      return undefined;
+    }
+  }));
+  const readMs = performance.now() - readAt;
+
+  const parseAt = performance.now();
+  for (const [index, ref] of refs.entries()) {
+    const head = heads[index];
+    if (!head) {
       results.push({ name: ref.name, bytes: undefined });
       continue;
     }
@@ -90,13 +135,24 @@ export async function readThumbnails(
 
     slow.push({ name: ref.name, bytes: headerOnly(head) });
   }
+  const parseMs = performance.now() - parseAt;
 
-  if (slow.length === 0) return { results, usedExifTool: false };
+  const timing = (exifMs: number): BatchTiming => ({
+    files: refs.length,
+    readMs: Math.round(readMs),
+    parseMs: Math.round(parseMs * 100) / 100,
+    exifMs: Math.round(exifMs),
+    fast: results.filter((r) => r.bytes !== undefined).length,
+    slow: slow.length,
+  });
 
+  if (slow.length === 0) return { results, usedExifTool: false, timing: timing(0) };
+
+  const exifAt = performance.now();
   const runner = await getRunner();
   if (!runner) {
     for (const file of slow) results.push({ name: file.name, bytes: undefined });
-    return { results, usedExifTool: false };
+    return { results, usedExifTool: false, timing: timing(performance.now() - exifAt) };
   }
 
   try {
@@ -116,7 +172,7 @@ export async function readThumbnails(
     for (const file of slow) results.push({ name: file.name, bytes: undefined });
   }
 
-  return { results, usedExifTool: true };
+  return { results, usedExifTool: true, timing: timing(performance.now() - exifAt) };
 }
 
 /**

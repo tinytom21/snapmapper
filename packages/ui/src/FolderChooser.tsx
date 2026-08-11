@@ -32,6 +32,7 @@ import {
   groupByDay,
 } from './folder-groups.ts';
 import { useThumbnailFeed } from './use-thumbnail-feed.ts';
+import { platformFacts, report } from './diagnostics.ts';
 
 export interface FolderChooserProps {
   readonly folderName: string;
@@ -66,6 +67,8 @@ export function FolderChooser({
    * user's own clicks in between.
    */
   const [chosen, setChosen] = useState<ReadonlySet<string>>(() => defaultChoice(groups));
+  /** The timings report, shown on request. Never in the way; never more than one tap away. */
+  const [showTimings, setShowTimings] = useState(false);
   const [openDays, setOpenDays] = useState<ReadonlySet<string>>(
     () => new Set(groups[0] ? [groups[0].key] : []),
   );
@@ -216,9 +219,35 @@ export function FolderChooser({
         })}
       </div>
 
+      {/*
+        The timings, on request.
+        
+        Here rather than behind a build flag or a console command, because the machine that is slow
+        is never this one — it is a phone reading a card through a reader, where there is no console
+        and no way to attach anything. Two performance faults in a row were invisible on a desktop
+        and obvious there, so the numbers have to be reachable from the device and pasteable into a
+        message.
+      */}
+      {showTimings && (
+        <pre className="timings">{report(feed.timings, platformFacts())}</pre>
+      )}
+
       <div className="chooser-foot">
         <button type="button" className="link" onClick={onCancel} disabled={busy}>
           Choose a different folder
+        </button>
+        <button
+          type="button"
+          className="link"
+          onClick={() => {
+            if (showTimings) {
+              // Second press copies, so the numbers can be read before they are sent.
+              void navigator.clipboard?.writeText(report(feed.timings, platformFacts()));
+            }
+            setShowTimings(true);
+          }}
+        >
+          {showTimings ? 'Copy timings' : 'Timings'}
         </button>
         <span className="note">{cost}</span>
         <button
