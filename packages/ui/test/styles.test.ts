@@ -210,6 +210,54 @@ describe('the palette in styles.css', () => {
     assert.doesNotMatch(wrapper, /(^|[;{\s])position:/);
   });
 
+  it('declares each selector once outside the media queries', () => {
+    /*
+     * The trap that produced "the button layout isn't neat any more", and it had already produced
+     * one silent duplicate before that.
+     *
+     * `.landing-actions` was declared twice at the top level. A later rule turned it from a flex
+     * row into a grid without removing the earlier one, so the phone override — written as
+     * `flex-direction: column` against the flex version — went on parsing, went on being applied,
+     * and did nothing whatever on a grid. The phone quietly got the desktop layout: three buttons
+     * in two columns, two and an orphan.
+     *
+     * Nothing about that is visible in either rule. Only the pair is wrong, and only one of the
+     * two is ever in effect, so reading the one you happen to find tells you the wrong thing.
+     * `.banner.line` was pasted twice as well, and `.map` once more after that.
+     *
+     * Media queries are excluded: overriding a base rule inside one is the entire point of them.
+     */
+    const withoutComments = css.replace(/\/\*[\s\S]*?\*\//g, '');
+
+    // Cut out every `@media` body, braces balanced, so only top-level rules remain.
+    let topLevel = '';
+    let at = 0;
+    for (;;) {
+      const start = withoutComments.indexOf('@media', at);
+      if (start === -1) { topLevel += withoutComments.slice(at); break; }
+      topLevel += withoutComments.slice(at, start);
+
+      let depth = 0;
+      let index = withoutComments.indexOf('{', start);
+      do {
+        if (withoutComments[index] === '{') depth += 1;
+        else if (withoutComments[index] === '}') depth -= 1;
+        index += 1;
+      } while (depth > 0 && index < withoutComments.length);
+      at = index;
+    }
+
+    const seen = new Map<string, number>();
+    for (const [, selector] of topLevel.matchAll(/([^{}]+)\{/g)) {
+      const key = (selector ?? '').trim().replace(/\s+/g, ' ');
+      if (!key || key.startsWith('@')) continue;
+      seen.set(key, (seen.get(key) ?? 0) + 1);
+    }
+
+    const repeated = [...seen].filter(([, count]) => count > 1).map(([key]) => key);
+    assert.deepEqual(repeated, [], 'merge these into one rule, or the later one wins silently');
+  });
+
   it('defines the dark theme by overriding tokens, not by restyling components', () => {
     // The whole reason a palette swap is cheap. A component styled inside the media query is a
     // component that has to be maintained twice.

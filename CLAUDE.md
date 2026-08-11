@@ -715,6 +715,35 @@ nothing on disk. It is rare in the workflow this is for — an A6400 has no GPS 
 originals carry none and the common case is the silent one. Remembering answers is the fix if it
 ever becomes annoying.
 
+### The same selector declared twice is invisible, and it has bitten twice
+
+Reported as *"the button layout on the homepage on mobile isn't neat any more"*: the three ways in
+came out two side by side and one orphan with a gap beside it.
+
+`.landing-actions` was declared **twice** at the top level of `styles.css`. A later rule turned it
+from a flex row into a grid without removing the earlier one, so the phone override — written as
+`flex-direction: column` against the flex version — went on parsing, went on being applied, and did
+nothing whatever on a grid. The phone quietly got the desktop layout.
+
+Nothing about that is visible in either rule. Only the *pair* is wrong, only one of the two is ever
+in effect, and reading the one you happen to find tells you the wrong thing. `.banner.line` had
+been pasted twice as well, and `.map` once more after that. **`styles.test.ts` now fails on any
+selector declared more than once outside a media query** — confirmed to fail against the real
+duplicate before being kept.
+
+Two things came out of fixing it:
+
+- **A media-query override must come *after* the rule it overrides.** Media queries add no
+  specificity, so source order decides. The phone block sits at line ~1400 and the base rule had to
+  move above it; left where it was, `grid-template-columns: 1fr` would have lost to the base rule
+  by two hundred lines and the fix would have looked like it did nothing.
+- **`repeat(auto-fit, minmax(…))` was the wrong tool for exactly three buttons.** Letting the width
+  decide is what produced the report — at a phone's width it resolved to two columns. Measured the
+  other way too: at a 902px window it gave *five* tracks for three buttons, huddling them against
+  the left of an 846px row. `repeat(3, minmax(0, 1fr))` says what is true, and the phone block says
+  `1fr`. Verified at 320, 375, 902, 1000 and 1280: the routes fill their row edge to edge at every
+  one, one column below the breakpoint and three above it, with no horizontal scroll.
+
 ### Three small things that carry their weight
 
 - **Unplaced.** `unplacedPhotos` and one button. A match that places 38 of 45 leaves seven
