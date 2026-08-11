@@ -20,12 +20,12 @@ project needs does not travel through git, the photo fixtures above all.
 | Path | State |
 |---|---|
 | `packages/core` | Platform-agnostic logic. **355 tests, `tsc` clean.** `gps`, `time`, `jpeg` (the splice), `exif-tags`, `exiftool` (write path), `exiftool-wasm`, `session` (staged edits, undo, named actions), `clock-sync`, `gpx` (track parsing and matching), `google-timeline` + `track-file` (Timeline import), `exiftool-batch` (batched reads), `verify-write`, `prior-location` (earlier sessions' work), `storage`. |
-| `packages/ui` | React 19 + MapLibre 5 on Vite 7. **249 tests.** `browser-file-store.ts` is the only file behind `FileStore`; `batch-runner.ts` is the only other one tied to the build, since it takes the ExifTool script from a Vite virtual module. |
+| `packages/ui` | React 19 + MapLibre 5 on Vite 7. **251 tests.** `browser-file-store.ts` is the only file behind `FileStore`; `batch-runner.ts` is the only other one tied to the build, since it takes the ExifTool script from a Vite virtual module. |
 | `packages/shells` | Does not exist and is not needed. There is no native shell and no reason for one. |
 | `spike/` | Phase 0, done. Still where the write path is checked against a **native** ExifTool: `npm run splice --workspace spike` → 184 checks. |
 | `docs/PLAN.md` | Historical. Useful for intent, wrong in places. |
 
-**604 tests, `tsc` clean, production build succeeds.**
+**606 tests, `tsc` clean, production build succeeds.**
 
 ```bash
 npm test && npm run typecheck
@@ -60,7 +60,7 @@ was found:
 
 ## Deploying
 
-**Push to `main` and it ships.** `.github/workflows/deploy.yml` typechecks, runs all 604 tests,
+**Push to `main` and it ships.** `.github/workflows/deploy.yml` typechecks, runs all 606 tests,
 builds and publishes to GitHub Pages; a failing test blocks the deploy. About two minutes.
 
 The base path comes from the repository name, so renaming the repo needs no edit. A Pages project
@@ -93,7 +93,11 @@ a *"A new version is ready"* banner rather than leaving it a mystery.
   60 pictures in 548 ms with the main thread free.
 - **Never `await` a file access inside a loop.** Three bugs so far, all the same shape, all
   invisible on a desktop and the whole cost on a phone reading a card. Collect, then `Promise.all`
-  in bounded batches — measured at 15x against 30 ms of simulated card latency.
+  in bounded batches.
+- **But on Android that overlap does not happen.** Measured from the device: a batch's wall clock
+  came out at *exactly* the batch size times the per-file cost, in both of two runs — Chrome
+  serialises File System Access reads below `Promise.all`. Reading is 128-148 ms per photograph
+  there against 0.01 ms to parse, so the only levers are bytes and round trips. See CLAUDE.md.
 - **The thumbnail timings are in the interface**, in the chooser's footer: one tap shows the
   report, a second copies it. It names whichever stage dominates, which is the line that would have
   caught all three of those bugs in one paste. See `diagnostics.ts`.

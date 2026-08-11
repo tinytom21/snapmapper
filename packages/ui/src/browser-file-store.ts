@@ -269,6 +269,19 @@ export function createBrowserFileStore(): BrowserFileStore {
    * because two files can share a name and the map must not collide.
    */
   const handles = new Map<string, FileSystemFileHandle>();
+
+  /*
+   * The `File` objects already obtained while listing, by locator.
+   *
+   * `listFolder` calls `getFile()` on every entry to learn its size and date, and a thumbnail read
+   * then called it a second time. On a phone that is a wasted round trip per photograph —
+   * measured at about 31 ms each while listing — and there are thousands of them. A `File` is a
+   * lightweight handle, so keeping them costs nothing next to what re-fetching them costs.
+   *
+   * Held rather than trusted: `getFile()` is still there for anything not listed, and a stale
+   * `File` on a card that has been swapped out fails the same way a stale handle does.
+   */
+  const files = new Map<string, File>();
   let pickCounter = 0;
   // Copies by default: safer, and it removes the per-file write prompt.
   let destination: SaveDestination = { kind: 'copy-pending' };
@@ -280,6 +293,7 @@ export function createBrowserFileStore(): BrowserFileStore {
   ): Promise<PhotoRef> {
     const file = await handle.getFile();
     handles.set(locator, handle);
+    files.set(locator, file);
 
     return {
       folder,
@@ -288,6 +302,24 @@ export function createBrowserFileStore(): BrowserFileStore {
       modifiedAtMs: file.lastModified,
       locator,
     };
+  }
+
+  /**
+   * Bytes from `start` to `end`, using the `File` captured while listing where there is one.
+   *
+   * `Blob.slice` is a view, so only these bytes leave the card — and one `arrayBuffer()` on the
+   * slice, never on the Blob itself, which is the ~69x penalty recorded in core's `exiftool.ts`.
+   */
+  async function readSlice(ref: PhotoRef, start: number, end: number): Promise<Uint8Array> {
+    let file = files.get(ref.locator);
+    if (!file) {
+      const handle = handles.get(ref.locator);
+      if (!handle) throw new Error(`no handle for ${ref.name}; open it again`);
+      file = await handle.getFile();
+      files.set(ref.locator, file);
+    }
+
+    return new Uint8Array(await file.slice(start, end).arrayBuffer());
   }
 
   return {
@@ -468,14 +500,18 @@ export function createBrowserFileStore(): BrowserFileStore {
     },
 
     async readHead(ref: PhotoRef, maxBytes: number): Promise<Uint8Array> {
-      const handle = handles.get(ref.locator);
-      if (!handle) throw new Error(`no handle for ${ref.name}; open it again`);
+      return readSlice(ref, 0, maxBytes);
+    },
 
-      const file = await handle.getFile();
-      // `Blob.slice` is a view: only these bytes are read from the card. One `arrayBuffer()` on
-      // the slice, never the Blob itself — see the note in core's exiftool.ts about per-syscall
-      // slicing, which is a ~69x penalty on a phone.
-      return new Uint8Array(await file.slice(0, maxBytes).arrayBuffer());
+    /**
+     * An exact range of a file.
+     *
+     * For fetching a thumbnail once its offsets are known, rather than reading a hundred kilobytes
+     * hoping to have covered it. On a phone that is the whole cost — measured at 128 to 148 ms per
+     * photograph for a 128KB head, against 0.01 ms to parse it.
+     */
+    async readRange(ref: PhotoRef, start: number, end: number): Promise<Uint8Array> {
+      return readSlice(ref, start, end);
     },
 
     /**

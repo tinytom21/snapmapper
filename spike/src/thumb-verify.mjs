@@ -16,7 +16,11 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { embeddedThumbnail, THUMBNAIL_HEAD_BYTES, createWasmBackend, readThumbnail } from '@snapmapper/core';
+import {
+  embeddedThumbnail, locateThumbnail, validJpeg,
+  THUMBNAIL_HEAD_BYTES, THUMBNAIL_LOCATE_BYTES,
+  createWasmBackend, readThumbnail,
+} from '@snapmapper/core';
 
 import { isMain, listFixtures, note, section } from './support.mjs';
 
@@ -37,6 +41,8 @@ export async function verifyThumbnails() {
   let handMs = 0;
   let toolMs = 0;
   let handled = 0;
+  let twoStageBytes = 0;
+  let oldBytes = 0;
 
   for (const file of fixtures) {
     const name = path.basename(file);
@@ -44,9 +50,36 @@ export async function verifyThumbnails() {
     // Only the head, exactly as the app reads it.
     const head = whole.subarray(0, THUMBNAIL_HEAD_BYTES);
 
+    /*
+     * The two-stage read the app actually does: 16KB to find the offsets, then exactly the
+     * thumbnail's bytes. This is what decides how much comes off the card, which on a phone is
+     * the entire cost — measured there at 128 to 148 ms per photograph, against 0.01 ms to parse.
+     */
+    // The app's own constant, so this cannot go on measuring a window the app no longer uses.
+    const LOCATE = THUMBNAIL_LOCATE_BYTES;
     const started = performance.now();
-    const mine = embeddedThumbnail(head);
+    const locateHead = whole.subarray(0, LOCATE);
+    const at = locateThumbnail(locateHead);
+    let mine;
+    let bytes = LOCATE;
+    if (at) {
+      if (at.start + at.length <= locateHead.length) {
+        mine = validJpeg(locateHead.subarray(at.start, at.start + at.length));
+      } else {
+        mine = validJpeg(whole.subarray(at.start, at.start + at.length));
+        bytes += at.length;
+      }
+    }
     handMs += performance.now() - started;
+    twoStageBytes += bytes;
+    oldBytes += Math.min(THUMBNAIL_HEAD_BYTES, whole.length);
+
+    // The single-read path must still agree, since it is what a store without `readRange` uses.
+    const singleRead = embeddedThumbnail(head);
+    if (mine && singleRead && !mine.every((b, i) => b === singleRead[i])) {
+      failures += 1;
+      console.log(`  FAIL  ${name}: two-stage and single-read disagree`);
+    }
 
     let theirs;
     const toolStarted = performance.now();
@@ -84,6 +117,13 @@ export async function verifyThumbnails() {
       console.log(`  ok    ${name}: ${mine.length} bytes, byte-identical to ExifTool`);
     }
   }
+
+  section('Bytes off the card');
+  note(`one 128KB read: ${(oldBytes / 1024 / 1024).toFixed(1)} MB `
+    + `(${Math.round(oldBytes / fixtures.length / 1024)} KB each)`);
+  note(`${Math.round(THUMBNAIL_LOCATE_BYTES / 1024)}KB + exact range: ${(twoStageBytes / 1024 / 1024).toFixed(1)} MB `
+    + `(${Math.round(twoStageBytes / fixtures.length / 1024)} KB each) — `
+    + `${(oldBytes / twoStageBytes).toFixed(1)}x less`);
 
   section('Cost');
   note(`hand:     ${handMs.toFixed(1)} ms for ${fixtures.length} files `

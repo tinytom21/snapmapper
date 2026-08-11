@@ -43,23 +43,60 @@ const EOI = 0xffd9;
  * produces — and a background feed must not die on any of them.
  */
 export function embeddedThumbnail(bytes: Uint8Array): Uint8Array | undefined {
+  const at = locateThumbnail(bytes);
+  if (!at || at.start + at.length > bytes.byteLength) return undefined;
+
+  return validJpeg(bytes.subarray(at.start, at.start + at.length));
+}
+
+/** Where the thumbnail is in the file, as a byte range. */
+export interface ThumbnailRange {
+  /** Offset from the start of the *file*, not of the EXIF block. */
+  readonly start: number;
+  readonly length: number;
+}
+
+/**
+ * Where the thumbnail is, without needing the thumbnail itself to be present.
+ *
+ * Split out from `embeddedThumbnail` because of what a phone measured: reads are the whole cost,
+ * and they do not overlap. The offsets live in the first few kilobytes, so a small head is enough
+ * to *find* the thumbnail, and the bytes themselves can then be fetched as an exact range — about
+ * 22KB read per photograph instead of 128KB.
+ *
+ * Never throws, whatever it is given. It is handed arbitrary bytes off a camera card.
+ */
+export function locateThumbnail(bytes: Uint8Array): ThumbnailRange | undefined {
   try {
-    return read(bytes);
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    if (bytes.byteLength < 4 || view.getUint16(0) !== SOI) return undefined;
+
+    const exif = findExifSegment(bytes, view);
+    if (exif === undefined) return undefined;
+
+    return rangeFromTiff(bytes, view, exif);
   } catch {
-    // A malformed header, or an offset past the end of a truncated head. Either way there is no
-    // thumbnail to be had from these bytes, and the caller falls back to ExifTool.
+    // A malformed header, or an offset past the end of a truncated head. Either way there is
+    // nothing to be had from these bytes, and the caller falls back to ExifTool.
     return undefined;
   }
 }
 
-function read(bytes: Uint8Array): Uint8Array | undefined {
+/**
+ * The bytes, if they really are a JPEG.
+ *
+ * The offsets came out of the file, so a file that is subtly wrong yields a subtly wrong slice —
+ * and an `<img>` given rubbish shows a broken icon rather than reporting anything. Refusing here
+ * means the caller falls back to ExifTool and gets the right picture instead of a broken one.
+ */
+export function validJpeg(bytes: Uint8Array): Uint8Array | undefined {
+  if (bytes.byteLength < 4) return undefined;
+
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  if (bytes.byteLength < 4 || view.getUint16(0) !== SOI) return undefined;
+  if (view.getUint16(0) !== SOI) return undefined;
+  if (view.getUint16(bytes.byteLength - 2) !== EOI) return undefined;
 
-  const exif = findExifSegment(bytes, view);
-  if (exif === undefined) return undefined;
-
-  return thumbnailFromTiff(bytes, view, exif);
+  return bytes;
 }
 
 /** Where the TIFF header inside the `Exif\0\0` segment begins, as a file offset. */
@@ -93,11 +130,11 @@ function findExifSegment(bytes: Uint8Array, view: DataView): number | undefined 
   return undefined;
 }
 
-function thumbnailFromTiff(
+function rangeFromTiff(
   bytes: Uint8Array,
   view: DataView,
   tiff: number,
-): Uint8Array | undefined {
+): ThumbnailRange | undefined {
   if (tiff + 8 > bytes.byteLength) return undefined;
 
   /*
@@ -120,30 +157,32 @@ function thumbnailFromTiff(
   const length = entryValue(bytes, view, ifd1, little, 0x0202);
   if (offset === undefined || length === undefined || length === 0) return undefined;
 
-  // Both are relative to the TIFF header, not to the file. This is the line that hand-rolled
-  // readers get wrong, and it fails by producing bytes from the middle of the image data.
-  const start = tiff + offset;
-  const end = start + length;
-  if (start < tiff || end > bytes.byteLength) return undefined;
-
-  const thumbnail = bytes.subarray(start, end);
-
   /*
-   * Checked to be a JPEG before being handed back.
+   * Both are relative to the TIFF header, not to the file. This is the line hand-rolled readers get
+   * wrong, and it fails by producing bytes from the middle of the image data.
    *
-   * The offsets came out of the file, so a file that is subtly wrong yields a subtly wrong slice —
-   * and an `<img>` given rubbish shows a broken icon rather than reporting anything. Refusing here
-   * means the caller falls back to ExifTool and gets the right picture instead of a broken one.
+   * The range is returned even when it lies past the end of what was read — that is the *expected*
+   * case for a small head, and the caller fetches exactly these bytes rather than reading more of
+   * the file speculatively.
    */
-  if (thumbnail.byteLength < 4) return undefined;
-  const inner = new DataView(
-    thumbnail.buffer, thumbnail.byteOffset, thumbnail.byteLength,
-  );
-  if (inner.getUint16(0) !== SOI) return undefined;
-  if (inner.getUint16(thumbnail.byteLength - 2) !== EOI) return undefined;
+  const start = tiff + offset;
+  if (start < tiff) return undefined;
 
-  return thumbnail;
+  // A thumbnail larger than any camera writes means the offsets were misread. Refusing beats
+  // asking the card for a hundred megabytes.
+  if (length > MAX_THUMBNAIL_BYTES) return undefined;
+
+  return { start, length };
 }
+
+/**
+ * The largest a thumbnail is allowed to claim to be.
+ *
+ * An embedded EXIF thumbnail is a 160x120-ish JPEG — the seven real A6400 fixtures run 4.5KB to
+ * 6KB. A megabyte is far past anything real and still small enough that a misread offset cannot
+ * turn into a huge read over a slow card.
+ */
+const MAX_THUMBNAIL_BYTES = 1024 * 1024;
 
 /** The offset of the IFD after this one, or `undefined` when there is none. */
 function nextIfd(
@@ -212,3 +251,20 @@ function entryValue(
  * photographs off a card reader is the difference between 128MB and a gigabyte of I/O.
  */
 export const THUMBNAIL_HEAD_BYTES = 128 * 1024;
+
+/**
+ * The first read of the two-stage path, sized from where the thumbnail actually is.
+ *
+ * 16KB was the first guess and it was wrong on every real file — measured on the seven A6400
+ * fixtures, **IFD1 sits at about 38.8KB and the thumbnail runs from 39KB to 45KB**, because Sony's
+ * MakerNote occupies the space between IFD0 and IFD1. A window that cannot reach IFD1 cannot even
+ * locate the thumbnail, so all seven silently fell through to ExifTool and the fast path was off.
+ *
+ * 48KB locates *and* holds the picture in a single read for those files, which is what matters on
+ * a device where reads do not overlap, and is still 2.7x less than the 128KB this used to pull off
+ * the card per photograph.
+ *
+ * Here rather than in the UI so that the spike measuring it and the app doing it cannot drift
+ * apart — which they did, and the spike went on reporting a 16KB window after the app had moved.
+ */
+export const THUMBNAIL_LOCATE_BYTES = 48 * 1024;

@@ -150,7 +150,8 @@ Consequences worth keeping:
   After: **`zeroperl.wasm` is never requested at all** for a folder of JPEGs.
 - **The breather only applies when ExifTool actually ran.** Pausing 250 ms after a batch that cost
   a fraction of a millisecond would throw the whole gain away.
-- **`THUMBNAIL_HEAD_BYTES` is 128KB, not the metadata path's 1MB.** An EXIF APP1 cannot exceed
+- **`THUMBNAIL_HEAD_BYTES` is the fallback ceiling; the usual read is `THUMBNAIL_LOCATE_BYTES`
+  at 48KB.** Both far below the metadata path's 1MB. An EXIF APP1 cannot exceed
   65535 bytes by the format's own rules and is the first segment in every camera file tried here —
   measured on a real frame, 45034 bytes at offset 2. Eight times less I/O per photograph, which on
   a phone reading 2000 files off a card reader is the difference between 256MB and 2GB.
@@ -175,6 +176,43 @@ against a store with 30 ms of simulated latency, **480 ms serial against 32 ms o
 The rule, since it has now cost three separate bugs: **never `await` a file access inside a loop.**
 Collect what is needed, then `Promise.all` it in bounded batches. It is invisible on a desktop with
 the files on an SSD and it is the whole cost on a phone reading a card.
+
+#### On a phone, reads do not overlap — measured, from the device
+
+The first real report settled several arguments at once. Two runs, 290 photographs from phone
+storage and 640 from an SD card:
+
+| | phone storage | SD card |
+|---|---|---|
+| reading | 148 ms each | 128 ms each |
+| parsing | 0.01 ms each | 0.01 ms each |
+| batch wall clock ÷ per-file cost | **15.3** | **16.0** |
+
+That last row is the finding. It should be about **1** if a batch of sixteen overlapped; it came out
+as *exactly the batch size* in both runs. **Chrome on Android serialises File System Access reads
+below `Promise.all`**, so the concurrency fix that worked for `listFolder` buys nothing here, and no
+amount of it ever will.
+
+With overlap unavailable and parsing already free, the only lever left is **bytes and calls**:
+
+- **The `File` from listing is kept and reused.** `listFolder` already calls `getFile()` on every
+  entry for its size and date; a thumbnail read then called it again. That is a wasted round trip
+  per photograph — about 31 ms each, measured while listing — across thousands of them.
+- **48KB, not 128KB.** And the size is measured rather than guessed: on the seven A6400 fixtures
+  **IFD1 sits at ~38.8KB and the thumbnail runs 39KB to 45KB**, because Sony's MakerNote fills the
+  space between IFD0 and IFD1. The first attempt used a 16KB window, which cannot even *reach*
+  IFD1 — all seven fixtures silently fell through to ExifTool and the fast path was simply off,
+  which the spike caught only because it reports how many were read by hand.
+- **`THUMBNAIL_LOCATE_BYTES` lives in core**, beside the parser, because the spike and the app
+  drifted apart on exactly this number — the spike went on reporting a 16KB window after the app
+  had moved.
+- Anything past the window is fetched as an **exact range** via `readRange`, so a layout with a
+  distant thumbnail costs a small second read rather than a bigger first one.
+
+**What is still unknown, deliberately:** whether that card charges per round trip or per byte. They
+point at opposite fixes — fewer larger reads against smaller windows — and cannot be told apart
+from here. So the report now gives **reads and bytes separately**, and the next paste from a device
+settles it.
 
 #### The timings are in the interface, because the slow machine is never this one
 

@@ -13,7 +13,10 @@ import type { BatchTiming } from '../src/read-thumbnails.ts';
  */
 
 function batch(over: Partial<BatchTiming> = {}): BatchTiming {
-  return { files: 16, readMs: 20, parseMs: 2, exifMs: 0, fast: 16, slow: 0, ...over };
+  return {
+    files: 16, readMs: 20, parseMs: 2, exifMs: 0, fast: 16, slow: 0,
+    bytesRead: 16 * 48 * 1024, reads: 16, ...over,
+  };
 }
 
 const facts = { summary: 'test', cores: '8', memory: '8 GB or more' };
@@ -69,6 +72,23 @@ describe('the report itself', () => {
     // compared against the numbers written down in CLAUDE.md.
     const text = report(addBatch(NOTHING, batch({ files: 10, readMs: 100 })), facts);
     assert.match(text, /10\.00 ms each/);
+  });
+
+  it('reports the bytes pulled off the card, which is the lever on a phone', () => {
+    // Reading is the whole cost there — 128 ms a photograph against 0.01 ms to parse — and it does
+    // not overlap, so the only thing that can be improved is how much is asked for.
+    const text = report(addBatch(NOTHING, batch({ files: 10, bytesRead: 10 * 22 * 1024 })), facts);
+    assert.match(text, /bytes read {4}0\.2 MB total, 22 KB each/);
+  });
+
+  it('reports reads separately from bytes, since they point at different fixes', () => {
+    /*
+     * There is no way to tell from here whether a slow card charges per round trip or per byte.
+     * If the cost tracks the calls, fewer and larger reads win; if it tracks the bytes, smaller
+     * windows win. Reporting both means the next paste from a real device settles it.
+     */
+    const text = report(addBatch(NOTHING, batch({ files: 10, reads: 20, readMs: 400 })), facts);
+    assert.match(text, /reads {9}20 calls, 20\.0 ms per call/);
   });
 
   it('separates what the byte reader answered from what ExifTool did', () => {

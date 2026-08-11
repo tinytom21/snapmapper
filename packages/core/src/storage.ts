@@ -65,6 +65,17 @@ export interface FileStore {
   readHead?(ref: PhotoRef, maxBytes: number): Promise<Uint8Array>;
 
   /**
+   * An exact byte range of a photo, for a store that can seek.
+   *
+   * Optional, and callers must fall back to `readHead` or `read`. This exists for the embedded
+   * thumbnail, whose position is known from the first few kilobytes: fetching those bytes exactly
+   * beats reading a hundred kilobytes and hoping. On a phone reading a card, transferring the
+   * bytes **is** the cost — measured at 128 to 148 ms per photograph for a 128KB head, against
+   * 0.01 ms to parse it, with no overlap available.
+   */
+  readRange?(ref: PhotoRef, start: number, end: number): Promise<Uint8Array>;
+
+  /**
    * Put a photo's new bytes on disk, without ever leaving a file partially written.
    *
    * Implementations MUST be atomic from the reader's point of view: write to a temporary file

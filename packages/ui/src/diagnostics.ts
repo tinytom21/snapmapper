@@ -23,10 +23,13 @@ export interface Totals {
   readonly exifMs: number;
   readonly fast: number;
   readonly slow: number;
+  readonly bytesRead: number;
+  readonly reads: number;
 }
 
 export const NOTHING: Totals = {
   batches: 0, files: 0, readMs: 0, parseMs: 0, exifMs: 0, fast: 0, slow: 0,
+  bytesRead: 0, reads: 0,
 };
 
 export function addBatch(totals: Totals, batch: BatchTiming): Totals {
@@ -38,6 +41,8 @@ export function addBatch(totals: Totals, batch: BatchTiming): Totals {
     exifMs: totals.exifMs + batch.exifMs,
     fast: totals.fast + batch.fast,
     slow: totals.slow + batch.slow,
+    bytesRead: totals.bytesRead + batch.bytesRead,
+    reads: totals.reads + batch.reads,
   };
 }
 
@@ -63,6 +68,10 @@ export function report(totals: Totals, platform: PlatformFacts): string {
     `  by byte read  ${totals.fast}`,
     `  by ExifTool   ${totals.slow}`,
     '',
+    `  bytes read    ${(totals.bytesRead / 1024 / 1024).toFixed(1)} MB total, `
+      + `${totals.files === 0 ? '—' : Math.round(totals.bytesRead / totals.files / 1024)} KB each`,
+    `  reads         ${totals.reads} calls, `
+      + `${totals.reads === 0 ? '—' : `${(totals.readMs / totals.reads).toFixed(1)} ms per call`}`,
     `  reading       ${Math.round(totals.readMs)} ms total, ${per(totals.readMs)} each`,
     `  parsing       ${Math.round(totals.parseMs)} ms total, ${per(totals.parseMs)} each`,
     `  ExifTool      ${Math.round(totals.exifMs)} ms total, ${per(totals.exifMs)} each`,

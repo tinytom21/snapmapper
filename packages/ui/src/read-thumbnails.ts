@@ -14,7 +14,9 @@
 import { headerOnly } from './load-photos.ts';
 import {
   THUMBNAIL_HEAD_BYTES,
-  embeddedThumbnail,
+  THUMBNAIL_LOCATE_BYTES,
+  locateThumbnail,
+  validJpeg,
   readManyTags,
   type BatchFile,
   type BatchRunner,
@@ -62,6 +64,17 @@ export interface BatchTiming {
   readonly fast: number;
   /** How many needed ExifTool. */
   readonly slow: number;
+  /** Bytes pulled off the card. The lever, on a device where reading is the whole cost. */
+  readonly bytesRead: number;
+  /**
+   * How many separate reads those bytes took.
+   *
+   * Reported alongside the bytes because the two point at different fixes and there is no way to
+   * tell them apart from here. If the cost tracks the reads, the round trip dominates and fewer,
+   * larger reads win; if it tracks the bytes, the transfer dominates and smaller windows win. The
+   * one thing already known is that they do not overlap.
+   */
+  readonly reads: number;
 }
 
 /**
@@ -107,43 +120,86 @@ export async function readThumbnails(
    * listing — so sixteen of them in a row is half a second whatever happens afterwards. Overlapped,
    * they cost about one.
    */
+  let bytesRead = 0;
+  let reads = 0;
+  let parseMs = 0;
+
   const readAt = performance.now();
-  const heads = await Promise.all(refs.map(async (ref) => {
+  const found = await Promise.all(refs.map(async (ref) => {
     try {
-      return await readHead(store, ref);
+      /*
+       * A small head first, then the thumbnail's exact bytes.
+       *
+       * Measured on a phone, and it is the whole story: reading costs 128 to 148 ms per photograph
+       * and parsing costs 0.01 ms. Worse, the reads **do not overlap** — the wall clock of a batch
+       * came out at exactly sixteen times the per-file cost in both of the user's runs, so Chrome
+       * on Android is serialising them below `Promise.all` and no amount of concurrency helps.
+       *
+       * When the only lever is bytes, use it: `LOCATE_BYTES` is enough to find the offsets, and
+       * the thumbnail is then fetched as an exact range. About 22KB per photograph rather than
+       * 128KB.
+       */
+      const head = await readSlice(store, ref, 0, THUMBNAIL_LOCATE_BYTES);
+      bytesRead += head.byteLength;
+      reads += 1;
+
+      const parseAt = performance.now();
+      const at = locateThumbnail(head);
+      parseMs += performance.now() - parseAt;
+
+      if (!at) return { ref, head };
+
+      // Already covered by the head — a small thumbnail in a small EXIF block.
+      if (at.start + at.length <= head.byteLength) {
+        const inside = validJpeg(head.subarray(at.start, at.start + at.length));
+        return inside ? { ref, bytes: inside } : { ref, head };
+      }
+
+      if (!store.readRange) return { ref, head };
+
+      const exact = await store.readRange(ref, at.start, at.start + at.length);
+      bytesRead += exact.byteLength;
+      reads += 1;
+      const picture = validJpeg(exact);
+      return picture ? { ref, bytes: picture } : { ref, head };
     } catch {
       // Could not be read off disk at all. Not worth a retry: the chooser shows an empty tile and
       // opening the photograph properly will report it.
-      return undefined;
+      return { ref };
     }
   }));
   const readMs = performance.now() - readAt;
 
-  const parseAt = performance.now();
-  for (const [index, ref] of refs.entries()) {
-    const head = heads[index];
-    if (!head) {
-      results.push({ name: ref.name, bytes: undefined });
+  for (const outcome of found) {
+    if (outcome.bytes) {
+      results.push({ name: outcome.ref.name, bytes: outcome.bytes });
       continue;
     }
-
-    const quick = embeddedThumbnail(head);
-    if (quick) {
-      results.push({ name: ref.name, bytes: quick });
+    if (!outcome.head) {
+      results.push({ name: outcome.ref.name, bytes: undefined });
       continue;
     }
-
-    slow.push({ name: ref.name, bytes: headerOnly(head) });
+    slow.push({ name: outcome.ref.name, bytes: headerOnly(outcome.head) });
   }
-  const parseMs = performance.now() - parseAt;
+
+  const fastCount = results.length;
 
   const timing = (exifMs: number): BatchTiming => ({
     files: refs.length,
     readMs: Math.round(readMs),
     parseMs: Math.round(parseMs * 100) / 100,
     exifMs: Math.round(exifMs),
-    fast: results.filter((r) => r.bytes !== undefined).length,
+    /*
+     * Counted *before* the fallback runs, not after.
+     *
+     * This used to filter the results at the end, so anything ExifTool found was counted as read
+     * by the byte reader too — a report saying "640 by byte read, 248 by ExifTool" for 640
+     * photographs, which does not add up and hid how often the fallback was firing.
+     */
+    fast: fastCount,
     slow: slow.length,
+    bytesRead,
+    reads,
   });
 
   if (slow.length === 0) return { results, usedExifTool: false, timing: timing(0) };
@@ -187,14 +243,30 @@ export async function readThumbnails(
  * Raw is the exception and it does not matter: an ARW falls through to ExifTool regardless, and
  * ExifTool reads what it is given.
  */
-async function readHead(store: FileStore, ref: PhotoRef): Promise<Uint8Array> {
-  if (store.readHead) {
+async function readSlice(
+  store: FileStore,
+  ref: PhotoRef,
+  start: number,
+  end: number,
+): Promise<Uint8Array> {
+  if (start === 0 && store.readHead) {
     try {
-      return await store.readHead(ref, THUMBNAIL_HEAD_BYTES);
+      return await store.readHead(ref, end);
     } catch {
       // A store that has the method but failed on this file: fall through rather than lose the
       // photograph over an optimisation.
     }
   }
-  return store.read(ref);
+  if (store.readRange) {
+    try {
+      return await store.readRange(ref, start, end);
+    } catch {
+      // As above.
+    }
+  }
+
+  const whole = await store.read(ref);
+  return whole.subarray(start, Math.min(end, whole.byteLength));
 }
+
+
