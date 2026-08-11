@@ -21,9 +21,9 @@
  * being asked.
  */
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
-import { isRawFile, type PhotoRef } from '@snapmapper/core';
+import { isRawFile, type FileStore, type PhotoRef } from '@snapmapper/core';
 
 import {
   READ_MS_PER_PHOTO,
@@ -31,6 +31,7 @@ import {
   describeReadCost,
   groupByDay,
 } from './folder-groups.ts';
+import { useThumbnailFeed } from './use-thumbnail-feed.ts';
 
 export interface FolderChooserProps {
   readonly folderName: string;
@@ -41,11 +42,22 @@ export interface FolderChooserProps {
   readonly onCancel: () => void;
   /** Names already open, when adding to a session. Shown as such and not offered again. */
   readonly alreadyOpen?: ReadonlySet<string>;
+  /** Where the thumbnails are read from. Passed in so the preview can supply a fake. */
+  readonly store: FileStore;
 }
 
 export function FolderChooser({
-  folderName, refs, busy, onOpen, onCancel, alreadyOpen,
+  folderName, refs, busy, onOpen, onCancel, alreadyOpen, store,
 }: FolderChooserProps) {
+  /*
+   * Thumbnails arrive in the background while this is on screen, visible ones first.
+   *
+   * Reported as the thing that made the chooser unusable: *"I need a thumbnail in order to select
+   * the photos. I can't do it by filename."* Quite right — `DSC01234.JPG` says nothing about the
+   * frame. They cannot be waited for, though: 43 ms each batched is a couple of minutes for a card
+   * on a phone, and the chooser's whole justification is that opening a folder costs nothing.
+   */
+  const feed = useThumbnailFeed(refs, store);
   const groups = useMemo(() => groupByDay(refs), [refs]);
 
   /*
@@ -65,6 +77,16 @@ export function FolderChooser({
 
   const count = [...chosen].filter((name) => !alreadyOpen?.has(name)).length;
   const cost = describeReadCost(count, READ_MS_PER_PHOTO);
+
+  /*
+   * An expanded day is what is on screen, near enough, and it is far cheaper to know than a real
+   * intersection observer per tile: closed days are not rendered at all, so the set of expanded
+   * days *is* the set of visible photographs to within one scroll.
+   */
+  const want = feed.want;
+  useEffect(() => {
+    want(groups.filter((group) => openDays.has(group.key)).flatMap((g) => g.refs.map((r) => r.name)));
+  }, [want, groups, openDays]);
 
   function toggle(name: string) {
     setChosen((was) => {
@@ -107,6 +129,11 @@ export function FolderChooser({
         <div className="row">
           <button type="button" onClick={() => setAll(true)} disabled={busy}>Select all</button>
           <button type="button" onClick={() => setAll(false)} disabled={busy}>Select none</button>
+          {feed.wantedCount > 0 && feed.done < feed.wantedCount && (
+            <span className="meta">
+              loading pictures {feed.done}/{feed.wantedCount}
+            </span>
+          )}
         </div>
       </div>
 
@@ -158,19 +185,26 @@ export function FolderChooser({
                 <ul className="chooser-files">
                   {group.refs.map((ref) => {
                     const open = alreadyOpen?.has(ref.name) ?? false;
+                    const url = feed.urls.get(ref.name);
                     return (
                       <li key={ref.name}>
-                        <label className={open ? 'is-open' : ''}>
+                        <label className={open ? 'is-open' : ''} title={ref.name}>
                           <input
                             type="checkbox"
                             checked={open || chosen.has(ref.name)}
                             disabled={busy || open}
                             onChange={() => toggle(ref.name)}
                           />
+                          {/*
+                            The box keeps its size whether or not the picture has arrived, so the
+                            grid does not reflow under the fingers of somebody selecting.
+                          */}
+                          <span className="shot">
+                            {url && <img src={url} alt="" draggable={false} loading="lazy" />}
+                          </span>
                           <span className="name">{ref.name}</span>
                           {isRawFile(ref.name) && <span className="tag">raw</span>}
-                          <span className="meta">{formatSize(ref.sizeBytes)}</span>
-                          {open && <span className="meta">already open</span>}
+                          {open && <span className="meta">open</span>}
                         </label>
                       </li>
                     );

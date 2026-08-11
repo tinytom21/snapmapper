@@ -247,7 +247,7 @@ const METADATA_BYTES = 1024 * 1024;
  * Falls back to a whole-file read, because `readHead` is optional on `FileStore` — a store that
  * cannot seek is still a valid store, and this must not be the thing that stops one working.
  */
-async function readForMetadata(store: FileStore, ref: PhotoRef): Promise<Uint8Array> {
+export async function readForMetadata(store: FileStore, ref: PhotoRef): Promise<Uint8Array> {
   if (store.readHead) {
     try {
       return await store.readHead(ref, METADATA_BYTES);

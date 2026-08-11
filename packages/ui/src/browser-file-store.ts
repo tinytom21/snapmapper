@@ -142,6 +142,18 @@ export interface BrowserFolder extends FolderHandle {
 }
 
 export interface BrowserFileStore extends FileStore {
+  /**
+   * Everything in a folder, with a progress callback for a phone.
+   *
+   * Widens `FileStore.listFolder`, which takes no callback because nothing portable needs one.
+   * A camera folder on Android is hundreds of round trips and the wait is long enough to look
+   * like a failure without something on screen saying otherwise.
+   */
+  listFolder(
+    folder: FolderHandle,
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<PhotoRef[]>;
+
   /** The OS folder picker. The only way in — see `FolderChooser.tsx` for why. */
   pickFolder(): Promise<BrowserFolder | undefined>;
 
@@ -295,18 +307,41 @@ export function createBrowserFileStore(): BrowserFileStore {
       }
     },
 
-    async listFolder(folder: FolderHandle): Promise<PhotoRef[]> {
+    /**
+     * Every photograph in a folder, with its size and date. No metadata is read.
+     *
+     * **Enumerate first, then fetch in overlapping batches.** This used to `await getFile()` inside
+     * the `entries()` iteration, which serialises two round trips per file and stalls the iterator
+     * on each one. On a desktop that is invisible. On Android it is not: a whole camera folder
+     * reported as *"nothing seemed to happen"* — 322 files, each waiting for the one before, with
+     * no progress shown. Measured even on OPFS, where a round trip is as cheap as it ever gets:
+     * **81 ms serial against 14 ms in batches of 32, a 5.8x difference**, and SAF round trips are
+     * far dearer than OPFS ones so the real gap is wider.
+     *
+     * Batches of 32 rather than all at once: unbounded parallelism on a phone is a good way to
+     * find out what a file-provider's limits are. 32 measured the same as 64.
+     */
+    async listFolder(
+      folder: FolderHandle,
+      onProgress?: (done: number, total: number) => void,
+    ): Promise<PhotoRef[]> {
       const directory = (folder as BrowserFolder).directory;
-      if (!directory) {
-        // A picked set has no folder to enumerate; its refs came from the picker.
-        return [];
+      if (!directory) return [];
+
+      const found: [string, FileSystemFileHandle][] = [];
+      for await (const [name, handle] of directory.entries()) {
+        if (handle.kind !== 'file' || !PHOTO_PATTERN.test(name)) continue;
+        found.push([name, handle as FileSystemFileHandle]);
       }
 
       const refs: PhotoRef[] = [];
-
-      for await (const [name, handle] of directory.entries()) {
-        if (handle.kind !== 'file' || !PHOTO_PATTERN.test(name)) continue;
-        refs.push(await refFromHandle(handle, folder as BrowserFolder, `${folder.id}/${name}`));
+      const BATCH = 32;
+      for (let at = 0; at < found.length; at += BATCH) {
+        const chunk = found.slice(at, at + BATCH);
+        refs.push(...await Promise.all(chunk.map(
+          ([name, handle]) => refFromHandle(handle, folder as BrowserFolder, `${folder.id}/${name}`),
+        )));
+        onProgress?.(refs.length, found.length);
       }
 
       // Camera filenames sort chronologically, which is the order people expect.

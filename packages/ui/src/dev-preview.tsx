@@ -36,6 +36,7 @@ import {
   unplacedPhotos,
   distanceMetres,
   type GpxTrack,
+  type FileStore,
   type LocationConflict,
   type PhotoEntry,
   type Session,
@@ -464,6 +465,40 @@ export function previewConflicts(count = 3): void {
 }
 
 
+/**
+ * A store that hands back drawn "photographs", so the chooser's background feed can be watched.
+ *
+ * The real one reads a card through ExifTool, which this harness has no card for. What is being
+ * checked here is the *feed* — that pictures arrive gradually, visible days first, without the
+ * grid reflowing under a selection — and that needs bytes rather than a real camera.
+ */
+function fakeThumbnailStore(): FileStore {
+  const jpeg = (seed: number) => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 160;
+    canvas.height = 120;
+    const context = canvas.getContext('2d');
+    if (context) {
+      context.fillStyle = `hsl(${(seed * 37) % 360} 55% 45%)`;
+      context.fillRect(0, 0, 160, 120);
+      context.fillStyle = '#fff';
+      context.font = 'bold 40px system-ui, sans-serif';
+      context.textAlign = 'center';
+      context.fillText(String(seed % 1000), 80, 78);
+    }
+    const data = canvas.toDataURL('image/jpeg', 0.7).split(',')[1] ?? '';
+    const binary = atob(data);
+    return Uint8Array.from(binary, (c) => c.charCodeAt(0));
+  };
+
+  let seed = 0;
+  return {
+    async listFolder() { return []; },
+    async read() { return jpeg(seed++); },
+    async writeAtomic() { throw new Error('not used'); },
+  } as unknown as FileStore;
+}
+
 let chooserRoot: Root | undefined;
 
 /**
@@ -508,6 +543,7 @@ export function previewChooser(count = 900): void {
       busy={false}
       onOpen={(chosen) => console.log('open', chosen.length, 'photos')}
       onCancel={() => console.log('cancel')}
+      store={fakeThumbnailStore()}
     />,
   );
 }

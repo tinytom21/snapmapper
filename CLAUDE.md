@@ -106,6 +106,52 @@ carries `margin: 0.5rem 0`, which was adding 16px to every heading; `.chooser-da
 `.note` nested in a `label` reports as a parent overlapping its child — sixty phantoms on this
 screen, which would drown a real one. Same styling, different name, honest answers.
 
+#### The listing is batched, because a serial one looked like a dead button
+
+Reported from a phone: a whole camera folder of 322 files, and *"nothing seemed to happen"*.
+
+`listFolder` awaited `getFile()` **inside** the `entries()` iteration — two round trips per file,
+serialised, stalling the iterator on each one. Invisible on a desktop; on Android's SAF, where a
+round trip is dear, it is a long silent wait. Enumerate first, then fetch in batches of 32:
+measured **81 ms against 14 ms on OPFS, a 5.8x difference**, where a round trip is as cheap as it
+ever gets — the SAF gap is wider.
+
+The deeper fault was that a slow step showed nothing at all, so there was no way to tell a long
+wait from a broken button. Both listing calls now report progress. And an empty result says *why*:
+a folder of `.MP4` files reads as empty here, and saying "no JPEG or raw files, video is not
+supported yet" is the difference between a bug and an answer.
+
+#### Thumbnails arrive in the background, and the main thread is the constraint
+
+*"I need a thumbnail in order to select the photos. I can't do it by filename."* Quite right —
+`DSC01234.JPG` says nothing about the frame. `use-thumbnail-feed.ts` fills the grid in while the
+chooser is open, expanded days first.
+
+**ExifTool-in-WASM runs on the main thread, and that shapes the whole design.** Measured: a
+`setTimeout(0)` scheduled *before* a batch does not fire until after it — the thread is held solid
+for **~700 ms per batch, at every batch size**, because the invocation dominates. Sixteen files
+cost 45 ms each; four cost 163 ms each, for the same 700 ms wait. So a smaller batch buys no
+responsiveness at all and costs four times the throughput.
+
+Two consequences, both deliberate:
+
+- **The feed never walks the whole folder.** Visible days plus `LOOKAHEAD` (32), then it idles and
+  waits for another day to be opened. Prefetching a 322-file card is 21 batches and fifteen seconds
+  of a barely usable interface, spent mostly on days nobody has looked at.
+- **A 250 ms breather between batches**, so the taps queued during the block are actually
+  processed. Measured over nine seconds of feeding: **20 of 30 sampled 100 ms timers ran within
+  200 ms**, worst case 803 ms, and it settles once the open day is covered.
+
+**The real fix is to move the interpreter into a worker**, and it is not done. Note the trap
+waiting there: zeroperl fetches `./zeroperl.wasm` relative to the *document*, which is why
+`vite-plugin-zeroperl.ts` serves it at the site root — inside a worker the base URL is the worker
+script's, so that arrangement would need revisiting.
+
+Two smaller things. `.shot` holds its size with `aspect-ratio` whether or not the picture has
+arrived, so the grid cannot reflow under a finger already on its way down. And the tick box sits
+*over* the picture with a white ring, because it has to be visible against a photograph of
+anything.
+
 What went with the split: `pickPhotos`, `adoptFolder`, `pickOutputFolder`, `restoreOutputFolder`,
 `countFolder`, `LARGE_FOLDER_THRESHOLD`, `isFilePickerSupported`, the raw parking screen, and the
 remembered output folder. The destination is derived from the open folder every time, so there is

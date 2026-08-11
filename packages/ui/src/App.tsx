@@ -291,6 +291,10 @@ export function App() {
   const [conflicts, setConflicts] = useState<readonly LocationConflict[]>([]);
   /** True while the output folder and any sidecars are being consulted. A second or two. */
   const [checkingPriors, setCheckingPriors] = useState(false);
+  /** Reading a folder's names and dates. No metadata — but on a phone it is not instant. */
+  const [listing, setListing] = useState<
+    { readonly done: number; readonly total: number; readonly name: string } | null
+  >(null);
 
   /**
    * Find out which of these photographs an earlier session already placed, and say so.
@@ -500,9 +504,16 @@ export function App() {
     setNotice(null);
 
     try {
-      setBrowsing({ folder, refs: await store.listFolder(folder) });
+      setListing({ done: 0, total: 0, name: folder.displayName });
+      const refs = await store.listFolder(
+        folder,
+        (done, total) => setListing({ done, total, name: folder.displayName }),
+      );
+      setBrowsing({ folder, refs });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setListing(null);
     }
   }, [session, folder]);
 
@@ -558,9 +569,26 @@ export function App() {
       const picked = await store.pickFolder();
       if (!picked) return;
 
-      const refs = await store.listFolder(picked);
+      /*
+       * Progress, because on a phone this is not instant and silence reads as failure.
+       *
+       * Reported exactly that way: a whole camera folder of 322 files where "nothing seemed to
+       * happen". The listing was serialised — see `listFolder`, now batched — but the deeper fault
+       * was that a slow step showed nothing at all, so there was no way to tell a long wait from a
+       * dead button.
+       */
+      setListing({ done: 0, total: 0, name: picked.displayName });
+      const refs = await store.listFolder(
+        picked,
+        (done, total) => setListing({ done, total, name: picked.displayName }),
+      );
+      setListing(null);
+
       if (refs.length === 0) {
-        setError(`No photographs in \u201c${picked.displayName}\u201d.`);
+        setError(
+          `Nothing to geotag in \u201c${picked.displayName}\u201d \u2014 no JPEG or raw files there. `
+          + 'Video is not supported yet, so a folder of clips reads as empty.',
+        );
         return;
       }
 
@@ -583,6 +611,8 @@ export function App() {
       setBrowsing({ folder: picked, refs });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setListing(null);
     }
   }, [applyDestination]);
 
@@ -1260,6 +1290,13 @@ export function App() {
         </div>
       )}
 
+      {listing && (
+        <div className="banner">
+          Reading <code>{listing.name}</code>
+          {listing.total > 0 ? ` — ${listing.done}/${listing.total} files` : '…'}
+        </div>
+      )}
+
       {checkingPriors && !loading && (
         <div className="banner">Looking for photographs geotagged in an earlier session…</div>
       )}
@@ -1321,6 +1358,7 @@ export function App() {
                   busy={busy}
                   onOpen={openChosen}
                   onCancel={() => setBrowsing(null)}
+                  store={store}
                   {...(session
                     ? { alreadyOpen: new Set(session.photos.map((entry) => entry.ref.name)) }
                     : {})}
