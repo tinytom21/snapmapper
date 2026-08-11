@@ -14,6 +14,7 @@
  *     (await import('/src/dev-preview.tsx')).previewMap()
  *     (await import('/src/dev-preview.tsx')).previewConflicts(3)
  *     (await import('/src/dev-preview.tsx')).previewChooser(900)
+ *     (await import('/src/dev-preview.tsx')).previewWorking(640, 2000)
  *
  * Sample photos only — nothing here touches the filesystem, and no real photograph is involved.
  */
@@ -473,7 +474,8 @@ export function previewConflicts(count = 3): void {
  * grid reflowing under a selection — and that needs bytes rather than a real camera.
  */
 function fakeThumbnailStore(): FileStore {
-  const jpeg = (seed: number) => {
+  /** A drawn picture, as JPEG bytes — this is what gets embedded as the thumbnail. */
+  const picture = (seed: number) => {
     const canvas = document.createElement('canvas');
     canvas.width = 160;
     canvas.height = 120;
@@ -482,21 +484,120 @@ function fakeThumbnailStore(): FileStore {
       context.fillStyle = `hsl(${(seed * 37) % 360} 55% 45%)`;
       context.fillRect(0, 0, 160, 120);
       context.fillStyle = '#fff';
-      context.font = 'bold 40px system-ui, sans-serif';
+      context.font = 'bold 44px system-ui, sans-serif';
       context.textAlign = 'center';
-      context.fillText(String(seed % 1000), 80, 78);
+      context.fillText(String(seed % 1000), 80, 80);
     }
-    const data = canvas.toDataURL('image/jpeg', 0.7).split(',')[1] ?? '';
-    const binary = atob(data);
-    return Uint8Array.from(binary, (c) => c.charCodeAt(0));
+    const base64 = canvas.toDataURL('image/jpeg', 0.7).split(',')[1] ?? '';
+    return Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
   };
 
-  let seed = 0;
+  /*
+   * A real EXIF JPEG with that picture in IFD1, because the fast path reads bytes.
+   *
+   * A plain JPEG would make `embeddedThumbnail` decline and fall back to ExifTool, so the harness
+   * would be exercising the slow path while claiming to show the fast one — the sort of preview
+   * that proves the opposite of what it looks like.
+   */
+  const exifJpeg = (seed: number) => {
+    const thumb = picture(seed);
+    const ifd0At = 8;
+    const ifd1At = ifd0At + 2 + 12 + 4;
+    const thumbAt = ifd1At + 2 + 24 + 4;
+
+    const tiff = new Uint8Array(thumbAt + thumb.byteLength);
+    const view = new DataView(tiff.buffer);
+    view.setUint16(0, 0x4949);
+    view.setUint16(2, 42, true);
+    view.setUint32(4, ifd0At, true);
+
+    view.setUint16(ifd0At, 1, true);
+    view.setUint16(ifd0At + 2, 0x010f, true);
+    view.setUint16(ifd0At + 4, 2, true);
+    view.setUint32(ifd0At + 6, 1, true);
+    view.setUint32(ifd0At + 10, 0, true);
+    view.setUint32(ifd0At + 14, ifd1At, true);
+
+    view.setUint16(ifd1At, 2, true);
+    view.setUint16(ifd1At + 2, 0x0201, true);
+    view.setUint16(ifd1At + 4, 4, true);
+    view.setUint32(ifd1At + 6, 1, true);
+    view.setUint32(ifd1At + 10, thumbAt, true);
+    view.setUint16(ifd1At + 14, 0x0202, true);
+    view.setUint16(ifd1At + 16, 4, true);
+    view.setUint32(ifd1At + 18, 1, true);
+    view.setUint32(ifd1At + 22, thumb.byteLength, true);
+    view.setUint32(ifd1At + 26, 0, true);
+    tiff.set(thumb, thumbAt);
+
+    const marker = new Uint8Array([0x45, 0x78, 0x69, 0x66, 0x00, 0x00]);
+    const payload = marker.byteLength + tiff.byteLength;
+    const out = new Uint8Array(6 + payload + 2);
+    const outView = new DataView(out.buffer);
+    outView.setUint16(0, 0xffd8);
+    outView.setUint16(2, 0xffe1);
+    outView.setUint16(4, payload + 2);
+    out.set(marker, 6);
+    out.set(tiff, 6 + marker.byteLength);
+    outView.setUint16(out.byteLength - 2, 0xffda);
+    return out;
+  };
+
+  const numberOf = (name: string) => Number(/(\d+)/.exec(name)?.[1] ?? 0);
+
+  /*
+   * Cached, because generating these is the harness's own cost and it swamps what is being
+   * measured. `canvas.toDataURL` is milliseconds each, so building one per file made the feed look
+   * like it was blocking the main thread when the thing under test — the byte reader — takes
+   * 0.165 ms. Twenty distinct pictures is enough to tell tiles apart by eye.
+   */
+  const cache = new Map<number, Uint8Array>();
+  const bytesFor = (name: string) => {
+    const key = numberOf(name) % 20;
+    let made = cache.get(key);
+    if (!made) {
+      made = exifJpeg(key);
+      cache.set(key, made);
+    }
+    return made;
+  };
+
   return {
     async listFolder() { return []; },
-    async read() { return jpeg(seed++); },
+    async read(ref: { name: string }) { return bytesFor(ref.name); },
+    async readHead(ref: { name: string }) { return bytesFor(ref.name); },
     async writeAtomic() { throw new Error('not used'); },
   } as unknown as FileStore;
+}
+
+let workingRoot: Root | undefined;
+
+/**
+ * The overlay shown while a folder is being listed.
+ *
+ * Reachable on its own because the real one only appears during an operating-system folder pick,
+ * which cannot be driven here — and it was reported as "too subtle" in its previous form, so its
+ * replacement is worth being able to look at without a card in a reader.
+ */
+export function previewWorking(done = 640, total = 2000): void {
+  const host = document.createElement('div');
+  document.body.append(host);
+
+  workingRoot?.unmount();
+  workingRoot = createRoot(host);
+  workingRoot.render(
+    <div className="working" role="status" aria-live="polite">
+      <div className="working-card">
+        <div className="spinner" aria-hidden="true" />
+        <strong>Reading DCIM/100MSDCF</strong>
+        <span className="note">{done} of {total} files</span>
+        <div className="bar" aria-hidden="true">
+          <div style={{ width: `${Math.round((done / total) * 100)}%` }} />
+        </div>
+        <span className="note">No photograph is opened yet, and nothing is written.</span>
+      </div>
+    </div>,
+  );
 }
 
 let chooserRoot: Root | undefined;

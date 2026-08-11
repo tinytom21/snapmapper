@@ -1787,3 +1787,72 @@ button.stacked .sub {
    which is where a thumb expects it either way. */
 .chooser-foot button.primary { margin-left: auto; }
 .chooser-foot button.link { margin-left: 0; }
+
+/* --- Something long is happening, and it must be obvious --------------- */
+
+/*
+ * A blocking overlay, not a line at the top of the page.
+ *
+ * Reported from a phone reading 2000 files off a card reader: the banner was "too subtle sitting
+ * at the top of the page". It was — it sits above the buttons you are looking at, so a minute of
+ * real work reads as a dead tap. A step that blocks for a minute gets an overlay that says so.
+ *
+ * Above the conflict prompt's z-index of 20, because this is the one thing on screen and there is
+ * nothing to decide underneath it.
+ */
+.working {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgb(0 0 0 / 0.45);
+}
+
+.working-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.55rem;
+  text-align: center;
+  width: min(22rem, 100%);
+  padding: 1.4rem 1.2rem;
+  border-radius: var(--radius);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  box-shadow: 0 8px 32px rgb(0 0 0 / 0.35);
+}
+.working-card .note { margin: 0; }
+.working-card strong { overflow-wrap: anywhere; }
+
+.spinner {
+  width: 1.9rem;
+  height: 1.9rem;
+  border-radius: 50%;
+  border: 3px solid var(--line);
+  border-top-color: var(--accent);
+  animation: spin 800ms linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Motion for its own sake is the first thing to go for anyone who has asked not to have it. The
+   bar still fills, so progress is still visible without anything rotating. */
+@media (prefers-reduced-motion: reduce) {
+  .spinner { animation: none; border-top-color: var(--accent); }
+}
+
+.bar {
+  width: 100%;
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  overflow: hidden;
+}
+.bar > div {
+  height: 100%;
+  background: var(--accent);
+  border-radius: var(--radius-pill);
+  transition: width 120ms linear;
+}

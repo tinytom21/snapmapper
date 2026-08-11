@@ -1290,10 +1290,31 @@ export function App() {
         </div>
       )}
 
+      {/*
+        Over everything, not a line at the top.
+        
+        Reported from a phone reading 2000 files off a card reader: the banner was "too subtle
+        sitting at the top of the page", and it is — it sits above the fold on a screen whose
+        buttons are what you are looking at, so a minute of work reads as nothing happening. A
+        folder listing is a blocking step with a real duration, so it gets a blocking overlay.
+      */}
       {listing && (
-        <div className="banner">
-          Reading <code>{listing.name}</code>
-          {listing.total > 0 ? ` — ${listing.done}/${listing.total} files` : '…'}
+        <div className="working" role="status" aria-live="polite">
+          <div className="working-card">
+            <div className="spinner" aria-hidden="true" />
+            <strong>Reading {listing.name}</strong>
+            <span className="note">
+              {listing.total > 0
+                ? `${listing.done} of ${listing.total} files`
+                : 'looking at what is in there…'}
+            </span>
+            {listing.total > 0 && (
+              <div className="bar" aria-hidden="true">
+                <div style={{ width: `${Math.round((listing.done / listing.total) * 100)}%` }} />
+              </div>
+            )}
+            <span className="note">No photograph is opened yet, and nothing is written.</span>
+          </div>
         </div>
       )}
 

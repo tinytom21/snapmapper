@@ -5,6 +5,7 @@ export * from './google-timeline.ts';
 export * from './track-file.ts';
 export * from './track-folder.ts';
 export * from './jpeg.ts';
+export * from './jpeg-thumbnail.ts';
 export * from './exiftool.ts';
 export * from './exiftool-batch.ts';
 export * from './raw.ts';

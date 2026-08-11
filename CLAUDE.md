@@ -121,7 +121,47 @@ wait from a broken button. Both listing calls now report progress. And an empty 
 a folder of `.MP4` files reads as empty here, and saying "no JPEG or raw files, video is not
 supported yet" is the difference between a bug and an answer.
 
-#### Thumbnails arrive in the background, and the main thread is the constraint
+#### Thumbnails are read out of the bytes, not out of ExifTool
+
+*"I need a thumbnail in order to select the photos. I can't do it by filename."* Quite right.
+`use-thumbnail-feed.ts` fills the grid in while the chooser is open, expanded days first.
+
+The first version invoked ExifTool per photograph — ~45 ms each even batched, all of it on the main
+thread, so a day of sixty was four seconds of stutter. `jpeg-thumbnail.ts` does the same job by
+**following two offsets**: the EXIF APP1 segment holds a whole TIFF, IFD0 links to IFD1, and IFD1's
+tags `0x0201` and `0x0202` say where the thumbnail is and how long. Measured on real A6400 files,
+**0.165 ms against ExifTool's 634 ms, and byte-identical on all seven fixtures** —
+`npm run thumb --workspace spike`.
+
+**This does not break the "never re-serialise EXIF yourself" rule**, and the distinction matters.
+That rule exists because `piexifjs` and exiv2 corrupt Sony maker notes by *rewriting* IFDs they do
+not understand. This only ever reads: it copies bytes out and never opens a file for writing. The
+worst outcome is a wrong picture in a chooser, and even that is guarded — the slice is rejected
+unless it starts `FFD8` and ends `FFD9`, and anything declined falls back to ExifTool.
+
+Consequences worth keeping:
+
+- **ExifTool is now only reached for raw.** An ARW is a TIFF rather than a JPEG, so the walk does
+  not apply and the fallback earns its place. Correctness from the fallback, speed from not needing
+  it.
+- **The interpreter is built on first need, and usually never.** It was created when the chooser
+  opened, which is 24MB of WebAssembly and most of a second of blocked thread for a fallback that
+  never fires. Measured before: the first picture took 646 ms to appear, essentially all boot.
+  After: **`zeroperl.wasm` is never requested at all** for a folder of JPEGs.
+- **The breather only applies when ExifTool actually ran.** Pausing 250 ms after a batch that cost
+  a fraction of a millisecond would throw the whole gain away.
+- **`THUMBNAIL_HEAD_BYTES` is 128KB, not the metadata path's 1MB.** An EXIF APP1 cannot exceed
+  65535 bytes by the format's own rules and is the first segment in every camera file tried here —
+  measured on a real frame, 45034 bytes at offset 2. Eight times less I/O per photograph, which on
+  a phone reading 2000 files off a card reader is the difference between 256MB and 2GB.
+
+Measured in a browser on 322 files, all sixty of the open day: **548 ms to fill, 24 of 25 sampled
+100 ms timers inside 150 ms** — against roughly four seconds and a solidly blocked thread before.
+
+**A worker is still the fix for raw**, and the trap is unchanged: zeroperl fetches
+`./zeroperl.wasm` relative to the *document*, which is why a Vite plugin serves it at the site root.
+
+#### Superseded: thumbnails arrive in the background, and the main thread is the constraint
 
 *"I need a thumbnail in order to select the photos. I can't do it by filename."* Quite right —
 `DSC01234.JPG` says nothing about the frame. `use-thumbnail-feed.ts` fills the grid in while the
@@ -151,6 +191,14 @@ Two smaller things. `.shot` holds its size with `aspect-ratio` whether or not th
 arrived, so the grid cannot reflow under a finger already on its way down. And the tick box sits
 *over* the picture with a white ring, because it has to be visible against a photograph of
 anything.
+
+#### A long step gets an overlay, not a line at the top
+
+Reported from a phone listing 2000 files off a card reader — about a minute, and the banner saying
+so was *"too subtle sitting at the top of the page"*. It was: it sits above the buttons you are
+looking at. A step that blocks for a minute now gets a centred card over everything, with a
+progress bar and a count, at a z-index above the conflict prompt. `previewWorking()` shows it
+without a card in a reader.
 
 What went with the split: `pickPhotos`, `adoptFolder`, `pickOutputFolder`, `restoreOutputFolder`,
 `countFolder`, `LARGE_FOLDER_THRESHOLD`, `isFilePickerSupported`, the raw parking screen, and the

@@ -39,12 +39,15 @@ describe('what to fetch next', () => {
 
   it('stops after the lookahead rather than walking the whole folder', () => {
     /*
-     * The measurement that decided this: ExifTool runs on the main thread and holds it for about
-     * 700 ms per batch, so prefetching a 322-file card is fifteen seconds of a barely usable
-     * interface spent on days nobody has opened. Two batches past the visible set, then stop.
+     * Bounded even though the fast path made reaching ahead cheap, because raw still falls back to
+     * ExifTool — which holds the main thread for ~700 ms a batch. An unbounded reach on a
+     * raw-heavy card would freeze the screen exactly as it did before the fast path existed.
      */
-    const all = Array.from({ length: 500 }, (_, i) => `p${i}`);
-    const batch = nextBatch({ all, wanted: new Set(), done: new Set(), inFlight: new Set() }, 1000);
+    const all = Array.from({ length: LOOKAHEAD * 3 }, (_, i) => `p${i}`);
+    const batch = nextBatch(
+      { all, wanted: new Set(), done: new Set(), inFlight: new Set() },
+      all.length,
+    );
 
     assert.equal(batch.length, LOOKAHEAD);
   });

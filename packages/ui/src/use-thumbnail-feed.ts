@@ -13,7 +13,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 
-import type { FileStore, PhotoRef } from '@snapmapper/core';
+import type { BatchRunner, FileStore, PhotoRef } from '@snapmapper/core';
 
 import { createBatchRunner } from './batch-runner.ts';
 import { readThumbnails } from './read-thumbnails.ts';
@@ -75,10 +75,18 @@ export function useThumbnailFeed(
     const all = refs.map((ref) => ref.name);
     const doneNames = new Set<string>();
 
-    void (async () => {
-      const runner = await createBatchRunner();
-      if (!runner || stopped) return;
+    /*
+     * Built on first need, and usually never.
+     *
+     * A folder of JPEGs is answered entirely by the byte reader, so instantiating zeroperl's 24MB
+     * of WebAssembly when the chooser opens is most of a second of blocked main thread for nothing.
+     * Measured before this: the first picture took 646 ms to appear, essentially all of it the boot.
+     * `createBatchRunner` caches page-wide, so this stays one instance however often it is asked.
+     */
+    let runner: Promise<BatchRunner | undefined> | undefined;
+    const getRunner = () => (runner ??= createBatchRunner());
 
+    void (async () => {
       for (;;) {
         if (stopped) return;
 
@@ -100,15 +108,15 @@ export function useThumbnailFeed(
           continue;
         }
 
-        const results = await readThumbnails(
+        const batchResult = await readThumbnails(
           batch.map((name) => byName.get(name)).filter((ref): ref is PhotoRef => ref !== undefined),
           store,
-          runner,
+          getRunner,
         );
         if (stopped) return;
 
         const fresh = new Map<string, string>();
-        for (const result of results) {
+        for (const result of batchResult.results) {
           if (!result.bytes) continue;
           const url = URL.createObjectURL(new Blob([result.bytes as BlobPart], { type: 'image/jpeg' }));
           made.push(url);
@@ -122,15 +130,16 @@ export function useThumbnailFeed(
         if (fresh.size > 0) setUrls((was) => new Map([...was, ...fresh]));
 
         /*
-         * A breather, and it is not politeness.
+         * A breather only when ExifTool was actually needed.
          *
-         * The interpreter runs on the main thread and holds it for about 700 ms per batch —
-         * measured, with a `setTimeout(0)` set beforehand that does not fire until afterwards. Back
-         * to back, that is an interface that ignores taps for as long as the feed runs, on the one
-         * screen whose entire job is being tapped. This hands the thread back between batches so
-         * the queued taps are actually processed.
+         * The interpreter runs on the main thread and holds it for about 700 ms per batch, so
+         * running batches back to back is an interface that ignores taps — on the one screen whose
+         * whole job is being tapped. But a batch answered by the byte reader costs a fraction of a
+         * millisecond per photograph and blocks nothing, so pausing after one would be throwing
+         * away the entire point of the fast path. `usedExifTool` is the difference, and in practice
+         * it is only true for raw.
          */
-        await pause(BREATHER_MS);
+        await pause(batchResult.usedExifTool ? BREATHER_MS : 0);
       }
     })();
 
