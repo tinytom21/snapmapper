@@ -7,9 +7,9 @@
  * still exists: in the sidebar's "This device" section once photos are open, and on the gate screen
  * for a browser that cannot do this at all, where it is the explanation rather than clutter.
  *
- * The two ways in are both here and both described, because choosing wrongly is expensive: a camera
- * card holds a thousand photos in one folder and metadata costs about half a second each, so
- * opening a whole card would run for the best part of an hour before you could touch anything.
+ * There is one way in: open the folder your photographs are in. Which of them to read is then
+ * asked inside the application, from the folder listing, which costs nothing — see
+ * `FolderChooser.tsx`. That replaced three buttons and a follow-up question about where to save.
  */
 
 import { useState } from 'react';
@@ -71,18 +71,12 @@ function ClockSyncPanel() {
 }
 
 export function Landing({
-  canPickFiles,
   canPickFolder,
   busy,
-  onPickPhotos,
-  onPickRaw,
   onPickFolder,
 }: {
-  readonly canPickFiles: boolean;
   readonly canPickFolder: boolean;
   readonly busy: boolean;
-  readonly onPickPhotos: () => void;
-  readonly onPickRaw: () => void;
   readonly onPickFolder: () => void;
 }) {
   const [showClock, setShowClock] = useState(false);
@@ -147,40 +141,28 @@ export function Landing({
             <span className="sub">Cameras drift — one photo fixes it</span>
           </button>
           {/*
-            Two buttons rather than one button and a format prompt.
+            One way in, and it is a folder.
 
-            A card holds a RAW+JPEG pair per frame, so a picker offering both lists every
-            photograph twice and you are reading extensions to tell them apart. People work in one
-            format per session — so the choice is made *before* the dialog opens, and made in one
-            press. A prompt after the button would add a step to every single import to ask a
-            question the person answered by reaching for the button.
+            There were three buttons here — JPEGs, raw, whole folder — and the split existed
+            because the operating system's file picker cannot say *where a file lives*. A picked
+            handle has no route to its parent, so copies had nowhere to go and a sidecar had no
+            file to sit beside, and the interface had to ask for a folder *after* the photographs
+            were chosen. That question is what made this confusing.
+
+            A folder grant answers all of it at once, and choosing which photographs happens inside
+            the application, where it is free: listing a thousand files costs a fifth of a second,
+            against eight minutes to read their metadata. So the format split goes too — raw and
+            JPEG sit in one list and each is saved the way it should be, without being asked.
           */}
-          {canPickFiles && (
+          {canPickFolder && (
             <button
               type="button"
               className="primary big stacked"
-              onClick={onPickPhotos}
+              onClick={onPickFolder}
               disabled={busy}
             >
-              <span>Select JPEGs…</span>
-              <span className="sub">Individual files</span>
-            </button>
-          )}
-          {canPickFiles && canPickFolder && (
-            <button
-              type="button"
-              className="big stacked"
-              onClick={onPickRaw}
-              disabled={busy}
-            >
-              <span>Select raw…</span>
-              <span className="sub">Then name their folder</span>
-            </button>
-          )}
-          {canPickFolder && (
-            <button type="button" className="big stacked" onClick={onPickFolder} disabled={busy}>
-              <span>Open a whole folder…</span>
-              <span className="sub">Everything in it</span>
+              <span>Open your photo folder…</span>
+              <span className="sub">Then pick the ones you want — JPEG and raw</span>
             </button>
           )}
         </div>

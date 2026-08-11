@@ -1410,6 +1410,13 @@ button.stacked .sub {
    */
   .landing-actions { grid-template-columns: 1fr; }
 
+  /* The confirm is the reason this screen exists, so on a phone it gets its own full-width line
+     rather than competing for one with a link. */
+  .chooser { padding: 0.75rem; }
+  .chooser-foot { gap: 0.5rem; }
+  .chooser-foot button.primary { width: 100%; margin-left: 0; order: -1; }
+  .chooser-files .meta { font-size: 0.75rem; }
+
   .preview-step { font-size: 2.2rem; padding: 0.8rem 1rem; min-width: 46px; }
   .preview-bar .note { font-size: 0.78rem; }
 
@@ -1604,3 +1611,119 @@ button.stacked .sub {
   flex-wrap: wrap;
 }
 .conflict-footer .note { margin: 0; font-size: 0.8rem; }
+
+/* --- Choosing photographs from an open folder ---------------------------- */
+
+/*
+ * The operating system's file picker, moved inside the application.
+ *
+ * It fills the pane rather than floating over it: this is a step in the work, not an interruption
+ * of it, and a modal here would be a dialog you cannot get behind to see what you already have.
+ */
+.chooser {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  gap: 0.75rem;
+  padding: 1rem;
+}
+
+.chooser-head { display: flex; flex-direction: column; gap: 0.5rem; }
+.chooser-head h2 { margin: 0; font-size: 1.05rem; }
+.chooser-head h2 code { font-family: ui-monospace, monospace; }
+.chooser-head .note { margin: 0; }
+
+/* The list scrolls; the heading and the footer do not. `min-height: 0` is what allows it — the
+   same trap as the sidebar, where a flex child refuses to shrink below its content without it. */
+.chooser-days { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 0.4rem; }
+
+.chooser-day { border: 1px solid var(--line); border-radius: var(--radius-sm); }
+/*
+ * Two rows, stated rather than left to wrapping.
+ *
+ * As a wrapping flex row this measured **98px tall on a 375px screen** — the day, the counts and
+ * the link each taking a line, times fifteen days, which is 1500px of headings before a single
+ * photograph. A grid says where each part goes: the day and the link share the first row, the
+ * counts have the second, at every width.
+ */
+.chooser-day-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.1rem 0.6rem;
+  padding: 0.5rem 0.7rem;
+  background: var(--surface);
+  border-radius: var(--radius-sm);
+}
+.chooser-day-head button.link { grid-area: 1 / 2; margin-left: 0; }
+.chooser-day-head .meta { grid-area: 2 / 1 / 2 / -1; }
+/* The label is the target, not the tick box: a 24px box in a line of 14px text reads as a button,
+   while padding on the label gives the same reach and looks like nothing. */
+/* `margin: 0` because the global `label` rule carries `0.5rem 0`, and it was adding 16px to every
+   day heading — measured: a 32px label sitting in a 47.6px row, fifteen times over. */
+.chooser-day-head label {
+  grid-area: 1 / 1;
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  margin: 0;
+  padding: 0.25rem 0;
+  cursor: pointer;
+  min-width: 0;
+}
+.chooser-day-head input { width: 1.1rem; height: 1.1rem; flex: none; }
+.chooser-day-label { font-weight: 600; overflow-wrap: anywhere; }
+
+/*
+ * `.meta`, not `.note`, and that is about the overlap harness rather than about looks.
+ *
+ * `findOverlaps` collects `label` and `.note` among others, so a `.note` *inside* a `label` — which
+ * is what a file row is — reports as a parent overlapping its child, every time, for every row.
+ * Sixty phantom overlaps on this screen would drown any real one, and the harness has produced
+ * phantoms often enough already. Same styling, different name, honest answers.
+ */
+.chooser .meta { color: var(--dim); font-size: 0.82rem; margin: 0; }
+
+.chooser-files { list-style: none; margin: 0; padding: 0.25rem 0.7rem 0.6rem; }
+.chooser-files label {
+  display: flex;
+  margin: 0;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.3rem 0;
+  cursor: pointer;
+  min-width: 0;
+}
+.chooser-files input { width: 1.05rem; height: 1.05rem; flex: none; }
+.chooser-files .name { font-family: ui-monospace, monospace; overflow-wrap: anywhere; min-width: 0; }
+.chooser-files .meta { margin: 0 0 0 auto; font-size: 0.8rem; flex: none; }
+.chooser-files .is-open { opacity: 0.55; cursor: default; }
+
+/* A raw file is saved a completely different way — a sidecar beside the original rather than a
+   copy — so it is worth being able to see which they are before choosing. */
+.chooser-files .tag {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0.05rem 0.35rem;
+  border-radius: var(--radius-pill);
+  background: var(--accent-wash);
+  color: var(--accent);
+  flex: none;
+}
+
+.chooser-foot {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  border-top: 1px solid var(--line);
+  padding-top: 0.75rem;
+}
+.chooser-foot .note { margin: 0; }
+/* The confirm sits at the end of the row on a wide screen and fills the line on a narrow one,
+   which is where a thumb expects it either way. */
+.chooser-foot button.primary { margin-left: auto; }
+.chooser-foot button.link { margin-left: 0; }

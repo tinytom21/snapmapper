@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import { afterEach, describe, it } from 'node:test';
 
 import {
-  LARGE_FOLDER_THRESHOLD,
   createBrowserFileStore,
   type BrowserFolder,
 } from '../src/browser-file-store.ts';
@@ -84,196 +83,6 @@ function fakeDirectory(names: readonly string[]) {
   };
 }
 
-describe('pickPhotos', () => {
-  it('returns a ref per picked file, sorted by name', async () => {
-    stubFilePicker([
-      fakeFileHandle('DSC00120.JPG'),
-      fakeFileHandle('DSC00119.JPG'),
-      fakeFileHandle('DSC00121.JPG'),
-    ]);
-
-    const picked = await createBrowserFileStore().pickPhotos();
-
-    assert.deepEqual(
-      picked?.refs.map((ref) => ref.name),
-      ['DSC00119.JPG', 'DSC00120.JPG', 'DSC00121.JPG'],
-    );
-    assert.deepEqual(picked?.skippedDuplicates, []);
-    assert.deepEqual(picked?.readOnly, []);
-  });
-
-  it('gives each file a distinct locator, even when names repeat', async () => {
-    // Locators key the handle map. Two files called the same thing must not collide there, or
-    // a write would go to whichever handle was registered last.
-    stubFilePicker([fakeFileHandle('a.jpg'), fakeFileHandle('b.jpg')]);
-
-    const picked = await createBrowserFileStore().pickPhotos();
-    const locators = picked?.refs.map((ref) => ref.locator) ?? [];
-
-    assert.equal(new Set(locators).size, locators.length);
-  });
-
-  it('refuses a second file with a name already open, and says which', async () => {
-    stubFilePicker([fakeFileHandle('DSC00119.JPG'), fakeFileHandle('DSC00119.JPG')]);
-
-    const picked = await createBrowserFileStore().pickPhotos();
-
-    assert.equal(picked?.refs.length, 1);
-    assert.deepEqual(picked?.skippedDuplicates, ['DSC00119.JPG']);
-  });
-
-  it('reports files it could not get write access to, when saving in place', async () => {
-    stubFilePicker([
-      fakeFileHandle('ok.jpg'),
-      fakeFileHandle('locked.jpg', { writable: false }),
-    ]);
-
-    const store = createBrowserFileStore();
-    store.setDestination({ kind: 'in-place' });
-    const picked = await store.pickPhotos();
-
-    // Still listed and readable — only saving is impossible, and the UI says so.
-    assert.equal(picked?.refs.length, 2);
-    assert.deepEqual(picked?.readOnly, ['locked.jpg']);
-  });
-
-  it('asks for no write permission at all when saving copies', async () => {
-    /*
-     * The whole reason copies are the default. Picking five photos previously cost five
-     * permission prompts, because saving in place needs write access to each one. Copies never
-     * open the originals for writing, so there is nothing to ask about.
-     */
-    const handles = [fakeFileHandle('a.jpg'), fakeFileHandle('b.jpg'), fakeFileHandle('c.jpg')];
-    stubFilePicker(handles);
-
-    const store = createBrowserFileStore();
-    // copy-pending is the default, but state it so the test does not rest on that.
-    store.setDestination({ kind: 'copy-pending' });
-    const picked = await store.pickPhotos();
-
-    assert.equal(picked?.refs.length, 3);
-    assert.deepEqual(picked?.readOnly, []);
-    for (const handle of handles) {
-      assert.equal(handle.permissionRequests, 0, `${handle.name} triggered a permission prompt`);
-    }
-  });
-
-  it('defaults to copies, so the safe path is the one nobody has to choose', () => {
-    assert.equal(createBrowserFileStore().getDestination().kind, 'copy-pending');
-  });
-
-  it('refuses to save before an output folder is chosen', async () => {
-    // Falling back to overwriting the originals here would be the opposite of what somebody
-    // asking for copies wants.
-    stubFilePicker([fakeFileHandle('a.jpg')]);
-    const store = createBrowserFileStore();
-    const picked = await store.pickPhotos();
-    const ref = picked?.refs[0];
-    assert.ok(ref);
-
-    await assert.rejects(
-      () => store.writeAtomic(ref, new Uint8Array([1, 2, 3])),
-      /choose a folder/i,
-    );
-  });
-
-  it('returns undefined when the user cancels, which is not an error', async () => {
-    globalThis.showOpenFilePicker = (async () => {
-      throw new DOMException('cancelled', 'AbortError');
-    }) as typeof showOpenFilePicker;
-
-    assert.equal(await createBrowserFileStore().pickPhotos(), undefined);
-  });
-
-  it('returns undefined when nothing was selected', async () => {
-    stubFilePicker([]);
-    assert.equal(await createBrowserFileStore().pickPhotos(), undefined);
-  });
-
-  it('propagates a real failure rather than swallowing it', async () => {
-    globalThis.showOpenFilePicker = (async () => {
-      throw new DOMException('no', 'SecurityError');
-    }) as typeof showOpenFilePicker;
-
-    await assert.rejects(() => createBrowserFileStore().pickPhotos());
-  });
-
-  it('adds to an existing selection without losing it', async () => {
-    // The clock-sync flow depends on this: the reference frame is shot after the session
-    // started, so it has to come in without discarding the photos already open.
-    const store = createBrowserFileStore();
-
-    stubFilePicker([fakeFileHandle('DSC00119.JPG')]);
-    const first = await store.pickPhotos();
-    assert.ok(first);
-
-    stubFilePicker([fakeFileHandle('DSC09999.JPG')]);
-    const second = await store.pickPhotos({ add: first.refs });
-
-    assert.deepEqual(second?.refs.map((ref) => ref.name), ['DSC00119.JPG', 'DSC09999.JPG']);
-  });
-
-  it('does not re-add a photo already open', async () => {
-    const store = createBrowserFileStore();
-
-    stubFilePicker([fakeFileHandle('DSC00119.JPG')]);
-    const first = await store.pickPhotos();
-    assert.ok(first);
-
-    stubFilePicker([fakeFileHandle('DSC00119.JPG')]);
-    const second = await store.pickPhotos({ add: first.refs });
-
-    assert.equal(second?.refs.length, 1);
-    assert.deepEqual(second?.skippedDuplicates, ['DSC00119.JPG']);
-  });
-
-  it('reads a picked file back through the store', async () => {
-    stubFilePicker([fakeFileHandle('a.jpg')]);
-    const store = createBrowserFileStore();
-    const picked = await store.pickPhotos();
-    const ref = picked?.refs[0];
-    assert.ok(ref);
-
-    assert.deepEqual(await store.read(ref), new Uint8Array([0xff, 0xd8, 0xff, 0xd9]));
-  });
-});
-
-describe('countFolder', () => {
-  it('counts photographs, raw included, and ignores everything else', async () => {
-    /*
-     * ARW counts, and that changed when sidecars shipped. A raw photograph can only be *saved*
-     * from a folder — its sidecar has to be written beside it, and the file picker gives no access
-     * to a parent — so a folder listing that hid ARW would hide the only route raw has, and the
-     * whole feature would have been inert while every test passed.
-     */
-    const { directory } = fakeDirectory(['a.jpg', 'b.JPEG', 'notes.txt', 'c.jpg', 'raw.ARW']);
-    const folder: BrowserFolder = { id: 'f', displayName: '100MSDCF', directory };
-
-    assert.equal(await createBrowserFileStore().countFolder(folder), 4);
-  });
-
-  it('reads no file contents, so it stays fast on a thousand photos', async () => {
-    /*
-     * The whole point of counting first. If this touched each file the guard would cost as much
-     * as the thing it is guarding against, and a card's folder would stall before the user was
-     * even asked.
-     */
-    const { handles, directory } = fakeDirectory(['a.jpg', 'b.jpg', 'c.jpg']);
-    const folder: BrowserFolder = { id: 'f', displayName: '100MSDCF', directory };
-
-    await createBrowserFileStore().countFolder(folder);
-
-    for (const handle of handles) {
-      assert.equal(handle.getFileCalls, 0, `${handle.name} was opened during a count`);
-    }
-  });
-
-  it('is zero for a picked selection, which has no folder', async () => {
-    const folder: BrowserFolder = { id: 'picked', displayName: 'Selected photos' };
-    assert.equal(await createBrowserFileStore().countFolder(folder), 0);
-  });
-});
-
 describe('listFolder', () => {
   it('lists JPEGs in numeric filename order', async () => {
     const { directory } = fakeDirectory(['DSC00121.JPG', 'DSC00119.JPG', 'x.txt', 'DSC00120.JPG']);
@@ -291,14 +100,6 @@ describe('listFolder', () => {
     // A picked set has no folder to enumerate, and asking is not a programming error.
     const folder: BrowserFolder = { id: 'picked', displayName: 'Selected photos' };
     assert.deepEqual(await createBrowserFileStore().listFolder(folder), []);
-  });
-});
-
-describe('LARGE_FOLDER_THRESHOLD', () => {
-  it('is small enough that the guard fires before a card folder is read', () => {
-    // A camera card routinely holds several hundred to a few thousand photos in one folder.
-    assert.ok(LARGE_FOLDER_THRESHOLD > 0);
-    assert.ok(LARGE_FOLDER_THRESHOLD < 1000);
   });
 });
 
@@ -324,11 +125,19 @@ function fakeOutputDirectory(name: string) {
 }
 
 describe('choosing where copies go', () => {
+  /*
+   * Driven through `outputFolderWithin`, which is the only route now: copies go into the folder
+   * the photographs came from, and that folder was granted when it was opened. There is no
+   * separate "choose a destination" dialog left to drive, which is the point of the change.
+   */
   const pick = async (folderName: string) => {
     const chosen = fakeOutputDirectory(folderName);
-    (globalThis as Record<string, unknown>).showDirectoryPicker = async () => chosen.handle;
     const store = createBrowserFileStore();
-    const destination = await store.pickOutputFolder();
+    const destination = await store.outputFolderWithin({
+      id: folderName,
+      displayName: folderName,
+      directory: chosen.handle as unknown as FileSystemDirectoryHandle,
+    });
     return { destination, created: chosen.created };
   };
 
@@ -395,9 +204,10 @@ function deletableDirectory(name: string) {
 describe('an output folder that has been deleted', () => {
   async function chooseInto(parentName: string) {
     const parent = deletableDirectory(parentName);
-    (globalThis as Record<string, unknown>).showDirectoryPicker = async () => parent.handle;
     const store = createBrowserFileStore();
-    const chosen = await store.pickOutputFolder();
+    const chosen = await store.outputFolderWithin({
+      id: parentName, displayName: parentName, directory: parent.handle,
+    });
     if (chosen) store.setDestination(chosen);
     return { store, parent };
   }
@@ -444,9 +254,10 @@ describe('an output folder that has been deleted', () => {
      * back to writing over the originals would be the opposite of what was asked for.
      */
     const chosen = deletableDirectory('Geotagged');
-    (globalThis as Record<string, unknown>).showDirectoryPicker = async () => chosen.handle;
     const store = createBrowserFileStore();
-    const picked = await store.pickOutputFolder();
+    const picked = await store.outputFolderWithin({
+      id: 'Geotagged', displayName: 'Geotagged', directory: chosen.handle,
+    });
     if (picked) store.setDestination(picked);
     assert.deepEqual(chosen.created, [], 'a folder already named geotagged is used directly');
 
@@ -460,68 +271,13 @@ describe('an output folder that has been deleted', () => {
     // At load time this is not the moment to raise it — and it used to produce an alarming red
     // banner about an operation nobody had asked for, over a card that had just been opened.
     const chosen = deletableDirectory('Geotagged');
-    (globalThis as Record<string, unknown>).showDirectoryPicker = async () => chosen.handle;
     const store = createBrowserFileStore();
-    const picked = await store.pickOutputFolder();
+    const picked = await store.outputFolderWithin({
+      id: 'Geotagged', displayName: 'Geotagged', directory: chosen.handle,
+    });
     if (picked) store.setDestination(picked);
     chosen.remove();
 
     assert.equal((await store.listOutputNames()).size, 0);
-  });
-});
-
-describe('adoptFolder', () => {
-  /*
-   * Raw picked one file at a time has no parent — `showOpenFilePicker` gives none — and a sidecar
-   * written anywhere but beside its raw file is a file no reader will ever look for. So the folder
-   * is asked for separately and grafted on, and *checked*: choosing the wrong one is an easy
-   * mistake and a completely silent one, because sidecars would still be written, still report
-   * success, and simply sit next to nothing.
-   */
-  /** A picked file: no `directory` on its folder, which is exactly the problem being solved. */
-  function refIn(name: string) {
-    const parentless: BrowserFolder = { id: 'picked', displayName: 'Selected photos' };
-    return { folder: parentless, name, sizeBytes: 10, modifiedAtMs: 0, locator: name };
-  }
-
-  function withPicker(names: readonly string[], run: () => Promise<unknown>) {
-    const { directory } = fakeDirectory(names);
-    const original = globalThis.showDirectoryPicker;
-    (globalThis as { showDirectoryPicker?: unknown }).showDirectoryPicker = async () => directory;
-    return run().finally(() => {
-      (globalThis as { showDirectoryPicker?: unknown }).showDirectoryPicker = original;
-    });
-  }
-
-  it('attaches the folder so a sidecar has somewhere to go', async () => {
-    await withPicker(['a.ARW', 'b.ARW'], async () => {
-      const store = createBrowserFileStore();
-      const got = await store.adoptFolder([refIn('a.ARW'), refIn('b.ARW')]);
-
-      assert.equal(got?.missing.length, 0);
-      // The directory handle is what `writeSidecar` needs; without it the write refuses.
-      assert.ok((got?.refs[0]?.folder as { directory?: unknown }).directory);
-      assert.equal(got?.refs.length, 2);
-    });
-  });
-
-  it('names the files that are not in the chosen folder', async () => {
-    // The wrong folder, or the right folder for only some of them. Either way the user has to be
-    // told which, because the failure is otherwise invisible until Lightroom shows nothing.
-    await withPicker(['a.ARW'], async () => {
-      const store = createBrowserFileStore();
-      const got = await store.adoptFolder([refIn('a.ARW'), refIn('missing.ARW')]);
-
-      assert.deepEqual(got?.missing, ['missing.ARW']);
-    });
-  });
-
-  it('keeps each file’s locator, since the files have not changed', async () => {
-    // Only the parent is new. A changed locator would orphan the handle the store already holds.
-    await withPicker(['a.ARW'], async () => {
-      const store = createBrowserFileStore();
-      const got = await store.adoptFolder([refIn('a.ARW')]);
-      assert.equal(got?.refs[0]?.locator, 'a.ARW');
-    });
   });
 });

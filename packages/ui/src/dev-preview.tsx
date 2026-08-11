@@ -13,6 +13,7 @@
  *     (await import('/src/dev-preview.tsx')).previewActionMenu()
  *     (await import('/src/dev-preview.tsx')).previewMap()
  *     (await import('/src/dev-preview.tsx')).previewConflicts(3)
+ *     (await import('/src/dev-preview.tsx')).previewChooser(900)
  *
  * Sample photos only — nothing here touches the filesystem, and no real photograph is involved.
  */
@@ -42,6 +43,7 @@ import {
 
 import { ActionMenu } from './ActionMenu.tsx';
 import { ConflictPrompt } from './ConflictPrompt.tsx';
+import { FolderChooser } from './FolderChooser.tsx';
 import { PhotoMap, type MapPin } from './PhotoMap.tsx';
 import { PhotoPreview } from './PhotoPreview.tsx';
 import { ReviewBar } from './ReviewBar.tsx';
@@ -459,6 +461,55 @@ export function previewConflicts(count = 3): void {
   }
 
   render(conflicts);
+}
+
+
+let chooserRoot: Root | undefined;
+
+/**
+ * The folder chooser, on a listing the size of a real camera card.
+ *
+ * Its whole justification is that it stays usable at a thousand files, and a thousand files is not
+ * something anyone will stage by hand to look at a layout. Note that no metadata exists here and
+ * none is needed: the chooser works entirely from names, sizes and filesystem dates, which is what
+ * makes opening a folder free.
+ */
+export function previewChooser(count = 900): void {
+  const aside = document.querySelector('aside');
+  if (!aside) throw new Error('no sidebar to mount into — open the app first');
+
+  chooserRoot?.unmount();
+  aside.textContent = '';
+
+  const host = document.createElement('div');
+  host.style.cssText = 'display:flex;flex-direction:column;flex:1;min-height:0';
+  aside.append(host);
+  chooserRoot = createRoot(host);
+
+  // Spread over several days, with a RAW+JPEG stretch, as a card that has been out a while is.
+  const day = 24 * 60 * 60 * 1000;
+  const start = new Date(2024, 6, 12, 9, 0, 0).getTime();
+  const refs = Array.from({ length: count }, (_, i) => {
+    const raw = i % 7 === 0;
+    const name = `DSC0${String(1000 + i).padStart(4, '0')}.${raw ? 'ARW' : 'JPG'}`;
+    return {
+      folder: FOLDER,
+      name,
+      sizeBytes: raw ? 24_900_000 : 6_400_000,
+      modifiedAtMs: start - Math.floor(i / 60) * day + i * 20_000,
+      locator: name,
+    };
+  });
+
+  chooserRoot.render(
+    <FolderChooser
+      folderName="DCIM/100MSDCF"
+      refs={refs}
+      busy={false}
+      onOpen={(chosen) => console.log('open', chosen.length, 'photos')}
+      onCancel={() => console.log('cancel')}
+    />,
+  );
 }
 
 let mapRoot: Root | undefined;

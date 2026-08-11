@@ -47,10 +47,71 @@ http://localhost:5173/ (see HANDOFF.md; `localhost` is required for a secure con
   palette, the track line, the track-folder span cache and the crash backup.
   Thumbnails come from the camera's own embedded ~6KB JPEG, and shift-click selects a range.
   Placement is select-then-click on the map, and only that — see below.
-- **Two ways in: the OS file picker (default) or a whole folder.** The picker exists because a
-  camera card holds ~1000 photos in one folder and metadata costs ~0.5 s each on a desktop,
-  ~3 s on a phone — parsing a card before the user can act would take most of an hour. Folder
-  mode counts first, without reading metadata, and asks before reading more than 200.
+- **One way in: open the folder, then choose photographs inside the app.** See the section below —
+  `showOpenFilePicker` cannot reach a file's parent, so it could never say where copies or sidecars
+  belong.
+
+### One way in: open the folder, then choose inside the app
+
+The entry flow was three buttons — JPEGs, raw, whole folder — and a follow-up question about where
+to save. Reported as disjointed and confusing, and it was; the cause is one API fact.
+
+**`showOpenFilePicker` cannot say where a file lives.** Verified against the live API: a
+`FileSystemFileHandle` carries `createWritable`, `getFile` and `move`, and nothing else. There is no
+`getParent()`, and `resolve()` exists only on *directory* handles. So a picked JPEG had nowhere to
+put its copy and a picked ARW had no folder to put its sidecar beside — which is why the interface
+had to ask for a folder *afterwards*, and why raw had to be a separate button that parked the pick
+until it got one.
+
+Writing beside originals needs a directory handle, and a directory handle comes only from
+`showDirectoryPicker`. So the folder is the entry, and choosing which photographs happens inside the
+application.
+
+**That is affordable because listing is not reading.** Measured on 1000 entries:
+
+| | 1000 files |
+|---|---|
+| enumerate names | **20 ms** |
+| `getFile()` for size and date | 235 ms |
+| ExifTool metadata | ~8 min desktop, ~50 min phone |
+
+Opening a folder used to read every file in it, which is what `LARGE_FOLDER_THRESHOLD` and its
+warning existed for. Now opening a folder reads *nothing*, the cost is attached to the selection
+where the person can see it and change their mind, and the warning is gone along with the threshold.
+
+`FolderChooser.tsx` is the picker, `folder-groups.ts` the arrangement:
+
+- **Grouped by day, newest first**, from the file's own `modifiedAtMs`. That is the filesystem date,
+  not EXIF — no metadata has been read yet, and reading it is the thing being avoided. On a card it
+  is the capture time because that is what the camera wrote. It arranges the list and **nothing
+  else**; the real EXIF date replaces it for every purpose that matters the moment a photograph is
+  opened. A copied card carries one date on everything and lands in one group, which is degraded
+  rather than wrong.
+- **Every day but the newest starts closed, and closed days are unmounted.** A thousand rows is a
+  thousand rows whether anybody reads them. Measured on a 900-file card: 15 groups, **60 rows in the
+  DOM**, mounts in half a second.
+- **The default selection is everything, or the newest day** above `COMFORTABLE_COUNT` (60 — about
+  thirty seconds to read on a desktop, three minutes on a phone). Never nothing: a chooser that
+  opens with a disabled button makes the user work before the interface does.
+- **The cost is said before the button, not discovered after it** — "about 30 seconds to read",
+  rounded, because the true figure spans six times between a desktop and a phone.
+
+Two measured layout notes. The day heading is a **grid, not a wrapping flex row**: as a flex row it
+came out **98px tall at 375px**, three wrapped lines times fifteen days, so the day and the link
+share row one and the counts take row two — 69px, and predictable. And the global `label` rule
+carries `margin: 0.5rem 0`, which was adding 16px to every heading; `.chooser-day-head label` sets
+`margin: 0`.
+
+**Note `.meta` rather than `.note` inside a row.** `findOverlaps` collects `label` and `.note`, so a
+`.note` nested in a `label` reports as a parent overlapping its child — sixty phantoms on this
+screen, which would drown a real one. Same styling, different name, honest answers.
+
+What went with the split: `pickPhotos`, `adoptFolder`, `pickOutputFolder`, `restoreOutputFolder`,
+`countFolder`, `LARGE_FOLDER_THRESHOLD`, `isFilePickerSupported`, the raw parking screen, and the
+remembered output folder. The destination is derived from the open folder every time, so there is
+nothing left to remember and nothing left to ask.
+
+
 - `packages/shells` does not exist and **is not needed**: the app runs in Chrome/Edge on desktop and
   on Android. `browser-file-store.ts` is the only platform-specific file, behind `FileStore`.
 

@@ -60,6 +60,7 @@ import {
 } from '@snapmapper/core';
 
 import { ConflictPrompt } from './ConflictPrompt.tsx';
+import { FolderChooser } from './FolderChooser.tsx';
 import { readPriorLocations } from './prior-locations.ts';
 import { PlatformReport } from './PlatformReport.tsx';
 import { ReviewBar } from './ReviewBar.tsx';
@@ -76,11 +77,9 @@ import { UPDATE_READY_EVENT, activateUpdate } from './register-sw.ts';
 import { isMapVisible, keepMapMounted } from './map-focus.ts';
 import { scanForSyncCode } from './clock-sync-qr.ts';
 import {
-  LARGE_FOLDER_THRESHOLD,
   MTIME_LIMITATION_IN_PLACE,
   OUTPUT_FOLDER_NAME,
   createBrowserFileStore,
-  isFilePickerSupported,
   isFileSystemAccessSupported,
   isFolderPickerSupported,
   type BrowserFolder,
@@ -261,6 +260,7 @@ export function App() {
     setLastGeocode(null);
     // A question about photographs that are no longer open has nothing to be an answer to.
     setConflicts([]);
+    setBrowsing(null);
     setMenuOpen(false);
     setPane('photos');
   }, [session]);
@@ -468,140 +468,79 @@ export function App() {
    * picker narrow the set first is the difference between unusable and instant.
    */
   /**
-   * Raw files picked one by one, which then need their folder named before anything can be saved.
+   * A folder that is open and listed, waiting for somebody to say which photographs to read.
    *
-   * The folder cannot be asked for here. A picker only opens while a user gesture is in flight and
-   * the first dialog spends it — the same trap the save destination fell into, recorded in
-   * CLAUDE.md. So the pick is parked and the interface asks; the button it offers *is* the next
-   * gesture. Nothing is loaded until the folder is known, because a raw session without one is a
-   * session that can place photographs and then refuse to write them.
+   * This is the operating system's file picker, moved inside the application. It had to move,
+   * because the real one cannot say **where a file lives**: `showOpenFilePicker` returns handles
+   * with no route to their parent, so neither "copies beside the originals" nor "a sidecar next to
+   * the raw file" could be answered from it, and the interface had to ask for a folder *after* the
+   * photographs were chosen. That question was the confusing step, and it is gone — one folder
+   * grant now answers where to read, where `geotagged/` goes, and where a sidecar belongs.
+   *
+   * Showing it costs nothing: 20 ms to enumerate a thousand entries and 235 ms for their dates and
+   * sizes, measured. The minutes are ExifTool, and ExifTool only runs on what was chosen.
    */
-  const [rawAwaitingFolder, setRawAwaitingFolder] = useState<PhotoRef[] | null>(null);
-
-  const openRaw = useCallback(async () => {
-    setError(null);
-    setOutcomes(null);
-    setNotice(null);
-
-    try {
-      const picked = await store.pickPhotos({ raw: true });
-      if (!picked || picked.refs.length === 0) return;
-      setRawAwaitingFolder(picked.refs);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    }
-  }, []);
-
-  /** The second gesture: name the folder those raw files live in, then load them. */
-  const adoptRawFolder = useCallback(async () => {
-    const waiting = rawAwaitingFolder;
-    if (!waiting) return;
-
-    setError(null);
-    try {
-      const adopted = await store.adoptFolder(waiting);
-      if (!adopted) return;
-
-      if (adopted.missing.length === waiting.length) {
-        // Not one of them is in there. Almost certainly the wrong folder, and going ahead would
-        // scatter sidecars next to nothing at all.
-        setError(
-          `None of those files are in ${adopted.folder.displayName}. `
-          + 'Choose the folder that actually contains them.',
-        );
-        return;
-      }
-
-      setRawAwaitingFolder(null);
-      setSession(null);
-      await loadRefs(adopted.refs, adopted.folder);
-
-      setNotice(adopted.missing.length > 0
-        ? `${adopted.missing.length} of these are not in ${adopted.folder.displayName} `
-          + `(${adopted.missing.slice(0, 3).join(', ')}), so their sidecars cannot be written `
-          + 'beside them. The rest are fine.'
-        : `Sidecars will be written into ${adopted.folder.displayName}, beside the raw files.`);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    }
-  }, [rawAwaitingFolder, loadRefs]);
-
-  const openPhotos = useCallback(async () => {
-    setError(null);
-    setOutcomes(null);
-    setNotice(null);
-
-    try {
-      const picked = await store.pickPhotos();
-      if (!picked) return;
-
-      setSession(null);
-      await loadRefs(picked.refs, picked.folder);
-      setNotice(describePicked(picked));
-
-      /*
-       * The destination is *not* asked for here, and that is the fix for a real bug.
-       *
-       * This used to chain `pickOutputFolder()` straight after the pick, so that Save was ready
-       * immediately. It cannot work: a file picker may only open while the browser considers a
-       * user gesture to be in flight, and by this point the gesture has been spent on the first
-       * picker and several seconds of metadata reading have gone by. The result was
-       * "Failed to execute 'showDirectoryPicker' on 'Window': Must be handling a user gesture",
-       * on desktop and phone alike.
-       *
-       * So the destination bar asks instead, and its button *is* the gesture.
-       */
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setLoading(null);
-    }
-  }, [loadRefs, applyDestination]);
+  const [browsing, setBrowsing] = useState<
+    { readonly folder: BrowserFolder; readonly refs: readonly PhotoRef[] } | null
+  >(null);
 
   /**
-   * Add more photos to what is already open.
+   * Add more photographs from the folder that is already open.
    *
    * The clock-sync flow needs this: the reference frame is shot *after* the session started, so
-   * there has to be a way to bring one more file in without discarding the work so far. In
-   * folder mode that is Re-scan; here it is this.
+   * there has to be a way to bring one more file in without discarding the work so far.
    *
-   * Only the *new* files are parsed. Re-reading the whole selection would cost a metadata read
-   * per photo already open — three seconds each on a phone — so adding one reference frame to a
-   * twenty-photo session would take a minute, which would defeat the point of picking files in
-   * the first place.
+   * The folder is re-listed rather than remembered, because a frame shot since it was opened is
+   * exactly what this is usually for. Listing is cheap; reading is not, so what is already open is
+   * shown as such and cannot be chosen twice.
    */
   const addPhotos = useCallback(async () => {
-    if (!session || !folder) return;
+    if (!session || !folder?.directory) return;
     setError(null);
     setNotice(null);
 
     try {
-      const open = session.photos.map((entry) => entry.ref);
-      const picked = await store.pickPhotos({ add: open });
-      if (!picked) return;
+      setBrowsing({ folder, refs: await store.listFolder(folder) });
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }, [session, folder]);
 
-      const openNames = new Set(open.map((ref) => ref.name));
-      const fresh = picked.refs.filter((ref) => !openNames.has(ref.name));
+  /**
+   * Read the chosen photographs, and either start a session or add to one.
+   *
+   * The only path from a folder listing to metadata, so it is the only place that pays ExifTool's
+   * price — which is the entire reason the chooser exists.
+   */
+  const openChosen = useCallback(async (chosen: readonly PhotoRef[]) => {
+    const target = browsing?.folder;
+    if (!target || chosen.length === 0) return;
 
-      if (fresh.length === 0) {
-        setNotice(describePicked(picked) ?? 'Those photos are already open.');
-        return;
-      }
+    const adding = session !== null && folder?.id === target.id;
+    setBrowsing(null);
+    setError(null);
+    setOutcomes(null);
+    setNotice(null);
 
-      setLoading({ done: 0, total: fresh.length, current: '' });
-      const loaded = await loadPhotos(fresh, store, await getBackend(), setLoading);
+    if (!adding) {
+      await loadRefs(chosen, target);
+      return;
+    }
+
+    setLoading({ done: 0, total: chosen.length, current: '' });
+    try {
+      const loaded = await loadPhotos(chosen, store, await getBackend(), setLoading);
 
       // Append rather than rebuild, so staged edits, the clock measurement and the undo
       // history all survive.
       setThumbnails((previous) => new Map([...previous, ...toThumbnailUrls(loaded.thumbnails)]));
       setSession((current) => (current ? addPhotosToSession(current, loaded.entries) : current));
-      setNotice(describePicked(picked));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setLoading(null);
     }
-  }, [session, folder, getBackend]);
+  }, [browsing, session, folder, loadRefs, getBackend]);
 
   /**
    * The folder picker, with a guard.
@@ -619,38 +558,33 @@ export function App() {
       const picked = await store.pickFolder();
       if (!picked) return;
 
-      // Counting only enumerates names; it reads no metadata, so it is fast even for
-      // thousands of files.
-      const count = await store.countFolder(picked);
-      if (count === 0) {
-        setError(`No JPEGs in “${picked.displayName}”.`);
+      const refs = await store.listFolder(picked);
+      if (refs.length === 0) {
+        setError(`No photographs in \u201c${picked.displayName}\u201d.`);
         return;
       }
 
-      if (count > LARGE_FOLDER_THRESHOLD) {
-        const minutes = Math.ceil((count * 0.6) / 60);
-        const proceed = window.confirm(
-          `“${picked.displayName}” holds ${count} photos. Reading them all takes roughly `
-          + `${minutes} minute${minutes === 1 ? '' : 's'} here, and considerably longer on a `
-          + 'phone.\n\nUse “Select photos…” to choose just the ones you want instead.'
-          + '\n\nRead all of them anyway?',
-        );
-        if (!proceed) return;
-      }
-
-      setSession(null);
-      await loadRefs(await store.listFolder(picked), picked);
-
-      // The folder grant already covers creating things inside it, so a geotagged subfolder
-      // beside the photos costs no further prompt. This is the nicest case.
+      /*
+       * The destination is settled here, before anything is read, and never asked about again.
+       *
+       * The grant on this folder already covers creating things inside it, so `geotagged/` costs
+       * no further prompt — and doing it now rather than after loading means the search for
+       * earlier geotagging has somewhere to look on its first pass.
+       */
       const output = await store.outputFolderWithin(picked);
       if (output) applyDestination(output);
+
+      /*
+       * No size warning, and none needed any more. It existed because opening a folder read every
+       * file in it; now opening a folder reads nothing at all, and the cost is attached to the
+       * selection instead — where the person can see it and change their mind.
+       */
+      setSession(null);
+      setBrowsing({ folder: picked, refs });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setLoading(null);
     }
-  }, [loadRefs, applyDestination]);
+  }, [applyDestination]);
 
   /**
    * Re-read the folder, keeping the clock settings.
@@ -985,19 +919,18 @@ export function App() {
   /*
    * Bring the remembered folders back on start-up.
    *
-   * Neither is *asked* for here — `requestPermission` needs a user gesture and would throw. The
-   * track folder reports that it needs reconnecting, which becomes a button; the output folder is
-   * simply not restored unless its grant survived, so the destination bar asks as it always did.
+   * Not *asked* for here — `requestPermission` needs a user gesture and would throw — so it
+   * reports that it needs reconnecting, which becomes a button.
+   *
+   * There is no output folder to restore any more. It is derived from whichever folder is open,
+   * every time, which is the whole point of the folder being the only way in.
    */
   useEffect(() => {
     void (async () => {
       const remembered = await store.restoreTrackFolder();
       if (remembered) setTrackFolder(remembered);
-
-      const output = await store.restoreOutputFolder();
-      if (output) applyDestination(output);
     })();
-  }, [applyDestination]);
+  }, []);
 
   /*
    * Search as soon as a session exists, without being asked.
@@ -1239,9 +1172,10 @@ export function App() {
           onSaveCopies={async () => {
             setError(null);
             try {
-              const output = folder?.directory
-                ? await store.outputFolderWithin(folder)
-                : await store.pickOutputFolder();
+              // Always derived from the open folder — there is no other kind of session now, and
+              // the grant on that folder already covers creating `geotagged/` inside it.
+              if (!folder) return;
+              const output = await store.outputFolderWithin(folder);
               if (output) applyDestination(output);
             } catch (cause) {
               setError(cause instanceof Error ? cause.message : String(cause));
@@ -1375,7 +1309,24 @@ export function App() {
       <div className={`body${mapMounted ? '' : ' solo'}`}>
         {(!narrow || !session || pane === 'photos') && (
           <aside>
-            {session
+            {/*
+              The chooser outranks the session, because adding photographs shows it *over* an open
+              one. It is a step in the work rather than a dialog on top of it, so it takes the pane.
+            */}
+            {browsing
+              ? (
+                <FolderChooser
+                  folderName={browsing.folder.displayName}
+                  refs={browsing.refs}
+                  busy={busy}
+                  onOpen={openChosen}
+                  onCancel={() => setBrowsing(null)}
+                  {...(session
+                    ? { alreadyOpen: new Set(session.photos.map((entry) => entry.ref.name)) }
+                    : {})}
+                />
+              )
+              : session
               ? (
                 <Sidebar
                   session={session}
@@ -1466,63 +1417,11 @@ export function App() {
                 />
               )
               : !loading && (
-                rawAwaitingFolder
-                  ? (
-                    /*
-                     * Between the pick and the session, and deliberately blocking.
-                     *
-                     * A raw photograph's location goes into a sidecar written *beside* the file,
-                     * so without the folder there is nothing this session could ever save. Letting
-                     * it through and refusing at Save is the shape of the bug this replaces: the
-                     * work is already done by then.
-                     *
-                     * The button here is the point. The folder cannot be requested straight after
-                     * the file picker — the gesture is spent — so the interface has to hand the
-                     * next one back to the user.
-                     */
-                    <div className="landing">
-                      <div className="raw-folder">
-                        <h2>Which folder are these in?</h2>
-                        <p className="note">
-                          {rawAwaitingFolder.length} raw file
-                          {rawAwaitingFolder.length === 1 ? '' : 's'} chosen. A raw photograph is
-                          never written to — its location goes into an <code>.xmp</code> sidecar
-                          next to it, which is where Lightroom and the rest look. So Snapmapper
-                          needs the folder itself, which picking individual files does not give it.
-                        </p>
-                        <p className="note">
-                          Choose the folder those files are in. Nothing else in it is read.
-                        </p>
-                        <div className="row">
-                          <button
-                            type="button"
-                            className="primary big"
-                            onClick={adoptRawFolder}
-                            disabled={busy}
-                          >
-                            Choose their folder…
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setRawAwaitingFolder(null)}
-                            disabled={busy}
-                          >
-                            Cancel
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  )
-                  : (
-                    <Landing
-                      canPickFiles={isFilePickerSupported()}
-                      canPickFolder={isFolderPickerSupported()}
-                      busy={busy}
-                      onPickPhotos={openPhotos}
-                      onPickRaw={openRaw}
-                      onPickFolder={openFolder}
-                    />
-                  )
+                <Landing
+                  canPickFolder={isFolderPickerSupported()}
+                  busy={busy}
+                  onPickFolder={openFolder}
+                />
               )}
 
             {/*
@@ -1641,7 +1540,6 @@ function RestoreBanner({
   );
 }
 
-/** What is worth telling the user about a pick, if anything. */
 /**
  * Say that a lookup failed, without listing every file.
  *
@@ -1655,58 +1553,7 @@ function describePriorProblems(problems: readonly string[]): string {
     : `Could not read ${problems.length} earlier locations — first: ${first}`;
 }
 
-function describePicked(picked: {
-  skippedDuplicates: readonly string[];
-  readOnly: readonly string[];
-  refs?: readonly PhotoRef[];
-}): string | null {
-  const parts: string[] = [];
 
-  /*
-   * Raw picked through the file picker can be looked at but never saved, and saying so *now* is
-   * the whole point of this branch.
-   *
-   * A raw photograph's location goes into a sidecar written beside it, and `showOpenFilePicker`
-   * gives no access to a file's parent — so the refusal is certain from the moment the file is
-   * chosen. It used to surface at Save, after the photographs had been placed by hand, which is
-   * the worst possible moment to learn that none of it can be written.
-   */
-  const raw = (picked.refs ?? []).filter((ref) => isRawFile(ref.name));
-  if (raw.length > 0) {
-    parts.push(
-      `${raw.length} raw file(s) can be viewed here but not saved `
-      + `(${raw.slice(0, 3).map((ref) => ref.name).join(', ')}). A raw photograph's location goes `
-      + 'into an XMP sidecar written next to it, and picking individual files gives no access to '
-      + 'their folder. Use “Open whole folder…” to geotag raw.',
-    );
-  }
-
-  if (picked.skippedDuplicates.length > 0) {
-    // Not cosmetic: photos are keyed by filename, so two files with the same name would be
-    // treated as one and an edit meant for one could be written into the other.
-    parts.push(
-      `Skipped ${picked.skippedDuplicates.length} file(s) whose names clash with photos already `
-      + `open (${picked.skippedDuplicates.slice(0, 3).join(', ')}). Photos are identified by `
-      + 'filename, so two with the same name cannot both be edited.',
-    );
-  }
-
-  if (picked.readOnly.length > 0) {
-    parts.push(
-      `${picked.readOnly.length} file(s) are readable but not writable, so they cannot be `
-      + `saved (${picked.readOnly.slice(0, 3).join(', ')}).`,
-    );
-  }
-
-  return parts.length > 0 ? parts.join(' ') : null;
-}
-
-/**
- * Where saves are going, and how to change it.
- *
- * Shown rather than buried in a settings panel, because "which file am I about to change" is the
- * single most important thing to know before pressing Save.
- */
 /**
  * Where saves are going, and how to change it.
  *

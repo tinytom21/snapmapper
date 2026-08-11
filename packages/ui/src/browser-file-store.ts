@@ -117,15 +117,6 @@ export type SaveDestination =
   };
 
 /**
- * Above this many JPEGs, a folder is not opened without asking.
- *
- * Reading metadata is roughly 0.5 s per photo on a desktop and 3 s on a phone, so a camera
- * card's worth would run for many minutes with no way to stop it. The picker is the right tool
- * at that size, and the UI says so rather than silently starting.
- */
-export const LARGE_FOLDER_THRESHOLD = 200;
-
-/**
  * Files a folder listing offers as photographs.
  *
  * Raw belongs here as well as JPEG, and leaving it out is how the sidecar feature would have
@@ -140,10 +131,6 @@ export function isFileSystemAccessSupported(): boolean {
     || typeof globalThis.showOpenFilePicker === 'function';
 }
 
-export function isFilePickerSupported(): boolean {
-  return typeof globalThis.showOpenFilePicker === 'function';
-}
-
 export function isFolderPickerSupported(): boolean {
   return typeof globalThis.showDirectoryPicker === 'function';
 }
@@ -154,63 +141,10 @@ export interface BrowserFolder extends FolderHandle {
   readonly directory?: FileSystemDirectoryHandle;
 }
 
-export interface PickedPhotos {
-  readonly folder: BrowserFolder;
-  readonly refs: PhotoRef[];
-  /**
-   * Files left out because another picked file already had that name.
-   *
-   * A session keys photos by filename, so two files called `DSC00119.JPG` from different
-   * folders would be treated as one — and an edit meant for one could be written into the
-   * other. Refusing the duplicate is the only safe option, and saying so is better than
-   * silently dropping it.
-   */
-  readonly skippedDuplicates: readonly string[];
-  /** Files the user declined to grant write access to. Readable, but not saveable. */
-  readonly readOnly: readonly string[];
-}
-
 export interface BrowserFileStore extends FileStore {
-  /**
-   * The OS file picker, multi-select. Best for a card holding hundreds of photos.
-   *
-   * Write permission on the picked files is requested only when saving in place. In copy mode
-   * the originals are never written to, so asking would be a prompt per file for nothing.
-   */
-  pickPhotos(options?: { add?: PhotoRef[]; raw?: boolean }): Promise<PickedPhotos | undefined>;
-
-  /**
-   * Attach a folder to already-picked files, so their sidecars have somewhere to go.
-   *
-   * Raw picked through the file picker has no parent — `showOpenFilePicker` gives none by design —
-   * and a sidecar has to be written beside its raw file or no reader will ever look for it. So the
-   * folder is asked for as a *second, separately-gestured* step and grafted on here.
-   *
-   * It cannot be chained onto the pick: a picker only opens while a user gesture is in flight, and
-   * the first dialog spends it. See the note in CLAUDE.md — this failed with "Must be handling a
-   * user gesture to show a file picker" on desktop and phone alike.
-   *
-   * **Every file is checked against the folder by name**, and any that is not in it is reported
-   * rather than adopted. Choosing the wrong folder is an easy mistake and a silent one: the
-   * sidecars would be written somewhere plausible, next to nothing, and Lightroom would show no
-   * change with no error anywhere.
-   */
-  adoptFolder(refs: readonly PhotoRef[]): Promise<{
-    refs: PhotoRef[];
-    folder: BrowserFolder;
-    missing: string[];
-  } | undefined>;
-  /** The OS folder picker. One prompt covers the folder; best when it is small. */
+  /** The OS folder picker. The only way in — see `FolderChooser.tsx` for why. */
   pickFolder(): Promise<BrowserFolder | undefined>;
-  /** How many JPEGs a folder holds, without reading any metadata. */
-  countFolder(folder: BrowserFolder): Promise<number>;
 
-  /**
-   * Ask for a folder to write copies into, and prepare the subfolder inside it.
-   *
-   * One prompt, covering every save for the rest of the session.
-   */
-  pickOutputFolder(): Promise<SaveDestination | undefined>;
   /**
    * Use a folder already granted — the one opened in folder mode — as the destination.
    *
@@ -245,9 +179,6 @@ export interface BrowserFileStore extends FileStore {
    * megabytes and its span is in the first and last few kilobytes of it.
    */
   readTrackEnds(folder: TrackFolder, name: string, bytes: number): Promise<[string, string]>;
-
-  /** The remembered output folder, so copies are asked about once ever rather than once a visit. */
-  restoreOutputFolder(): Promise<SaveDestination | undefined>;
 
   /**
    * Names of the files an earlier session already wrote into the output folder.
@@ -348,121 +279,6 @@ export function createBrowserFileStore(): BrowserFileStore {
   }
 
   return {
-    async adoptFolder(refs: readonly PhotoRef[]) {
-      if (!isFolderPickerSupported()) {
-        throw new Error('This browser cannot open a folder. Use Chrome or Edge.');
-      }
-
-      let directory: FileSystemDirectoryHandle;
-      try {
-        directory = await globalThis.showDirectoryPicker!({ id: 'photos', mode: 'readwrite' });
-      } catch (error) {
-        if (error instanceof DOMException && error.name === 'AbortError') return undefined;
-        throw error;
-      }
-
-      /*
-       * Verified by name against what is actually in the folder.
-       *
-       * The whole point of this step is that sidecars land beside their raw files. A folder that
-       * does not contain them would still *work* — files would be written, no error raised — and
-       * the photographs would simply never gain a location as far as any reader is concerned.
-       * Silent, and discovered weeks later.
-       */
-      const present = new Set<string>();
-      for await (const [name, handle] of directory.entries()) {
-        if (handle.kind === 'file') present.add(name);
-      }
-
-      const folder: BrowserFolder = {
-        id: directory.name,
-        displayName: directory.name,
-        directory,
-      };
-
-      const missing = refs.filter((ref) => !present.has(ref.name)).map((ref) => ref.name);
-
-      // The handle map is keyed by locator, and the locators do not change — the files are the same
-      // files, they have simply acquired a parent. Only the folder is replaced.
-      return {
-        refs: refs.map((ref) => ({ ...ref, folder })),
-        folder,
-        missing,
-      };
-    },
-
-    async pickPhotos(options = {}): Promise<PickedPhotos | undefined> {
-      if (!isFilePickerSupported()) {
-        throw new Error('This browser has no file picker. Use Chrome or Edge.');
-      }
-
-      let picked: FileSystemFileHandle[];
-      try {
-        picked = await globalThis.showOpenFilePicker!({
-          multiple: true,
-          id: 'photos',
-          /*
-           * One format at a time, never both.
-           *
-           * A card holds a RAW+JPEG pair for every frame, so a picker offering both shows each
-           * photograph twice and you have to read extensions to tell which is which. People work
-           * in one format per session; the choice belongs on the button that opens the dialog, not
-           * inside it.
-           *
-           * `excludeAcceptAllOption` is what makes that real rather than a hint: without it the
-           * dialog still shows an "All files" entry and the other format comes back through it.
-           * `describePicked` stays as a backstop for whatever gets through anyway.
-           */
-          types: [options.raw
-            ? { description: 'Sony raw photos', accept: { 'image/x-sony-arw': ['.arw'] } }
-            : { description: 'JPEG photos', accept: { 'image/jpeg': ['.jpg', '.jpeg'] } }],
-          excludeAcceptAllOption: true,
-        });
-      } catch (error) {
-        if (error instanceof DOMException && error.name === 'AbortError') return undefined;
-        throw error;
-      }
-
-      if (picked.length === 0) return undefined;
-
-      const existing = options.add ?? [];
-      const folder: BrowserFolder = {
-        id: 'picked',
-        displayName: 'Selected photos',
-      };
-
-      const taken = new Set(existing.map((ref) => ref.name));
-      const refs: PhotoRef[] = [...existing];
-      const skippedDuplicates: string[] = [];
-      const readOnly: string[] = [];
-
-      for (const handle of picked) {
-        if (taken.has(handle.name)) {
-          skippedDuplicates.push(handle.name);
-          continue;
-        }
-        taken.add(handle.name);
-
-        /*
-         * Ask for write access only if the originals are going to be written to.
-         *
-         * `showOpenFilePicker` yields read-only handles, so saving in place needs a prompt per
-         * file — and asked here rather than at save time, because a permission dialog appearing
-         * partway through writing a batch is the worst moment to interrupt somebody. When
-         * saving copies the originals are never opened for writing, so there is nothing to ask
-         * for and the prompts vanish entirely.
-         */
-        if (destination.kind === 'in-place' && !(await ensureWritable(handle))) {
-          readOnly.push(handle.name);
-        }
-
-        refs.push(await refFromHandle(handle, folder, `picked:${pickCounter++}:${handle.name}`));
-      }
-
-      refs.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
-      return { folder, refs, skippedDuplicates, readOnly };
-    },
-
     async pickFolder(): Promise<BrowserFolder | undefined> {
       if (!isFolderPickerSupported()) {
         throw new Error('This browser has no folder picker. Use the file picker instead.');
@@ -477,18 +293,6 @@ export function createBrowserFileStore(): BrowserFileStore {
         if (error instanceof DOMException && error.name === 'AbortError') return undefined;
         throw error;
       }
-    },
-
-    async countFolder(folder: BrowserFolder): Promise<number> {
-      const directory = folder.directory;
-      if (!directory) return 0;
-
-      let count = 0;
-      // Enumeration only — no metadata is read, so this is fast even for thousands of files.
-      for await (const [name, handle] of directory.entries()) {
-        if (handle.kind === 'file' && PHOTO_PATTERN.test(name)) count += 1;
-      }
-      return count;
     },
 
     async listFolder(folder: FolderHandle): Promise<PhotoRef[]> {
@@ -516,32 +320,6 @@ export function createBrowserFileStore(): BrowserFileStore {
 
     getDestination(): SaveDestination {
       return destination;
-    },
-
-    async pickOutputFolder(): Promise<SaveDestination | undefined> {
-      if (!isFolderPickerSupported()) {
-        throw new Error('This browser has no folder picker, so copies cannot be saved.');
-      }
-
-      try {
-        const chosen = await globalThis.showDirectoryPicker({
-          mode: 'readwrite',
-          id: 'output',
-        });
-
-        /*
-         * Remembered, so this is asked once ever rather than once a visit.
-         *
-         * Only here, and not in `outputFolderWithin`. That one derives the destination from the
-         * folder of photographs currently open, which is a different folder every shoot — storing
-         * it would mean the next card's copies landed beside the last card's.
-         */
-        await rememberFolder('output-folder', chosen);
-        return await prepareOutput(chosen);
-      } catch (error) {
-        if (error instanceof DOMException && error.name === 'AbortError') return undefined;
-        throw error;
-      }
     },
 
     async outputFolderWithin(folder: BrowserFolder): Promise<SaveDestination | undefined> {
@@ -642,37 +420,6 @@ export function createBrowserFileStore(): BrowserFileStore {
         file.slice(0, bytes).text(),
         file.slice(file.size - bytes).text(),
       ]);
-    },
-
-    async restoreOutputFolder(): Promise<SaveDestination | undefined> {
-      /*
-       * Only when the grant survived.
-       *
-       * A remembered output folder that still needs permission is worse than none: the app would
-       * report a destination it cannot write to, and the failure would arrive at the moment of
-       * saving. Falling back to `copy-pending` means the question is asked before anything is
-       * staged, which is the right time for it.
-       */
-      const remembered = await rememberedFolder('output-folder');
-      if (!remembered || remembered.permission !== 'granted') return undefined;
-
-      /*
-       * Confirm the folder is still on disk before reporting it as the destination.
-       *
-       * `prepareOutput` reads the name off the handle and, for a folder already called
-       * `geotagged`, returns without touching the disk at all — so a folder deleted since it was
-       * chosen restores as a perfectly convincing destination, and only fails at the moment of
-       * saving. Asked here, the answer is simply that there is no remembered folder, and the
-       * destination bar asks for one.
-       */
-      try {
-        await remembered.handle.entries().next();
-      } catch {
-        await forgetFolder('output-folder');
-        return undefined;
-      }
-
-      return prepareOutput(remembered.handle);
     },
 
     async read(ref: PhotoRef): Promise<Uint8Array> {
@@ -786,13 +533,6 @@ export function createBrowserFileStore(): BrowserFileStore {
         }
       }
 
-      /*
-       * Forgotten as well as abandoned. A remembered handle to a folder that no longer exists is
-       * restored happily on the next launch — `prepareOutput` reads the *name* off the handle and
-       * never touches the disk — so the destination bar would go on naming a folder that is not
-       * there until the next save failed. Forgetting it means the question is asked once.
-       */
-      await forgetFolder('output-folder');
       destination = { kind: 'copy-pending' };
       return destination;
     },
