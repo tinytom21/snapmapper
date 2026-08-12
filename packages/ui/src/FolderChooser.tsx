@@ -29,6 +29,7 @@ import {
   READ_MS_PER_PHOTO,
   defaultChoice,
   describeReadCost,
+  displayOrder,
   groupByDay,
 } from './folder-groups.ts';
 import { useThumbnailFeed } from './use-thumbnail-feed.ts';
@@ -58,8 +59,20 @@ export function FolderChooser({
    * frame. They cannot be waited for, though: 43 ms each batched is a couple of minutes for a card
    * on a phone, and the chooser's whole justification is that opening a folder costs nothing.
    */
-  const feed = useThumbnailFeed(refs, store);
   const groups = useMemo(() => groupByDay(refs), [refs]);
+  /*
+   * The feed is given the order they are *drawn* in, not the order the folder listed them.
+   *
+   * Reported: *"the thumbnail parsing seems to happen from oldest to newest, but the pictures are
+   * arranged in days that are displayed newest first. this makes the loading seem artificially
+   * slow."* Exactly so. The listing is alphabetical, which for camera filenames is oldest first,
+   * and the chooser draws the newest day at the top — so the feed's reach beyond what is on screen
+   * was spent on the oldest days on the card, the ones furthest from anywhere anybody was looking.
+   * Open the second-newest day and nothing was ready, although the reading had been going for a
+   * minute.
+   */
+  const ordered = useMemo(() => displayOrder(groups), [groups]);
+  const feed = useThumbnailFeed(ordered, store);
 
   /*
    * Seeded once, from the folder's own shape: everything if it is small, the newest day if it is a

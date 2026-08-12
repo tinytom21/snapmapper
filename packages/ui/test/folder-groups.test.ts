@@ -5,6 +5,7 @@ import {
   COMFORTABLE_COUNT,
   defaultChoice,
   describeReadCost,
+  displayOrder,
   groupByDay,
 } from '../src/folder-groups.ts';
 import type { FolderHandle, PhotoRef } from '@snapmapper/core';
@@ -136,5 +137,46 @@ describe('warning what a selection will cost', () => {
   it('switches to minutes, and gets the plural right', () => {
     assert.equal(describeReadCost(120, 500), 'about 1 minute to read');
     assert.equal(describeReadCost(600, 500), 'about 5 minutes to read');
+  });
+});
+
+describe('the order the thumbnail feed walks', () => {
+  /*
+   * Reported: the parsing ran oldest to newest while the days were drawn newest first, so the
+   * loading "seems artificially slow". The listing is alphabetical, which for camera filenames is
+   * chronological, and the chooser reverses that by day — so a feed following the listing reaches
+   * away from the screen and covers the oldest day on the card before the second-newest one.
+   */
+  const listing = [
+    ref('DSC00001.JPG', '2024-06-01T09:00:00Z'),
+    ref('DSC00002.JPG', '2024-06-01T10:00:00Z'),
+    ref('DSC00010.JPG', '2024-07-02T09:00:00Z'),
+    ref('DSC00011.JPG', '2024-07-02T10:00:00Z'),
+    ref('DSC00020.JPG', '2024-08-03T09:00:00Z'),
+  ];
+
+  it('starts with the newest day, which is the one the chooser opens', () => {
+    const order = displayOrder(groupByDay(listing)).map((entry) => entry.name);
+    assert.equal(order[0], 'DSC00020.JPG');
+  });
+
+  it('is the drawn order exactly: days newest first, chronological within a day', () => {
+    const order = displayOrder(groupByDay(listing)).map((entry) => entry.name);
+    assert.deepEqual(order, [
+      'DSC00020.JPG',
+      'DSC00010.JPG', 'DSC00011.JPG',
+      'DSC00001.JPG', 'DSC00002.JPG',
+    ]);
+  });
+
+  it('reverses the listing by day rather than following it', () => {
+    // The bug in one assertion: if these ever agree again, the feed is walking the folder.
+    const order = displayOrder(groupByDay(listing)).map((entry) => entry.name);
+    assert.notDeepEqual(order, listing.map((entry) => entry.name));
+  });
+
+  it('loses nothing and invents nothing', () => {
+    const order = displayOrder(groupByDay(listing)).map((entry) => entry.name);
+    assert.deepEqual([...order].sort(), listing.map((entry) => entry.name).sort());
   });
 });

@@ -84,6 +84,22 @@ export function groupByDay(refs: readonly PhotoRef[]): DayGroup[] {
 }
 
 /**
+ * The photographs in the order they are drawn: newest day first, chronological within a day.
+ *
+ * This is what the thumbnail feed walks, and it is deliberately not the folder listing. The listing
+ * is alphabetical — for camera filenames that is oldest first — while the chooser puts the newest
+ * day at the top, so a feed following the listing reaches *away* from where anybody is looking and
+ * spends itself on the oldest day on the card. Reported as loading that "seems artificially slow",
+ * which is precisely what it is: the same work, done furthest from the screen first.
+ *
+ * Within a day the order stays chronological, because that is the order the tiles are drawn in and
+ * a day should fill from the top down.
+ */
+export function displayOrder(groups: readonly DayGroup[]): PhotoRef[] {
+  return groups.flatMap((group) => [...group.refs]);
+}
+
+/**
  * What to have selected when the chooser opens.
  *
  * A small folder is almost certainly all wanted, so it is all selected and the button can be

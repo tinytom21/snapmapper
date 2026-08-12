@@ -622,7 +622,15 @@ export function previewChooser(count = 900): void {
   aside.append(host);
   chooserRoot = createRoot(host);
 
-  // Spread over several days, with a RAW+JPEG stretch, as a card that has been out a while is.
+  /*
+   * Spread over several days, with a RAW+JPEG stretch, as a card that has been out a while is.
+   *
+   * **Ascending in time as the names ascend**, which is what a real card looks like: a listing is
+   * alphabetical, camera filenames count upwards, and the newest photograph is therefore *last*.
+   * This used to run the other way — `start - floor(i / 60) * day` — so the newest day came first
+   * in the listing and the harness could not reproduce the one bug this screen has had about
+   * ordering: a feed following the listing reaching away from the newest day.
+   */
   const day = 24 * 60 * 60 * 1000;
   const start = new Date(2024, 6, 12, 9, 0, 0).getTime();
   const refs = Array.from({ length: count }, (_, i) => {
@@ -632,7 +640,7 @@ export function previewChooser(count = 900): void {
       folder: FOLDER,
       name,
       sizeBytes: raw ? 24_900_000 : 6_400_000,
-      modifiedAtMs: start - Math.floor(i / 60) * day + i * 20_000,
+      modifiedAtMs: start + Math.floor(i / 60) * day + (i % 60) * 20_000,
       locator: name,
     };
   });

@@ -59,7 +59,13 @@ export const THUMBNAIL_BATCH = 16;
 export const LOOKAHEAD = 512;
 
 export interface FeedState {
-  /** Everything the chooser could show, in list order. */
+  /**
+   * Everything the chooser could show, **in the order it is drawn** — not the folder listing.
+   *
+   * Both passes below follow this order, so it decides which day the reach beyond the screen
+   * covers first. Given the listing it went to the oldest photographs on the card, which is the
+   * furthest possible point from anywhere anybody was looking. `displayOrder` supplies it.
+   */
   readonly all: readonly string[];
   /** On screen now, or recently. Fetched before anything else. */
   readonly wanted: ReadonlySet<string>;

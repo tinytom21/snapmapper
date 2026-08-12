@@ -121,6 +121,34 @@ wait from a broken button. Both listing calls now report progress. And an empty 
 a folder of `.MP4` files reads as empty here, and saying "no JPEG or raw files, video is not
 supported yet" is the difference between a bug and an answer.
 
+#### The feed follows the drawn order, not the folder listing
+
+*"The thumbnail parsing seems to happen from oldest to newest, but the pictures are arranged in
+days that are displayed newest first. This makes the loading seem artificially slow."* It is not
+quite an illusion — the same work was being done furthest from the screen first.
+
+A folder listing is alphabetical, and camera filenames count upwards, so a listing runs **oldest
+first**. The chooser draws days **newest first**. The feed walked the listing, so its reach beyond
+the open day went to the oldest photographs on the card — the furthest possible point from anywhere
+anybody was looking. Open the second-newest day and nothing was ready, although the reading had
+been going for a minute. `displayOrder` in `folder-groups.ts` supplies the drawn order instead:
+days newest first, chronological within a day, because that is how the tiles are laid out and a day
+should fill from the top down.
+
+**The harness could not have caught it, and that is the part worth keeping.** `previewChooser`
+generated its listing with `start - Math.floor(i / 60) * day`, so the newest day came *first* — the
+reverse of a real card, and the one shape in which this bug does not exist. It now ascends with the
+names.
+
+Measured in a browser on a card-shaped listing of 300: the listing runs `DSC01000` to `DSC01299`,
+and the feed now begins at `DSC01240` — the first frame of the newest day — and ends at
+`DSC01059`. The open day of a 900-file card fills in **591 ms**.
+
+**Not verifiable here: that the second day is ready sooner.** The fake store has no card latency,
+so 300 files are read inside 1.4 s and every day is covered before any deadline worth measuring;
+and closed days are unmounted, so what the feed reached is not in the DOM to count. On a real card
+at ~130 ms a photograph the difference is the whole complaint.
+
 #### Thumbnails are read out of the bytes, not out of ExifTool
 
 *"I need a thumbnail in order to select the photos. I can't do it by filename."* Quite right.
