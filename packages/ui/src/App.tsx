@@ -1081,19 +1081,24 @@ export function App() {
   return (
     <div className="app">
       {/*
-        `working` drops the wordmark on a phone once photos are open. Measured: with it, Undo and
-        Redo carrying their labels plus the More button needed up to 436px of a 375px screen. The
-        name of the app is the least useful thing on that row while you are placing photographs —
-        and it is still on the landing screen, the browser tab and the home-screen icon.
+        `in-session` tightens the row on a phone once photos are open. Measured: with the full
+        wordmark, Undo and Redo carrying their labels plus the More button needed up to 436px of a
+        375px screen.
+
+        It was called `working`, and `.working` is *also* the full-screen blocking overlay —
+        `position: fixed; inset: 0; z-index: 30`, dimmed, centring its children. So on a phone with
+        photos open the header stopped being a header and became a sheet over the whole viewport
+        that swallowed every tap, with Undo, Redo and Start again floating in the middle of the
+        screen. One class name, two meanings, and nothing about either rule looks wrong on its own.
       */}
-      <header className={narrow && session ? 'working' : ''}>
+      <header className={narrow && session ? 'in-session' : ''}>
         {/*
           The mark is always in the top left, and it is always the way back.
 
           It used to vanish once photos were open on a phone, because the full wordmark plus the
           labelled buttons needed 436px of a 375px screen. The fix is not to hide it but to shrink
           it: below the breakpoint only the pin is drawn, which is the part people recognise, and
-          the word is dropped instead. `header.working h1` no longer hides anything.
+          the word is dropped instead. `header.in-session h1` no longer hides anything.
 
           Going home discards a session, so it asks first when there is anything staged — the whole
           premise of this app is that unsaved work lives in memory until Save, and a stray tap on

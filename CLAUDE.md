@@ -1436,6 +1436,26 @@ and there is no text at all.
 Below 360px Redo drops its label too, and Undo keeps its — Undo is the one reached for after a
 mis-tap, which is the whole reason the labels exist.
 
+### One class name, two meanings: the header became the loading overlay
+
+Reported from a phone: *"when I load photos, the undo redo and start again buttons appear over the
+top and I can't click anything."* The screenshot showed the whole page greyed out with those three
+buttons floating in the middle of the screen.
+
+`App` put `working` on the `<header>` to mean *a session is open*, which is what tightens the row on
+a phone. `.working` is **also** the full-screen blocking overlay — `position: fixed; inset: 0;
+z-index: 30`, dimmed, centring its children. So once photographs were open the header stopped being
+a header: it covered the viewport, dimmed everything under it and swallowed every tap, and its
+buttons were centred because that is what the overlay does to its children. Measured at 375px, the
+header's own box was **375x812**.
+
+Nothing about either declaration is wrong on its own, which is the whole difficulty — the collision
+is only visible if you happen to read both files at once. So the test is structural rather than
+about one word: **whatever class the header applies, the stylesheet must not position it fixed.**
+Confirmed to fail against the real bug before being kept. The modifier is now `in-session`;
+measured afterwards at 375px it is `static`, 375x38 and transparent, indistinguishable from a plain
+header, while `.working` is still fixed at 375x812.
+
 ### Overflow by scrolling is not overflow
 
 The narrow header was one horizontally scrolling row. The user's verdict: *"you wouldn't know to

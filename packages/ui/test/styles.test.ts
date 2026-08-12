@@ -267,3 +267,44 @@ describe('the palette in styles.css', () => {
     assert.doesNotMatch(body, /\.\w[\w-]*\s*\{/, 'no component selectors in the dark block');
   });
 });
+
+/**
+ * The header is a header, not an overlay.
+ *
+ * It applied `working` on a phone to mean "a session is open", and `.working` is *also* the
+ * full-screen blocking overlay — `position: fixed; inset: 0; z-index: 30`, dimmed, centring its
+ * children. So once photos were open the header became a sheet across the whole viewport that
+ * swallowed every tap, with Undo, Redo and Start again floating in the middle of the screen.
+ *
+ * Nothing about either declaration is wrong on its own; only the shared name is, and a name
+ * collision is invisible in both files. So the check is structural rather than about one word:
+ * whatever class the header applies, it must not be one the stylesheet takes out of the flow.
+ */
+describe('the header is never a fixed overlay', () => {
+  it('applies no class that styles.css positions fixed', async () => {
+    const app = await readFile(
+      path.join(import.meta.dirname, '..', 'src', 'App.tsx'),
+      'utf8',
+    );
+
+    const header = /<header className=\{([^}]*)\}>/.exec(app);
+    assert.ok(header, 'could not find the header element in App.tsx');
+
+    const applied = [...(header[1] as string).matchAll(/'([\w -]+)'/g)]
+      .flatMap((m) => (m[1] as string).split(/\s+/))
+      .filter(Boolean);
+    assert.ok(applied.length > 0, 'the header applies no classes at all — has the markup moved?');
+
+    for (const name of applied) {
+      const rule = new RegExp(String.raw`(^|,)\s*\.${name}\s*(,[^{]*)?\{([\s\S]*?)\n\}`, 'm')
+        .exec(css);
+      if (!rule) continue;
+      assert.doesNotMatch(
+        rule[3] as string,
+        /position:\s*fixed/,
+        `header applies .${name}, which styles.css positions fixed — `
+          + 'that is the overlay bug, where the header covered the whole viewport',
+      );
+    }
+  });
+});

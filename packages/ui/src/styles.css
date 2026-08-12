@@ -1284,7 +1284,7 @@ button.stacked .sub {
    * it: below the breakpoint `App` renders the pin alone, which is the part people recognise, and
    * drops the word.
    */
-  header.working h1 { margin-right: 0.35rem; }
+  header.in-session h1 { margin-right: 0.35rem; }
 
   /*
    * On a genuinely small phone, Redo gives up its label first.
