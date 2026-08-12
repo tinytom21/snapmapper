@@ -33,8 +33,21 @@
 
 import { THUMBNAIL_LOCATE_BYTES } from '@snapmapper/core';
 
-/** Never read less than this, which is enough for every A6400 frame measured. */
-export const MIN_WINDOW_BYTES = THUMBNAIL_LOCATE_BYTES;
+/**
+ * Where to start, before anything has been measured.
+ *
+ * **80KB, not the 48KB the parser needs**, because starting small has a cost and starting large
+ * does not. Both of the user's devices tuned themselves to exactly 80KB — a Samsung thumbnail
+ * ending at 60KB, an A6400's at 51KB — and the reads that got them there were the only second reads
+ * in either run: 8 of 311 and 6 of 1126. Beginning at the answer removes those.
+ *
+ * Nothing is paid for the extra bytes. Measured across four runs, a call cost 96 ms at 80KB, 107 ms
+ * at 50KB, 113 ms at 43KB and 128 ms at 128KB — no useful signal, against 110 ms for a second call.
+ *
+ * `THUMBNAIL_LOCATE_BYTES` stays the floor in core: it is the smallest window that can reach IFD1
+ * on the files this was verified against, and is what the spike and a bare `readThumbnails` use.
+ */
+export const MIN_WINDOW_BYTES = Math.max(80 * 1024, THUMBNAIL_LOCATE_BYTES);
 
 /**
  * Never read more than this, however deep a thumbnail turns out to be.

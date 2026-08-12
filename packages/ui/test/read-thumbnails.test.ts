@@ -100,21 +100,27 @@ const refs = (count: number): PhotoRef[] => Array.from({ length: count }, (_, i)
 
 const noRunner = async () => undefined;
 
-describe('reading thumbnails on a camera the default window does not suit', () => {
-  // 53KB is the Galaxy S23's, measured from its own report: 25.2MB over 294 files at a 48KB head.
-  const bytes = jpegWithDeepThumbnail(53 * 1024);
+describe('a thumbnail that does not fit the window', () => {
+  /*
+   * Driven from an explicitly small window rather than from `MIN_WINDOW_BYTES`, because the start
+   * has since been raised to 80KB and this camera's thumbnail now fits it — see the suite below.
+   * What is being pinned here is the mechanism, which still has to work for whatever camera turns
+   * up next.
+   */
+  const SMALL = 48 * 1024;
+  const bytes = jpegWithDeepThumbnail(60 * 1024);
 
   it('costs two reads per photograph before anything has been learnt', async () => {
     const store = countingStore(bytes);
-    const batch = await readThumbnails(refs(8), store, noRunner, MIN_WINDOW_BYTES);
+    const batch = await readThumbnails(refs(8), store, noRunner, SMALL);
 
     assert.equal(batch.timing.reads, 16, 'eight photographs, two round trips each');
     assert.equal(batch.results.filter((r) => r.bytes).length, 8, 'and every picture found');
   });
 
   it('costs one read per photograph once the window has been fitted', async () => {
-    const first = await readThumbnails(refs(8), countingStore(bytes), noRunner, MIN_WINDOW_BYTES);
-    const fitted = nextWindow(MIN_WINDOW_BYTES, first.timing.deepestEnd);
+    const first = await readThumbnails(refs(8), countingStore(bytes), noRunner, SMALL);
+    const fitted = nextWindow(SMALL, first.timing.deepestEnd);
 
     const store = countingStore(bytes);
     const second = await readThumbnails(refs(8), store, noRunner, fitted);
@@ -125,7 +131,7 @@ describe('reading thumbnails on a camera the default window does not suit', () =
 
   it('finds the same pictures either way, byte for byte', async () => {
     // The window is a performance choice and must not be able to change the answer.
-    const small = await readThumbnails(refs(3), countingStore(bytes), noRunner, MIN_WINDOW_BYTES);
+    const small = await readThumbnails(refs(3), countingStore(bytes), noRunner, SMALL);
     const large = await readThumbnails(refs(3), countingStore(bytes), noRunner, 256 * 1024);
 
     for (const [i, result] of small.results.entries()) {
@@ -134,23 +140,29 @@ describe('reading thumbnails on a camera the default window does not suit', () =
   });
 
   it('reports where the deepest thumbnail ended, which is what tunes the next batch', async () => {
-    const batch = await readThumbnails(refs(2), countingStore(bytes), noRunner, MIN_WINDOW_BYTES);
+    const batch = await readThumbnails(refs(2), countingStore(bytes), noRunner, SMALL);
     assert.ok(
-      batch.timing.deepestEnd > MIN_WINDOW_BYTES,
+      batch.timing.deepestEnd > SMALL,
       `${batch.timing.deepestEnd} should exceed the window that failed to hold it`,
     );
   });
 });
 
-describe('a camera the default window already suits', () => {
-  const bytes = jpegWithDeepThumbnail(6 * 1024);
+describe('the cameras actually measured, from the first batch', () => {
+  /*
+   * Both of the user's devices tuned themselves to 80KB and then stayed there, so that is where the
+   * window now starts and neither should ever need a second read. The deepest ends came back as
+   * 60KB from a Galaxy S23's own JPEGs and 51KB from an A6400 card.
+   */
+  for (const [camera, thumbnail] of [['a Galaxy S23', 53], ['an A6400', 45]] as const) {
+    it(`takes one read per photograph on ${camera}, with no learning phase`, async () => {
+      const store = countingStore(jpegWithDeepThumbnail(thumbnail * 1024));
+      const batch = await readThumbnails(refs(8), store, noRunner, MIN_WINDOW_BYTES);
 
-  it('takes one read per photograph and asks for no more bytes', async () => {
-    // The A6400 case. Growing the window here would be more bytes for no fewer round trips.
-    const store = countingStore(bytes);
-    const batch = await readThumbnails(refs(8), store, noRunner, MIN_WINDOW_BYTES);
-
-    assert.equal(batch.timing.reads, 8);
-    assert.equal(nextWindow(MIN_WINDOW_BYTES, batch.timing.deepestEnd), MIN_WINDOW_BYTES);
-  });
+      assert.equal(batch.timing.reads, 8, 'one round trip each, from the very first batch');
+      assert.equal(batch.results.filter((r) => r.bytes).length, 8);
+      // And nothing grows: more bytes for no fewer round trips is the wrong trade.
+      assert.equal(nextWindow(MIN_WINDOW_BYTES, batch.timing.deepestEnd), MIN_WINDOW_BYTES);
+    });
+  }
 });

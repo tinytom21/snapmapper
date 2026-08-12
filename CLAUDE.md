@@ -281,9 +281,32 @@ Measured end-to-end on a synthetic 53KB-thumbnail JPEG: **16 reads for 8 photogr
 8 after**, with byte-identical thumbnails either way. The window is a performance choice and a test
 pins that it cannot change the answer.
 
-**Not verifiable here: the wall-clock saving.** This machine's reads are free, so the honest
-prediction is arithmetic rather than a measurement — the S23 run should go from 1.75 reads a
-photograph to about 1.0, and from 187 ms to roughly 120.
+**Confirmed on the device.** The prediction was 1.75 reads to about 1.0, and 187 ms to roughly 120:
+
+| | reads per file | ms per photograph | |
+|---|---|---|---|
+| phone storage, before | 1.75 | 187.0 | |
+| phone storage, after | **1.03** | **98.6** | **1.90x** |
+| SD card, before | 1.17 | 132.8 | |
+| SD card, after | **1.01** | **115.0** | **1.15x** |
+
+And the bytes are free, now beyond argument: the card run pulled **87.1MB where it had pulled
+51.4MB** and took *less* time, at 114.4 ms per call against 113.2.
+
+**The window starts at 80KB rather than 48KB**, because both devices tuned themselves to exactly
+that — a Samsung thumbnail ending at 60KB, an A6400's at 51KB — and the reads that got them there
+were the only second reads in either run, 8 of 311 and 6 of 1126. Beginning at the answer removes
+the learning phase and costs nothing. `THUMBNAIL_LOCATE_BYTES` stays the floor in core: it is the
+smallest window that can reach IFD1, and is what the spike and a bare `readThumbnails` use.
+
+**Reads are now at the floor for this API, and serialisation is confirmed a third time.** Batch wall
+clock ÷ per-file cost came out at **15.9 and 16.0** — the batch size exactly, again. Nothing about
+how the reads are issued will improve on ~110 ms a file; only reading *fewer files* will.
+
+**What is left, measured:** on the mixed card, ExifTool is **27.3 s of 156 s (17%)** — 483 ARW files
+at 56 ms each. An ARW is a TIFF, so the same offset walk that replaced ExifTool for JPEG could
+replace it for raw, which would also stop the 24MB WebAssembly from ever being built. It is the last
+large lever and it is not done.
 
 #### The timings are in the interface, because the slow machine is never this one
 
