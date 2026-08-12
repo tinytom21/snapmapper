@@ -25,14 +25,16 @@ export interface Totals {
   readonly slow: number;
   readonly bytesRead: number;
   readonly reads: number;
-  /** The head window the feed settled on, and the deepest thumbnail that justified it. */
-  readonly window: number;
-  readonly deepestEnd: number;
+  /** The head windows the feed settled on, and the deepest each kind of file justified. */
+  readonly windowPhoto: number;
+  readonly windowRaw: number;
+  readonly deepestPhoto: number;
+  readonly deepestRaw: number;
 }
 
 export const NOTHING: Totals = {
   batches: 0, files: 0, readMs: 0, parseMs: 0, exifMs: 0, fast: 0, slow: 0,
-  bytesRead: 0, reads: 0, window: 0, deepestEnd: 0,
+  bytesRead: 0, reads: 0, windowPhoto: 0, windowRaw: 0, deepestPhoto: 0, deepestRaw: 0,
 };
 
 export function addBatch(totals: Totals, batch: BatchTiming): Totals {
@@ -46,10 +48,12 @@ export function addBatch(totals: Totals, batch: BatchTiming): Totals {
     slow: totals.slow + batch.slow,
     bytesRead: totals.bytesRead + batch.bytesRead,
     reads: totals.reads + batch.reads,
-    // Both are maxima rather than sums: what is wanted is the size the feed settled on, not a
-    // total of every window it tried on the way there.
-    window: Math.max(totals.window, batch.window),
-    deepestEnd: Math.max(totals.deepestEnd, batch.deepestEnd),
+    // Maxima rather than sums: what is wanted is the size the feed settled on, not a total of
+    // every window it tried on the way there.
+    windowPhoto: Math.max(totals.windowPhoto, batch.windows.photo),
+    windowRaw: Math.max(totals.windowRaw, batch.windows.raw),
+    deepestPhoto: Math.max(totals.deepestPhoto, batch.deepest.photo),
+    deepestRaw: Math.max(totals.deepestRaw, batch.deepest.raw),
   };
 }
 
@@ -79,7 +83,8 @@ export function report(totals: Totals, platform: PlatformFacts): string {
     '',
     `  bytes read    ${(totals.bytesRead / 1024 / 1024).toFixed(1)} MB total, `
       + `${totals.files === 0 ? '—' : Math.round(totals.bytesRead / totals.files / 1024)} KB each`,
-    `  head window   ${kb(totals.window)}, deepest thumbnail ends at ${kb(totals.deepestEnd)}`,
+    `  head window   ${kb(totals.windowPhoto)} jpeg, ${kb(totals.windowRaw)} raw`,
+    `  deepest read  ${kb(totals.deepestPhoto)} jpeg, ${kb(totals.deepestRaw)} raw`,
     `  second reads  ${Math.max(0, totals.reads - totals.files)}`
       + ' — each one costs a whole extra round trip',
     `  reads         ${totals.reads} calls, `

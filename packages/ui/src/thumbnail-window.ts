@@ -33,6 +33,8 @@
 
 import { THUMBNAIL_LOCATE_BYTES } from '@snapmapper/core';
 
+import type { ThumbnailWindows } from './read-thumbnails.ts';
+
 /**
  * Where to start, before anything has been measured.
  *
@@ -59,6 +61,36 @@ export const MIN_WINDOW_BYTES = Math.max(80 * 1024, THUMBNAIL_LOCATE_BYTES);
  */
 export const MAX_WINDOW_BYTES = 256 * 1024;
 
+/**
+ * Where raw starts, which is nowhere near where a JPEG starts.
+ *
+ * A JPEG keeps its whole EXIF block in one segment at the front of the file. A TIFF/EP raw file
+ * does not: measured on a real ILCE-6400 ARW, **IFD0 is at byte 8 and IFD1 at byte 122906**, with
+ * the 432KB full-size preview lying between them. So the two need separate windows — sharing one
+ * would drag every JPEG on a mixed card up to the raw size, for photographs that were already
+ * answered in 80KB.
+ *
+ * 48KB rather than the raw size measured here, because that number is one camera's and this file
+ * is not allowed to be tuned to one camera. It is enough to read IFD0 and its link, which is all
+ * that is needed to *learn* where IFD1 is — one wasted read per session, after which the window is
+ * whatever this particular card actually requires.
+ */
+export const MIN_RAW_WINDOW_BYTES = THUMBNAIL_LOCATE_BYTES;
+
+/** Both windows, before anything has been measured. */
+export const INITIAL_WINDOWS: ThumbnailWindows = {
+  photo: MIN_WINDOW_BYTES,
+  raw: MIN_RAW_WINDOW_BYTES,
+};
+
+/** Grow each window to fit what its own kind of file turned out to need. */
+export function nextWindows(current: ThumbnailWindows, deepest: ThumbnailWindows): ThumbnailWindows {
+  return {
+    photo: nextWindow(current.photo, deepest.photo, MIN_WINDOW_BYTES),
+    raw: nextWindow(current.raw, deepest.raw, MIN_RAW_WINDOW_BYTES),
+  };
+}
+
 /** Rounded to this, so a folder of near-identical files settles on one number and stays there. */
 const STEP_BYTES = 16 * 1024;
 
@@ -74,9 +106,13 @@ const STEP_BYTES = 16 * 1024;
  * inside the window would pull more bytes for no fewer round trips, which is the wrong trade in the
  * one direction the measurements are clear about.
  */
-export function nextWindow(current: number, deepestEnd: number): number {
+export function nextWindow(
+  current: number,
+  deepestEnd: number,
+  floor: number = MIN_WINDOW_BYTES,
+): number {
   if (deepestEnd <= current) return current;
 
   const wanted = Math.ceil((deepestEnd + STEP_BYTES) / STEP_BYTES) * STEP_BYTES;
-  return Math.min(MAX_WINDOW_BYTES, Math.max(current, MIN_WINDOW_BYTES, wanted));
+  return Math.min(MAX_WINDOW_BYTES, Math.max(current, floor, wanted));
 }

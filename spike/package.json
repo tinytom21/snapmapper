@@ -19,7 +19,8 @@
     "xmp": "node src/xmp-sidecar.mjs",
     "arw": "node src/arw-read.mjs",
     "prior-verify": "node src/prior-verify.mjs",
-    "thumb": "node src/thumb-verify.mjs"
+    "thumb": "node src/thumb-verify.mjs",
+    "raw-thumb": "node src/raw-thumb-verify.mjs"
   },
   "dependencies": {
     "@uswriting/exiftool": "latest",

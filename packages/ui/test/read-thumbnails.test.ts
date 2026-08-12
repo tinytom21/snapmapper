@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import { readThumbnails } from '../src/read-thumbnails.ts';
-import { MIN_WINDOW_BYTES, nextWindow } from '../src/thumbnail-window.ts';
+import { INITIAL_WINDOWS, MIN_WINDOW_BYTES, nextWindows } from '../src/thumbnail-window.ts';
 import type { FileStore, FolderHandle, PhotoRef } from '@snapmapper/core';
 
 /**
@@ -112,15 +112,15 @@ describe('a thumbnail that does not fit the window', () => {
 
   it('costs two reads per photograph before anything has been learnt', async () => {
     const store = countingStore(bytes);
-    const batch = await readThumbnails(refs(8), store, noRunner, SMALL);
+    const batch = await readThumbnails(refs(8), store, noRunner, { photo: SMALL, raw: SMALL });
 
     assert.equal(batch.timing.reads, 16, 'eight photographs, two round trips each');
     assert.equal(batch.results.filter((r) => r.bytes).length, 8, 'and every picture found');
   });
 
   it('costs one read per photograph once the window has been fitted', async () => {
-    const first = await readThumbnails(refs(8), countingStore(bytes), noRunner, SMALL);
-    const fitted = nextWindow(SMALL, first.timing.deepestEnd);
+    const first = await readThumbnails(refs(8), countingStore(bytes), noRunner, { photo: SMALL, raw: SMALL });
+    const fitted = nextWindows({ photo: SMALL, raw: SMALL }, first.timing.deepest);
 
     const store = countingStore(bytes);
     const second = await readThumbnails(refs(8), store, noRunner, fitted);
@@ -131,8 +131,8 @@ describe('a thumbnail that does not fit the window', () => {
 
   it('finds the same pictures either way, byte for byte', async () => {
     // The window is a performance choice and must not be able to change the answer.
-    const small = await readThumbnails(refs(3), countingStore(bytes), noRunner, SMALL);
-    const large = await readThumbnails(refs(3), countingStore(bytes), noRunner, 256 * 1024);
+    const small = await readThumbnails(refs(3), countingStore(bytes), noRunner, { photo: SMALL, raw: SMALL });
+    const large = await readThumbnails(refs(3), countingStore(bytes), noRunner, { photo: 256 * 1024, raw: 256 * 1024 });
 
     for (const [i, result] of small.results.entries()) {
       assert.deepEqual(result.bytes, large.results[i]?.bytes, result.name);
@@ -140,10 +140,10 @@ describe('a thumbnail that does not fit the window', () => {
   });
 
   it('reports where the deepest thumbnail ended, which is what tunes the next batch', async () => {
-    const batch = await readThumbnails(refs(2), countingStore(bytes), noRunner, SMALL);
+    const batch = await readThumbnails(refs(2), countingStore(bytes), noRunner, { photo: SMALL, raw: SMALL });
     assert.ok(
-      batch.timing.deepestEnd > SMALL,
-      `${batch.timing.deepestEnd} should exceed the window that failed to hold it`,
+      batch.timing.deepest.photo > SMALL,
+      `${batch.timing.deepest.photo} should exceed the window that failed to hold it`,
     );
   });
 });
@@ -157,12 +157,12 @@ describe('the cameras actually measured, from the first batch', () => {
   for (const [camera, thumbnail] of [['a Galaxy S23', 53], ['an A6400', 45]] as const) {
     it(`takes one read per photograph on ${camera}, with no learning phase`, async () => {
       const store = countingStore(jpegWithDeepThumbnail(thumbnail * 1024));
-      const batch = await readThumbnails(refs(8), store, noRunner, MIN_WINDOW_BYTES);
+      const batch = await readThumbnails(refs(8), store, noRunner, INITIAL_WINDOWS);
 
       assert.equal(batch.timing.reads, 8, 'one round trip each, from the very first batch');
       assert.equal(batch.results.filter((r) => r.bytes).length, 8);
       // And nothing grows: more bytes for no fewer round trips is the wrong trade.
-      assert.equal(nextWindow(MIN_WINDOW_BYTES, batch.timing.deepestEnd), MIN_WINDOW_BYTES);
+      assert.equal(nextWindows(INITIAL_WINDOWS, batch.timing.deepest).photo, MIN_WINDOW_BYTES);
     });
   }
 });

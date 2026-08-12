@@ -15,7 +15,8 @@ import { headerOnly } from './load-photos.ts';
 import {
   THUMBNAIL_HEAD_BYTES,
   THUMBNAIL_LOCATE_BYTES,
-  locateThumbnail,
+  inspectThumbnail,
+  isRawFile,
   validJpeg,
   readManyTags,
   type BatchFile,
@@ -85,8 +86,19 @@ export interface BatchTiming {
    * These are what tune the window. `deepestEnd` is known exactly even when the bytes were not
    * fetched, because the offsets live in the EXIF block rather than at the thumbnail itself.
    */
-  readonly window: number;
-  readonly deepestEnd: number;
+  readonly windows: ThumbnailWindows;
+  readonly deepest: ThumbnailWindows;
+}
+
+/**
+ * How much of a head to read, per kind of file.
+ *
+ * Two numbers rather than one because the layouts differ by an order of magnitude — see the note
+ * beside `deepestRaw` in `readThumbnails`.
+ */
+export interface ThumbnailWindows {
+  readonly photo: number;
+  readonly raw: number;
 }
 
 /**
@@ -122,7 +134,7 @@ export async function readThumbnails(
    * Defaults to the constant, so a single call still works; the feed passes the tuned value. See
    * `thumbnail-window.ts` for why this is not a fixed number any more.
    */
-  window: number = THUMBNAIL_LOCATE_BYTES,
+  windows: ThumbnailWindows = { photo: THUMBNAIL_LOCATE_BYTES, raw: THUMBNAIL_LOCATE_BYTES },
 ): Promise<ThumbnailBatch> {
   const results: ThumbnailResult[] = [];
   const slow: BatchFile[] = [];
@@ -142,7 +154,14 @@ export async function readThumbnails(
   let bytesRead = 0;
   let reads = 0;
   let parseMs = 0;
-  let deepestEnd = 0;
+  /*
+   * Measured separately for raw and for everything else, because the two layouts are nowhere near
+   * each other: a JPEG's directories are inside one APP1 segment near the front, while an ARW's
+   * IFD1 is 123KB in, past a full-size preview image. One shared window would drag every JPEG on a
+   * mixed card up to the raw size for no benefit whatever.
+   */
+  let deepestPhoto = 0;
+  let deepestRaw = 0;
 
   const readAt = performance.now();
   const found = await Promise.all(refs.map(async (ref) => {
@@ -157,22 +176,34 @@ export async function readThumbnails(
        *
        * **And the lever is round trips, not bytes** — measured since, on two devices: a call costs
        * about 110 ms whether it carries 43KB or 128KB. So the head is sized to contain the whole
-       * thumbnail wherever possible, and `window` is fitted to the camera by the batches before
+       * thumbnail wherever possible, and the window is fitted to the camera by the batches before
        * this one rather than guessed. The exact range below is now the exception, not the plan.
        */
-      const head = await readSlice(store, ref, 0, window);
+      const raw = isRawFile(ref.name);
+      const head = await readSlice(store, ref, 0, raw ? windows.raw : windows.photo);
       bytesRead += head.byteLength;
       reads += 1;
 
       const parseAt = performance.now();
-      const at = locateThumbnail(head);
+      const lookup = inspectThumbnail(head);
       parseMs += performance.now() - parseAt;
 
-      if (!at) return { ref, head };
+      /*
+       * How far the walk needed to see, whether or not it got there.
+       *
+       * Both answers size the next batch's window, and the second is what makes raw work at all:
+       * an ARW keeps IFD1 at byte 122906, so the first read never reaches it, and a walk that only
+       * ever said "nothing here" would leave the window exactly where it was for ever.
+       */
+      const reach = raw ? deepestRaw : deepestPhoto;
+      const wanted = lookup.range ? lookup.range.start + lookup.range.length : lookup.needs ?? 0;
+      if (wanted > reach) {
+        if (raw) deepestRaw = wanted;
+        else deepestPhoto = wanted;
+      }
 
-      // Recorded whether or not the bytes were there: this is what sizes the next batch's window,
-      // and it is exact, because the offsets are in the EXIF block rather than at the thumbnail.
-      deepestEnd = Math.max(deepestEnd, at.start + at.length);
+      const at = lookup.range;
+      if (!at) return { ref, head };
 
       // Already covered by the head — a small thumbnail in a small EXIF block.
       if (at.start + at.length <= head.byteLength) {
@@ -225,8 +256,8 @@ export async function readThumbnails(
     slow: slow.length,
     bytesRead,
     reads,
-    window,
-    deepestEnd,
+    windows,
+    deepest: { photo: deepestPhoto, raw: deepestRaw },
   });
 
   if (slow.length === 0) return { results, usedExifTool: false, timing: timing(0) };

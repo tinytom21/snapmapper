@@ -19,7 +19,7 @@ import { createBatchRunner } from './batch-runner.ts';
 import { readThumbnails } from './read-thumbnails.ts';
 import { THUMBNAIL_BATCH, nextBatch } from './thumbnail-feed.ts';
 import { NOTHING, addBatch, type Totals } from './diagnostics.ts';
-import { MIN_WINDOW_BYTES, nextWindow } from './thumbnail-window.ts';
+import { INITIAL_WINDOWS, nextWindows } from './thumbnail-window.ts';
 
 /**
  * How long the main thread is handed back between batches.
@@ -101,7 +101,7 @@ export function useThumbnailFeed(
      * card. Rather than guess a number that suits every camera, the first batch measures where the
      * thumbnails end and the rest read that far in one go. See `thumbnail-window.ts`.
      */
-    let window = MIN_WINDOW_BYTES;
+    let windows = INITIAL_WINDOWS;
 
     void (async () => {
       for (;;) {
@@ -129,9 +129,9 @@ export function useThumbnailFeed(
           batch.map((name) => byName.get(name)).filter((ref): ref is PhotoRef => ref !== undefined),
           store,
           getRunner,
-          window,
+          windows,
         );
-        window = nextWindow(window, batchResult.timing.deepestEnd);
+        windows = nextWindows(windows, batchResult.timing.deepest);
         if (stopped) return;
 
         const fresh = new Map<string, string>();

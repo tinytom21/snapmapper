@@ -15,7 +15,10 @@ import type { BatchTiming } from '../src/read-thumbnails.ts';
 function batch(over: Partial<BatchTiming> = {}): BatchTiming {
   return {
     files: 16, readMs: 20, parseMs: 2, exifMs: 0, fast: 16, slow: 0,
-    bytesRead: 16 * 48 * 1024, reads: 16, window: 48 * 1024, deepestEnd: 44 * 1024, ...over,
+    bytesRead: 16 * 48 * 1024, reads: 16,
+    windows: { photo: 80 * 1024, raw: 48 * 1024 },
+    deepest: { photo: 60 * 1024, raw: 0 },
+    ...over,
   };
 }
 
@@ -117,15 +120,25 @@ describe('the head window, which the round-trip finding made the lever', () => {
    * report has to say what the window settled on, or the next paste cannot show whether the tuning
    * worked.
    */
-  it('reports the window it settled on and what justified it', () => {
-    const text = report(addBatch(NOTHING, batch({ window: 128 * 1024, deepestEnd: 100 * 1024 })), facts);
-    assert.match(text, /head window {3}128 KB, deepest thumbnail ends at 100 KB/);
+  it('reports each window separately, because raw and jpeg are nowhere near each other', () => {
+    /*
+     * An ARW keeps IFD1 at byte 122906, past its full-size preview; a JPEG keeps everything in one
+     * segment at the front. Averaging the two into one number would hide both.
+     */
+    const text = report(addBatch(NOTHING, batch({
+      windows: { photo: 80 * 1024, raw: 144 * 1024 },
+      deepest: { photo: 60 * 1024, raw: 129 * 1024 },
+    })), facts);
+    assert.match(text, /head window {3}80 KB jpeg, 144 KB raw/);
+    assert.match(text, /deepest read {2}60 KB jpeg, 129 KB raw/);
   });
 
   it('takes the largest window rather than summing them', () => {
     // The feed grows the window as it learns, so a total of every window it tried is meaningless.
-    const grown = addBatch(addBatch(NOTHING, batch()), batch({ window: 128 * 1024 }));
-    assert.equal(grown.window, 128 * 1024);
+    const grown = addBatch(addBatch(NOTHING, batch()), batch({
+      windows: { photo: 128 * 1024, raw: 48 * 1024 },
+    }));
+    assert.equal(grown.windowPhoto, 128 * 1024);
   });
 
   it('counts the second reads, which is the cost being removed', () => {

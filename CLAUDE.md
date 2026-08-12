@@ -121,6 +121,54 @@ wait from a broken button. Both listing calls now report progress. And an empty 
 a folder of `.MP4` files reads as empty here, and saying "no JPEG or raw files, video is not
 supported yet" is the difference between a bug and an answer.
 
+#### Raw thumbnails come out of the bytes too, because a raw file is a TIFF
+
+On the user's mixed card, ExifTool was **27.3 s of a 156 s run — 483 ARW files at 56 ms each** —
+and it existed only to serve them. It no longer runs at all for raw.
+
+**This is a format-level change, not a Sony one**, and the distinction was the user's condition for
+doing it. An EXIF block inside a JPEG *is* a complete TIFF document; a TIFF/EP raw file is that same
+document as the whole file. Either way IFD0 links to IFD1 and IFD1 carries `0x0201` and `0x0202`.
+So the existing walk works on both, and the entire change is one branch: if the file does not start
+`FFD8`, read the TIFF at byte 0 instead of hunting for an APP1 segment. ARW, NEF, CR2, PEF and SRW
+are all TIFF/EP. Anything that is not — a DNG keeping its thumbnail in IFD0 as uncompressed strips,
+a CR3, which is not TIFF at all — finds no `0x0201`, declines, and falls back exactly as before.
+
+**The obstacle was where the directories are, and it needed a design decision.** A JPEG packs them
+into one segment at the front. A raw file does not: measured on a real ILCE-6400 ARW, **IFD0 is at
+byte 8 and IFD1 at byte 122906**, with the 432KB full-size preview lying between them. So no
+sensible first read reaches IFD1 — and a walk that answered only "nothing here" would teach the
+window nothing, leaving it exactly where it was for ever. `ThumbnailLookup.needs` reports how far
+the walk was reaching, which turns one failed read into the size of the read that works.
+
+**Two windows, not one.** A shared window would drag every JPEG on a mixed card up to the raw size,
+for photographs already answered in 80KB. `INITIAL_WINDOWS` starts raw at 48KB — deliberately *not*
+the 144KB this camera wants, because that number is one camera's — which is enough to read IFD0 and
+its link, and therefore enough to learn where IFD1 is. One wasted read per session, after which the
+window is whatever that card actually requires.
+
+Verified against **native ExifTool** on a real 24.9MB ARW — `npm run raw-thumb --workspace spike`:
+
+```
+  a 48KB head was not enough — it needs 123930
+  located after 2 read(s), at a 144KB window: offset 123180, length 8053
+  length matches ExifTool: 8053 against 8053
+  those bytes are a whole JPEG, SOI to EOI
+  byte-identical to native ExifTool
+  identical again from a single 144KB read
+```
+
+`jpeg-thumbnail.ts` is now `embedded-thumbnail.ts`, since the name had become a lie.
+
+**Not verifiable here: any other manufacturer.** There is one raw fixture on this machine and it is
+a Sony. NEF, CR2, PEF and SRW are the same structure *by specification*, not by measurement — and
+the guard is what makes that acceptable to ship: a slice is refused unless it runs `FFD8` to `FFD9`,
+and anything declined falls back to ExifTool. The worst case for an untested format is the speed it
+already had.
+
+**Also unverified: the saving.** Arithmetic, not measurement — the mixed card should lose most of
+its 27.3 s of ExifTool, and stop building 24MB of WebAssembly for a card of raw.
+
 #### The feed follows the drawn order, not the folder listing
 
 *"The thumbnail parsing seems to happen from oldest to newest, but the pictures are arranged in
@@ -155,7 +203,7 @@ at ~130 ms a photograph the difference is the whole complaint.
 `use-thumbnail-feed.ts` fills the grid in while the chooser is open, expanded days first.
 
 The first version invoked ExifTool per photograph — ~45 ms each even batched, all of it on the main
-thread, so a day of sixty was four seconds of stutter. `jpeg-thumbnail.ts` does the same job by
+thread, so a day of sixty was four seconds of stutter. `embedded-thumbnail.ts` does the same job by
 **following two offsets**: the EXIF APP1 segment holds a whole TIFF, IFD0 links to IFD1, and IFD1's
 tags `0x0201` and `0x0202` say where the thumbnail is and how long. Measured on real A6400 files,
 **0.165 ms against ExifTool's 634 ms, and byte-identical on all seven fixtures** —
