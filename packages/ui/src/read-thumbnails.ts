@@ -73,8 +73,20 @@ export interface BatchTiming {
    * tell them apart from here. If the cost tracks the reads, the round trip dominates and fewer,
    * larger reads win; if it tracks the bytes, the transfer dominates and smaller windows win. The
    * one thing already known is that they do not overlap.
+   *
+   * **Answered, on two devices: the round trip.** A call costs about 110 ms whether it carries 43KB
+   * or 128KB, so a second call is worth roughly seven times the bytes in the first. See
+   * `thumbnail-window.ts`.
    */
   readonly reads: number;
+  /**
+   * How much of the head was read, and how deep the deepest thumbnail turned out to be.
+   *
+   * These are what tune the window. `deepestEnd` is known exactly even when the bytes were not
+   * fetched, because the offsets live in the EXIF block rather than at the thumbnail itself.
+   */
+  readonly window: number;
+  readonly deepestEnd: number;
 }
 
 /**
@@ -104,6 +116,13 @@ export async function readThumbnails(
    * blocked main thread spent on a fallback that never fires.
    */
   getRunner: () => Promise<BatchRunner | undefined>,
+  /**
+   * How much of each head to read, fitted to the camera by the batches before this one.
+   *
+   * Defaults to the constant, so a single call still works; the feed passes the tuned value. See
+   * `thumbnail-window.ts` for why this is not a fixed number any more.
+   */
+  window: number = THUMBNAIL_LOCATE_BYTES,
 ): Promise<ThumbnailBatch> {
   const results: ThumbnailResult[] = [];
   const slow: BatchFile[] = [];
@@ -123,6 +142,7 @@ export async function readThumbnails(
   let bytesRead = 0;
   let reads = 0;
   let parseMs = 0;
+  let deepestEnd = 0;
 
   const readAt = performance.now();
   const found = await Promise.all(refs.map(async (ref) => {
@@ -135,11 +155,12 @@ export async function readThumbnails(
        * came out at exactly sixteen times the per-file cost in both of the user's runs, so Chrome
        * on Android is serialising them below `Promise.all` and no amount of concurrency helps.
        *
-       * When the only lever is bytes, use it: `LOCATE_BYTES` is enough to find the offsets, and
-       * the thumbnail is then fetched as an exact range. About 22KB per photograph rather than
-       * 128KB.
+       * **And the lever is round trips, not bytes** — measured since, on two devices: a call costs
+       * about 110 ms whether it carries 43KB or 128KB. So the head is sized to contain the whole
+       * thumbnail wherever possible, and `window` is fitted to the camera by the batches before
+       * this one rather than guessed. The exact range below is now the exception, not the plan.
        */
-      const head = await readSlice(store, ref, 0, THUMBNAIL_LOCATE_BYTES);
+      const head = await readSlice(store, ref, 0, window);
       bytesRead += head.byteLength;
       reads += 1;
 
@@ -148,6 +169,10 @@ export async function readThumbnails(
       parseMs += performance.now() - parseAt;
 
       if (!at) return { ref, head };
+
+      // Recorded whether or not the bytes were there: this is what sizes the next batch's window,
+      // and it is exact, because the offsets are in the EXIF block rather than at the thumbnail.
+      deepestEnd = Math.max(deepestEnd, at.start + at.length);
 
       // Already covered by the head — a small thumbnail in a small EXIF block.
       if (at.start + at.length <= head.byteLength) {
@@ -200,6 +225,8 @@ export async function readThumbnails(
     slow: slow.length,
     bytesRead,
     reads,
+    window,
+    deepestEnd,
   });
 
   if (slow.length === 0) return { results, usedExifTool: false, timing: timing(0) };

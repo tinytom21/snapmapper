@@ -25,11 +25,14 @@ export interface Totals {
   readonly slow: number;
   readonly bytesRead: number;
   readonly reads: number;
+  /** The head window the feed settled on, and the deepest thumbnail that justified it. */
+  readonly window: number;
+  readonly deepestEnd: number;
 }
 
 export const NOTHING: Totals = {
   batches: 0, files: 0, readMs: 0, parseMs: 0, exifMs: 0, fast: 0, slow: 0,
-  bytesRead: 0, reads: 0,
+  bytesRead: 0, reads: 0, window: 0, deepestEnd: 0,
 };
 
 export function addBatch(totals: Totals, batch: BatchTiming): Totals {
@@ -43,6 +46,10 @@ export function addBatch(totals: Totals, batch: BatchTiming): Totals {
     slow: totals.slow + batch.slow,
     bytesRead: totals.bytesRead + batch.bytesRead,
     reads: totals.reads + batch.reads,
+    // Both are maxima rather than sums: what is wanted is the size the feed settled on, not a
+    // total of every window it tried on the way there.
+    window: Math.max(totals.window, batch.window),
+    deepestEnd: Math.max(totals.deepestEnd, batch.deepestEnd),
   };
 }
 
@@ -54,6 +61,8 @@ export function addBatch(totals: Totals, batch: BatchTiming): Totals {
  * totals scale with how much was looked at and the per-photograph ones are what can be compared
  * against the numbers in `CLAUDE.md`.
  */
+const kb = (bytes: number) => `${Math.round(bytes / 1024)} KB`;
+
 export function report(totals: Totals, platform: PlatformFacts): string {
   const per = (ms: number) => (totals.files === 0 ? '—' : `${(ms / totals.files).toFixed(2)} ms`);
   const total = totals.readMs + totals.parseMs + totals.exifMs;
@@ -70,6 +79,9 @@ export function report(totals: Totals, platform: PlatformFacts): string {
     '',
     `  bytes read    ${(totals.bytesRead / 1024 / 1024).toFixed(1)} MB total, `
       + `${totals.files === 0 ? '—' : Math.round(totals.bytesRead / totals.files / 1024)} KB each`,
+    `  head window   ${kb(totals.window)}, deepest thumbnail ends at ${kb(totals.deepestEnd)}`,
+    `  second reads  ${Math.max(0, totals.reads - totals.files)}`
+      + ' — each one costs a whole extra round trip',
     `  reads         ${totals.reads} calls, `
       + `${totals.reads === 0 ? '—' : `${(totals.readMs / totals.reads).toFixed(1)} ms per call`}`,
     `  reading       ${Math.round(totals.readMs)} ms total, ${per(totals.readMs)} each`,
@@ -91,6 +103,19 @@ function verdict(totals: Totals): string {
 
   if (exifEach > readEach && exifEach > 5) {
     return `ExifTool dominates at ${exifEach.toFixed(0)} ms each — raw, or the byte reader declining`;
+  }
+  /*
+   * Second reads first, because it is the one cause with a fix that is known to work.
+   *
+   * A read is charged per round trip — 110 ms whether it carries 43KB or 128KB, measured on two
+   * devices — so a head too small to hold the thumbnail nearly doubles that photograph. It is also
+   * the only line here that says *which camera* the window is wrong for, and the window tunes
+   * itself, so seeing this at the end of a run means the tuning did not converge.
+   */
+  const perFile = totals.reads / totals.files;
+  if (readEach > 15 && perFile > 1.2) {
+    return `reading dominates at ${readEach.toFixed(0)} ms each — and ${perFile.toFixed(2)} reads `
+      + 'per photograph, so the head window is still too small for this camera';
   }
   if (readEach > 15) {
     return `reading dominates at ${readEach.toFixed(0)} ms each — the card, or reads not overlapping`;

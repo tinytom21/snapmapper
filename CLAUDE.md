@@ -237,10 +237,53 @@ With overlap unavailable and parsing already free, the only lever left is **byte
 - Anything past the window is fetched as an **exact range** via `readRange`, so a layout with a
   distant thumbnail costs a small second read rather than a bigger first one.
 
-**What is still unknown, deliberately:** whether that card charges per round trip or per byte. They
-point at opposite fixes — fewer larger reads against smaller windows — and cannot be told apart
-from here. So the report now gives **reads and bytes separately**, and the next paste from a device
-settles it.
+**Answered: the round trip.** See below.
+
+#### A read costs 110 ms whatever it carries, so the head window is fitted to the camera
+
+Two reports from a Galaxy S23 — its own JPEGs off internal storage, and an A6400 card through a
+reader — settled the question the previous section left open:
+
+| | reads per file | KB per call | **ms per call** | ms per file |
+|---|---|---|---|---|
+| phone storage | 1.75 | 50 | **107** | 187 |
+| SD card | 1.17 | 43 | **113** | 133 |
+| an earlier run at a 128KB window | 1.00 | 128 | **128** | 128 |
+
+The middle column is the finding. **Tripling the bytes in a call costs about 15 ms; making a second
+call costs about 110 ms.** So a read is charged per round trip, near enough.
+
+Which means the previous fix pulled the wrong lever. Cutting the window from 128KB to 48KB saved
+bytes and bought a *second* round trip for three quarters of the photographs on the phone — which
+is why that device came out **slower on its own internal storage (187 ms) than on an SD card
+(133 ms)**, a result that makes no sense until you count the calls.
+
+48KB is right for an A6400, whose thumbnail ends by 45KB, and wrong for an S23, whose thumbnail is
+itself about **53KB**. No fixed number suits both, and there was no way to know either from here.
+So `thumbnail-window.ts` does not guess: the first batch measures where the thumbnails actually end
+and every later batch reads that far in one go. `locateThumbnail` reports the end offset **exactly
+even when the bytes are not there**, because the offsets live in the EXIF block rather than at the
+thumbnail, so it converges after a single batch rather than creeping up.
+
+- **It only ever grows, and only when something missed.** A card of two cameras would otherwise
+  oscillate — shrink to fit the Sony, pay a second read on the next Samsung, repeat. The asymmetry
+  decides it: an over-large window costs fifteen milliseconds and an under-large one a hundred and
+  ten. Growing to fit a thumbnail that was *already inside* the window is pure loss, so that case
+  changes nothing.
+- **Capped at 256KB**, so one pathological file claiming a thumbnail halfway through a 25MB raw
+  cannot drag every later read out with it. Past the cap the exact-range second read is right: one
+  extra round trip on the few files that need it rather than on all of them.
+- **The report says what it settled on** — `head window`, `second reads`, and a verdict line that
+  names the window directly when reads per photograph exceed 1.2. Seeing that at the end of a run
+  means the tuning did not converge, which is a different problem from a slow card.
+
+Measured end-to-end on a synthetic 53KB-thumbnail JPEG: **16 reads for 8 photographs before tuning,
+8 after**, with byte-identical thumbnails either way. The window is a performance choice and a test
+pins that it cannot change the answer.
+
+**Not verifiable here: the wall-clock saving.** This machine's reads are free, so the honest
+prediction is arithmetic rather than a measurement — the S23 run should go from 1.75 reads a
+photograph to about 1.0, and from 187 ms to roughly 120.
 
 #### The timings are in the interface, because the slow machine is never this one
 

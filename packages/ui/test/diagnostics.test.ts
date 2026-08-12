@@ -15,11 +15,18 @@ import type { BatchTiming } from '../src/read-thumbnails.ts';
 function batch(over: Partial<BatchTiming> = {}): BatchTiming {
   return {
     files: 16, readMs: 20, parseMs: 2, exifMs: 0, fast: 16, slow: 0,
-    bytesRead: 16 * 48 * 1024, reads: 16, ...over,
+    bytesRead: 16 * 48 * 1024, reads: 16, window: 48 * 1024, deepestEnd: 44 * 1024, ...over,
   };
 }
 
 const facts = { summary: 'test', cores: '8', memory: '8 GB or more' };
+
+
+/** The one line the report exists for, pulled out by name. */
+function verdictLine(totals: Totals): string {
+  return report(totals, facts).split(String.fromCharCode(10))
+    .find((line) => line.includes('verdict')) ?? '';
+}
 
 describe('accumulating batches', () => {
   it('sums every stage across batches', () => {
@@ -100,5 +107,48 @@ describe('the report itself', () => {
   it('is plain text, because it is pasted from a phone into a message', () => {
     const text = report(addBatch(NOTHING, batch()), facts);
     assert.doesNotMatch(text, /[<>{}]/);
+  });
+});
+
+describe('the head window, which the round-trip finding made the lever', () => {
+  /*
+   * Two devices agreed: a read costs about 110 ms whether it carries 43KB or 128KB, so a head too
+   * small to hold the thumbnail buys a second round trip and nearly doubles that photograph. The
+   * report has to say what the window settled on, or the next paste cannot show whether the tuning
+   * worked.
+   */
+  it('reports the window it settled on and what justified it', () => {
+    const text = report(addBatch(NOTHING, batch({ window: 128 * 1024, deepestEnd: 100 * 1024 })), facts);
+    assert.match(text, /head window {3}128 KB, deepest thumbnail ends at 100 KB/);
+  });
+
+  it('takes the largest window rather than summing them', () => {
+    // The feed grows the window as it learns, so a total of every window it tried is meaningless.
+    const grown = addBatch(addBatch(NOTHING, batch()), batch({ window: 128 * 1024 }));
+    assert.equal(grown.window, 128 * 1024);
+  });
+
+  it('counts the second reads, which is the cost being removed', () => {
+    const text = report(addBatch(NOTHING, batch({ files: 16, reads: 28 })), facts);
+    assert.match(text, /second reads {2}12/);
+  });
+
+  it('names the second reads in the verdict, since that is the cause with a known fix', () => {
+    const missing = addBatch(NOTHING, batch({ files: 16, reads: 28, readMs: 16 * 187 }));
+    const line = verdictLine(missing);
+    assert.match(line, /1\.75 reads per photograph/);
+    assert.match(line, /head window is still too small/);
+  });
+
+  it('does not blame the window when there is one read per photograph', () => {
+    const fine = addBatch(NOTHING, batch({ files: 16, reads: 16, readMs: 16 * 130 }));
+    const line = verdictLine(fine);
+    assert.doesNotMatch(line, /window/);
+    assert.match(line, /not overlapping/);
+  });
+
+  it('never reports a negative count when a file was answered without any read', () => {
+    const text = report(addBatch(NOTHING, batch({ files: 16, reads: 0 })), facts);
+    assert.match(text, /second reads {2}0/);
   });
 });

@@ -19,6 +19,7 @@ import { createBatchRunner } from './batch-runner.ts';
 import { readThumbnails } from './read-thumbnails.ts';
 import { THUMBNAIL_BATCH, nextBatch } from './thumbnail-feed.ts';
 import { NOTHING, addBatch, type Totals } from './diagnostics.ts';
+import { MIN_WINDOW_BYTES, nextWindow } from './thumbnail-window.ts';
 
 /**
  * How long the main thread is handed back between batches.
@@ -90,6 +91,18 @@ export function useThumbnailFeed(
     let runner: Promise<BatchRunner | undefined> | undefined;
     const getRunner = () => (runner ??= createBatchRunner());
 
+    /*
+     * How much of each head to read, fitted to the camera as the batches go by.
+     *
+     * A read costs about 110 ms whether it carries 43KB or 128KB — measured on two devices — so a
+     * head too small to hold the thumbnail buys a second round trip and roughly doubles the cost of
+     * that photograph. It did: on a Galaxy S23's own JPEGs, whose thumbnail is about 53KB, three
+     * quarters needed a second read and the phone came out slower on its internal storage than on a
+     * card. Rather than guess a number that suits every camera, the first batch measures where the
+     * thumbnails end and the rest read that far in one go. See `thumbnail-window.ts`.
+     */
+    let window = MIN_WINDOW_BYTES;
+
     void (async () => {
       for (;;) {
         if (stopped) return;
@@ -116,7 +129,9 @@ export function useThumbnailFeed(
           batch.map((name) => byName.get(name)).filter((ref): ref is PhotoRef => ref !== undefined),
           store,
           getRunner,
+          window,
         );
+        window = nextWindow(window, batchResult.timing.deepestEnd);
         if (stopped) return;
 
         const fresh = new Map<string, string>();
