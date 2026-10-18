@@ -34,14 +34,9 @@ import { promisify } from 'node:util';
 import { extractExifToolScript } from '../../packages/ui/exiftool-script.ts';
 
 import { patchZeroperl } from './patch-zeroperl.mjs';
-import { isMain, note, section } from './support.mjs';
+import { isMain, note, section, exifToolPath } from './support.mjs';
 
 const run = promisify(execFile);
-
-function exifToolPath() {
-  return process.env.EXIFTOOL
-    ?? path.join(process.env.LOCALAPPDATA ?? '', 'Programs', 'ExifTool', 'exiftool.exe');
-}
 
 export async function verifyXmpSidecar() {
   section('Can ExifTool-in-WASM create an XMP sidecar?');

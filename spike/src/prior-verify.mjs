@@ -35,7 +35,7 @@ import { readManyTags, writeMetadataSpliced, buildGeotagTags, createWasmBackend 
 import { extractExifToolScript } from '../../packages/ui/exiftool-script.ts';
 
 import { patchZeroperl } from './patch-zeroperl.mjs';
-import { isMain, listFixtures, note, section } from './support.mjs';
+import { isMain, listFixtures, note, section, exifToolPath } from './support.mjs';
 
 const run = promisify(execFile);
 
@@ -47,11 +47,6 @@ const WANTED = [
 
 /** Somewhere unambiguous, and nowhere near where an A6400 with no GPS would claim to be. */
 const PLACED = { latitude: -33.8688, longitude: 151.2093, altitude: 42.5 };
-
-function exifToolPath() {
-  return process.env.EXIFTOOL
-    ?? path.join(process.env.LOCALAPPDATA ?? '', 'Programs', 'ExifTool', 'exiftool.exe');
-}
 
 function findScanStart(bytes) {
   let offset = 2;

@@ -31,15 +31,9 @@ import {
 
 import { nextWindow } from '../../packages/ui/src/thumbnail-window.ts';
 
-import { FIXTURES_DIR, isMain, note, result, section } from './support.mjs';
+import { FIXTURES_DIR, isMain, note, result, section, exifToolPath } from './support.mjs';
 
 const run = promisify(execFile);
-
-/** Windows installs per-user and only registers PATH in the registry, so an open shell misses it. */
-function exifToolPath() {
-  return process.env.EXIFTOOL
-    ?? path.join(process.env.LOCALAPPDATA ?? '', 'Programs', 'ExifTool', 'exiftool.exe');
-}
 
 async function head(file, bytes) {
   const handle = await open(file, 'r');

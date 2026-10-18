@@ -31,7 +31,7 @@ import { readdir } from 'node:fs/promises';
 import { readTagsAndThumbnail, createWasmBackend } from '@snapmapper/core';
 
 import { patchZeroperl } from './patch-zeroperl.mjs';
-import { isMain, note, section } from './support.mjs';
+import { isMain, note, section, exifToolPath } from './support.mjs';
 
 const run = promisify(execFile);
 const FIXTURES = path.join(process.cwd(), 'fixtures');
@@ -45,11 +45,6 @@ const WANTED = [
 
 /** The size `load-photos.ts` reads. Everything else here is context for it. */
 const APP_HEAD = 1024 * 1024;
-
-function exifToolPath() {
-  return process.env.EXIFTOOL
-    ?? path.join(process.env.LOCALAPPDATA ?? '', 'Programs', 'ExifTool', 'exiftool.exe');
-}
 
 async function head(file, bytes) {
   const handle = await open(file, 'r');

@@ -22,6 +22,24 @@ export function note(text) {
   console.log(`  \x1b[2m${text}\x1b[0m`);
 }
 
+/**
+ * Where native ExifTool is — the independent verifier, not a runtime dependency.
+ *
+ * `EXIFTOOL` wins when set. Otherwise, on Windows, the per-user install `winget install
+ * OliverBetz.ExifTool` makes, because it registers PATH only in the registry and an open shell does
+ * not see it. Everywhere else ExifTool is on PATH as `exiftool` (`apt install
+ * libimage-exiftool-perl`, Homebrew, or the tarball). This used to be the Windows path
+ * unconditionally, copied into four scripts, which on Linux resolved to
+ * `Programs/ExifTool/exiftool.exe` relative to the working directory.
+ */
+export function exifToolPath() {
+  if (process.env.EXIFTOOL) return process.env.EXIFTOOL;
+  if (process.platform === 'win32' && process.env.LOCALAPPDATA) {
+    return path.join(process.env.LOCALAPPDATA, 'Programs', 'ExifTool', 'exiftool.exe');
+  }
+  return 'exiftool';
+}
+
 /** True when a module was run directly rather than imported. Windows-safe. */
 export function isMain(importMetaUrl) {
   const entry = process.argv[1];

@@ -166,8 +166,11 @@ the guard is what makes that acceptable to ship: a slice is refused unless it ru
 and anything declined falls back to ExifTool. The worst case for an untested format is the speed it
 already had.
 
-**Also unverified: the saving.** Arithmetic, not measurement — the mixed card should lose most of
-its 27.3 s of ExifTool, and stop building 24MB of WebAssembly for a card of raw.
+**The saving, measured on the phone afterwards:** 880 photographs from the mixed card, **0 by
+ExifTool**, 881 reads, 120.6 ms each against 137.7 the run before. The card's own ARWs settled at an
+80KB window, not the fixture's 144KB — a second camera layout on the very first real card, which is
+what the per-card tuning is for. The felt gain is larger than the timing line: the 250 ms breather
+after every ExifTool batch no longer fires, ~14 s on that run alone.
 
 #### The feed follows the drawn order, not the folder listing
 
@@ -217,9 +220,9 @@ unless it starts `FFD8` and ends `FFD9`, and anything declined falls back to Exi
 
 Consequences worth keeping:
 
-- **ExifTool is now only reached for raw.** An ARW is a TIFF rather than a JPEG, so the walk does
-  not apply and the fallback earns its place. Correctness from the fallback, speed from not needing
-  it.
+- **ExifTool is now reached only for what the walk declines** — originally all raw, now only
+  formats that are not TIFF/EP (CR3, a DNG with strip thumbnails). Correctness from the fallback,
+  speed from not needing it.
 - **The interpreter is built on first need, and usually never.** It was created when the chooser
   opened, which is 24MB of WebAssembly and most of a second of blocked thread for a fallback that
   never fires. Measured before: the first picture took 646 ms to appear, essentially all boot.
@@ -351,10 +354,10 @@ smallest window that can reach IFD1, and is what the spike and a bare `readThumb
 clock ÷ per-file cost came out at **15.9 and 16.0** — the batch size exactly, again. Nothing about
 how the reads are issued will improve on ~110 ms a file; only reading *fewer files* will.
 
-**What is left, measured:** on the mixed card, ExifTool is **27.3 s of 156 s (17%)** — 483 ARW files
-at 56 ms each. An ARW is a TIFF, so the same offset walk that replaced ExifTool for JPEG could
-replace it for raw, which would also stop the 24MB WebAssembly from ever being built. It is the last
-large lever and it is not done.
+**What was left, measured:** on the mixed card, ExifTool was **27.3 s of 156 s (17%)** — 483 ARW
+files at 56 ms each. **Done since** — see "Raw thumbnails come out of the bytes too". The next run
+read 880 photographs with ExifTool invoked zero times, at **120.6 ms each against 155.5** where this
+started.
 
 #### The timings are in the interface, because the slow machine is never this one
 
@@ -370,7 +373,8 @@ would have caught all three faults in one paste.
 Plain text on purpose: it is pasted from a phone into a message, where anything needing a console
 or a file is not going to happen.
 
-**A worker is still the fix for raw**, and the trap is unchanged: zeroperl fetches
+**A worker is no longer needed for raw thumbnails** — they are read by hand now. It remains the fix
+if ExifTool ever has to run in the background again, and the trap is unchanged: zeroperl fetches
 `./zeroperl.wasm` relative to the *document*, which is why a Vite plugin serves it at the site root.
 
 #### Superseded: thumbnails arrive in the background, and the main thread is the constraint
@@ -1353,6 +1357,12 @@ winget install OpenJS.NodeJS.LTS
 
 ```bash
 winget install OliverBetz.ExifTool
+```
+
+On Linux (the project moved to Linux Mint on 2026-10-18 — see `HANDOVER.md` for the full steps):
+
+```bash
+sudo apt install -y libimage-exiftool-perl
 ```
 
 Node 22.18+ or 24+ (the test scripts rely on built-in TypeScript stripping, no build step).

@@ -13,19 +13,20 @@ do not trust it without checking here.
 Nothing is half-finished. The tree is clean and every change is deployed.
 
 **Moving this to another machine or Claude account?** Read `HANDOVER.md` — some of what this
-project needs does not travel through git, the photo fixtures above all.
+project needs does not travel through git, the photo fixtures above all. It was last moved on
+**2026-10-18, from Windows 11 to Linux Mint 23**, and has the step-by-step for that.
 
 ## Where it stands
 
 | Path | State |
 |---|---|
-| `packages/core` | Platform-agnostic logic. **355 tests, `tsc` clean.** `gps`, `time`, `jpeg` (the splice), `exif-tags`, `exiftool` (write path), `exiftool-wasm`, `session` (staged edits, undo, named actions), `clock-sync`, `gpx` (track parsing and matching), `google-timeline` + `track-file` (Timeline import), `exiftool-batch` (batched reads), `verify-write`, `prior-location` (earlier sessions' work), `storage`. |
-| `packages/ui` | React 19 + MapLibre 5 on Vite 7. **251 tests.** `browser-file-store.ts` is the only file behind `FileStore`; `batch-runner.ts` is the only other one tied to the build, since it takes the ExifTool script from a Vite virtual module. |
+| `packages/core` | Platform-agnostic logic. **359 tests, `tsc` clean.** `gps`, `time`, `jpeg` (the splice), `exif-tags`, `exiftool` (write path), `exiftool-wasm`, `session` (staged edits, undo, named actions), `clock-sync`, `gpx` (track parsing and matching), `google-timeline` + `track-file` (Timeline import), `exiftool-batch` (batched reads), `verify-write`, `prior-location` (earlier sessions' work), `storage`. |
+| `packages/ui` | React 19 + MapLibre 5 on Vite 7. **275 tests.** `browser-file-store.ts` is the only file behind `FileStore`; `batch-runner.ts` is the only other one tied to the build, since it takes the ExifTool script from a Vite virtual module. |
 | `packages/shells` | Does not exist and is not needed. There is no native shell and no reason for one. |
 | `spike/` | Phase 0, done. Still where the write path is checked against a **native** ExifTool: `npm run splice --workspace spike` → 184 checks. |
 | `docs/PLAN.md` | Historical. Useful for intent, wrong in places. |
 
-**606 tests, `tsc` clean, production build succeeds.**
+**634 tests, `tsc` clean, production build succeeds.**
 
 ```bash
 npm test && npm run typecheck
@@ -60,7 +61,7 @@ was found:
 
 ## Deploying
 
-**Push to `main` and it ships.** `.github/workflows/deploy.yml` typechecks, runs all 606 tests,
+**Push to `main` and it ships.** `.github/workflows/deploy.yml` typechecks, runs all the tests,
 builds and publishes to GitHub Pages; a failing test blocks the deploy. About two minutes.
 
 The base path comes from the repository name, so renaming the repo needs no edit. A Pages project
@@ -156,6 +157,27 @@ a *"A new version is ready"* banner rather than leaving it a mystery.
 
 **Both designed features have shipped** — see "already placed" and "thumbnail markers" under
 *What is settled*. What is left below was deferred rather than designed.
+
+### Where the chooser's thumbnail speed was left
+
+Most of the last stretch of work, all of it driven by reports pasted from the user's Galaxy S23 via
+the chooser's *Timings* link. The details are in `CLAUDE.md`; the state is:
+
+- **Every thumbnail, JPEG and raw, is read out of the bytes.** The last mixed-card run read 880
+  photographs with **ExifTool invoked zero times** and zeroperl never built. Raw works because a
+  TIFF/EP raw file *is* the TIFF a JPEG carries in its APP1 — a format-level change, verified
+  byte-identical against native ExifTool on a real ARW.
+- **One read per photograph** — 881 calls for 880 — because the head window fits itself to the card,
+  separately for JPEG and raw. The user's own card settled at 80KB raw where the ARW fixture here
+  wants 144KB; a hard-coded number would have been wrong on the first real card.
+- **What remains is the read itself: ~120 ms a file on Android, and it does not overlap.** Batch
+  wall clock ÷ per-file cost came out at exactly the batch size in four separate runs, so Chrome on
+  Android serialises File System Access reads below `Promise.all`. The only untested idea left is
+  whether a **Web Worker gets its own I/O queue**. Nobody knows; it would need building and then a
+  paste from the phone to find out. The user has not asked for it.
+
+**The user's rule for any further speed work: only gains common to most cameras.** Format-level is
+fine — anything every camera writing that format benefits from. Tuning to the A6400 is not.
 
 ### 1. Back up the card, not just geotag it
 
